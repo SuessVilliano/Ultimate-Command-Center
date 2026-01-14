@@ -1,0 +1,48 @@
+# Render Blueprint for LIV8 Command Center
+# Deploy with: https://render.com/deploy
+
+services:
+  # Backend API Server
+  - type: web
+    name: liv8-ai-server
+    runtime: node
+    buildCommand: cd server && npm install
+    startCommand: cd server && node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3005
+      - key: ANTHROPIC_API_KEY
+        sync: false  # You'll need to set this manually
+      - key: OPENAI_API_KEY
+        sync: false  # Optional
+      - key: FRESHDESK_DOMAIN
+        sync: false
+      - key: FRESHDESK_API_KEY
+        sync: false
+      - key: FRESHDESK_AGENT_ID
+        sync: false
+      - key: SCHEDULE_ENABLED
+        value: "true"
+      - key: AI_PROVIDER
+        value: claude
+    healthCheckPath: /health
+    autoDeploy: true
+
+  # Frontend (Static Site)
+  - type: web
+    name: liv8-command-center
+    runtime: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: liv8-ai-server
+          property: host
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
