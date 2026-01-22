@@ -32,6 +32,7 @@ import * as orchestrator from './lib/agent-orchestrator.js';
 import { registerNiftyRoutes } from './routes/nifty-routes.js';
 import { taskmagicMCP } from './lib/taskmagic-mcp.js';
 import { unifiedTasks } from './lib/unified-tasks.js';
+import * as githubPortfolio from './lib/github-portfolio.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1905,6 +1906,48 @@ app.post('/api/agent-conversations', (req, res) => {
     const { userId, title, participants } = req.body;
     const id = agentKnowledge.createConversation(userId || 'default', title, participants || []);
     res.json({ id });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+
+// ============================================
+// PORTFOLIO - Live GitHub Sync
+// ============================================
+
+// Get full portfolio with live GitHub data
+app.get('/api/portfolio', async (req, res) => {
+  try {
+    const forceRefresh = req.query.refresh === 'true';
+    const portfolio = await githubPortfolio.getPortfolio(forceRefresh);
+    res.json(portfolio);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get quick stats for dashboard
+app.get('/api/portfolio/stats', async (req, res) => {
+  try {
+    const stats = await githubPortfolio.getQuickStats();
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Force sync GitHub portfolio
+app.post('/api/portfolio/sync', async (req, res) => {
+  try {
+    const portfolio = await githubPortfolio.syncGitHubPortfolio();
+    res.json({
+      success: true,
+      repoCount: portfolio.repoCount,
+      totalValue: portfolio.totals,
+      lastSync: portfolio.lastSync
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
