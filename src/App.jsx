@@ -16,6 +16,7 @@ import Inbox from './pages/Inbox';
 import AdminPanel from './pages/AdminPanel';
 import News from './pages/News';
 import AgentTeam from './pages/AgentTeam';
+import Integrations from './pages/Integrations';
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -63,6 +64,8 @@ function AppContent() {
         return <News />;
       case 'agent-team':
         return <AgentTeam />;
+      case 'integrations':
+        return <Integrations />;
       case 'admin':
         return <AdminPanel />;
       default:

@@ -17,7 +17,8 @@ import {
   Shield,
   MessageSquare,
   Newspaper,
-  TrendingUp
+  TrendingUp,
+  Plug
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -34,6 +35,7 @@ const menuItems = [
   { id: 'domains', label: 'Domains', icon: Globe },
   { id: 'valuation', label: 'Valuation', icon: DollarSign },
   { id: 'github', label: 'GitHub', icon: Github },
+  { id: 'integrations', label: 'Integrations', icon: Plug },
 ];
 
 const quickLinks = [

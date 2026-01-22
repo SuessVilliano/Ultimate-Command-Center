@@ -1048,7 +1048,28 @@ app.get('/api/taskade/workspaces/:workspaceId/folders', async (req, res) => {
   }
 });
 
-// Get Taskade projects
+// Get Taskade projects from workspace (gets all folders and their projects)
+app.get('/api/taskade/workspaces/:workspaceId/projects', async (req, res) => {
+  try {
+    const foldersResult = await integrations.taskade.getFolders(req.params.workspaceId);
+    const folders = foldersResult.items || [];
+    const allProjects = [];
+    for (const folder of folders) {
+      try {
+        const projectsResult = await integrations.taskade.getProjects(folder.id);
+        const projects = projectsResult.items || [];
+        allProjects.push(...projects.map(p => ({ ...p, folderId: folder.id, folderName: folder.name })));
+      } catch (e) {
+        console.warn('Failed to get projects for folder:', folder.id);
+      }
+    }
+    res.json({ items: allProjects });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get Taskade projects from folder
 app.get('/api/taskade/folders/:folderId/projects', async (req, res) => {
   try {
     const result = await integrations.taskade.getProjects(req.params.folderId);

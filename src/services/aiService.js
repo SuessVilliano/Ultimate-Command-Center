@@ -5,7 +5,7 @@
 import { COMMANDER_AGENT, SPECIALIZED_AGENTS, findBestAgentForTask, getAgentById } from '../data/agents';
 import { getAgentKnowledge } from '../data/knowledgebase/index';
 
-const BACKEND_URL = 'http://localhost:3005';
+const BACKEND_URL = import.meta.env.VITE_API_URL || 'http://localhost:3005';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
 
 // Storage keys
