@@ -1,51 +1,39 @@
-# Render Blueprint for LIV8 Command Center
-# Deploy with: https://render.com/deploy
-
 services:
-  # Backend API Server
   - type: web
     name: liv8-ai-server
     runtime: node
+    plan: free
     buildCommand: cd server && npm install
     startCommand: cd server && node server.js
+    healthCheckPath: /health
+    autoDeploy: true
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
-        value: 3005
-      - key: ANTHROPIC_API_KEY
-        sync: false  # You'll need to set this manually
-      - key: OPENAI_API_KEY
-        sync: false  # Optional
-      - key: FRESHDESK_DOMAIN
-        sync: false
-      - key: FRESHDESK_API_KEY
-        sync: false
-      - key: FRESHDESK_AGENT_ID
-        sync: false
-      - key: SCHEDULE_ENABLED
-        value: "true"
+        value: "3005"
       - key: AI_PROVIDER
         value: claude
-      # Taskade Integration
+      - key: SCHEDULE_ENABLED
+        value: "true"
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
       - key: TASKADE_API_KEY
         sync: false
-      # TaskMagic Integration
       - key: TASKMAGIC_WEBHOOK_URL
         sync: false
       - key: TASKMAGIC_MCP_TOKEN
         sync: false
-      # GoHighLevel Integration
       - key: GHL_API_KEY
         sync: false
       - key: GHL_LOCATION_ID
         sync: false
-      # Supabase Integration
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY
         sync: false
-      # Nifty PM Integration (OAuth 2.0)
       - key: NIFTY_CLIENT_ID
         sync: false
       - key: NIFTY_CLIENT_SECRET
@@ -56,18 +44,22 @@ services:
         sync: false
       - key: NIFTY_REFRESH_TOKEN
         sync: false
-      # n8n Integration
       - key: N8N_WEBHOOK_URL
         sync: false
-    healthCheckPath: /health
-    autoDeploy: true
+      - key: FRESHDESK_DOMAIN
+        sync: false
+      - key: FRESHDESK_API_KEY
+        sync: false
+      - key: FRESHDESK_AGENT_ID
+        sync: false
 
-  # Frontend (Static Site)
   - type: web
     name: liv8-command-center
     runtime: static
+    plan: free
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist
+    autoDeploy: true
     envVars:
       - key: VITE_API_URL
         fromService:
