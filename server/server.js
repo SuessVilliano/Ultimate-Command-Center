@@ -30,6 +30,8 @@ import * as agentKnowledge from './lib/agent-knowledge.js';
 import * as contentIngestion from './lib/content-ingestion.js';
 import * as orchestrator from './lib/agent-orchestrator.js';
 import { registerNiftyRoutes } from './routes/nifty-routes.js';
+import { taskmagicMCP } from './lib/taskmagic-mcp.js';
+import { unifiedTasks } from './lib/unified-tasks.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
