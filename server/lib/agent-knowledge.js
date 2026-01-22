@@ -10,14 +10,21 @@
 
 import Database from 'better-sqlite3';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Ensure data directory exists before creating database
+const dataDir = path.join(__dirname, '..', 'data');
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
 // Initialize database
-const dbPath = path.join(__dirname, '..', 'data', 'agent-knowledge.db');
+const dbPath = path.join(dataDir, 'agent-knowledge.db');
 const db = new Database(dbPath);
 
 // Create tables for agent knowledge bases
