@@ -27,6 +27,38 @@ services:
         value: "true"
       - key: AI_PROVIDER
         value: claude
+      # Taskade Integration
+      - key: TASKADE_API_KEY
+        sync: false
+      # TaskMagic Integration
+      - key: TASKMAGIC_WEBHOOK_URL
+        sync: false
+      - key: TASKMAGIC_MCP_TOKEN
+        sync: false
+      # GoHighLevel Integration
+      - key: GHL_API_KEY
+        sync: false
+      - key: GHL_LOCATION_ID
+        sync: false
+      # Supabase Integration
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      # Nifty PM Integration (OAuth 2.0)
+      - key: NIFTY_CLIENT_ID
+        sync: false
+      - key: NIFTY_CLIENT_SECRET
+        sync: false
+      - key: NIFTY_REDIRECT_URI
+        sync: false
+      - key: NIFTY_ACCESS_TOKEN
+        sync: false
+      - key: NIFTY_REFRESH_TOKEN
+        sync: false
+      # n8n Integration
+      - key: N8N_WEBHOOK_URL
+        sync: false
     healthCheckPath: /health
     autoDeploy: true
 

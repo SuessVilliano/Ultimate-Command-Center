@@ -29,6 +29,7 @@ import * as integrations from './lib/integrations.js';
 import * as agentKnowledge from './lib/agent-knowledge.js';
 import * as contentIngestion from './lib/content-ingestion.js';
 import * as orchestrator from './lib/agent-orchestrator.js';
+import { registerNiftyRoutes } from './routes/nifty-routes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1889,6 +1890,9 @@ app.post('/api/agent-conversations', (req, res) => {
 // ============================================
 // START SERVER
 // ============================================
+
+// Register Nifty routes
+registerNiftyRoutes(app);
 
 app.listen(PORT, () => {
   const providerInfo = ai.getCurrentProvider();

@@ -1,9 +1,10 @@
 /**
  * LIV8 Command Center - External Integrations
- * Taskade, TaskMagic, GoHighLevel, Supabase
+ * Taskade, TaskMagic, GoHighLevel, Supabase, Nifty PM
  */
 
 import * as db from './database.js';
+import { nifty } from './nifty-integration.js';
 
 // ============================================================================
 // TASKADE INTEGRATION
@@ -472,7 +473,8 @@ export async function checkIntegrationStatus() {
     taskade: { configured: !!process.env.TASKADE_API_KEY, connected: false },
     taskmagic: { configured: !!process.env.TASKMAGIC_WEBHOOK_URL, connected: false },
     ghl: { configured: !!process.env.GHL_API_KEY, connected: false },
-    supabase: { configured: !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY), connected: false }
+    supabase: { configured: !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY), connected: false },
+    nifty: { configured: !!process.env.NIFTY_API_KEY, connected: false }
   };
 
   // Test Taskade
