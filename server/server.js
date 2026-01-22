@@ -1953,6 +1953,73 @@ app.post('/api/portfolio/sync', async (req, res) => {
   }
 });
 
+
+
+// ============================================
+// TASKMAGIC MCP - Full Bot Control
+// ============================================
+
+app.get('/api/taskmagic/mcp/status', async (req, res) => {
+  try {
+    const status = await taskmagicMCP.getStatus();
+    res.json(status);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/taskmagic/mcp/bots', async (req, res) => {
+  try {
+    const bots = await taskmagicMCP.getBots();
+    res.json(bots);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/taskmagic/mcp/bots/:botId/run', async (req, res) => {
+  try {
+    const { botId } = req.params;
+    const result = await taskmagicMCP.runBot(botId, req.body);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// UNIFIED TASKS - Cross-Platform Sync
+// ============================================
+
+app.get('/api/unified/tasks', async (req, res) => {
+  try {
+    const tasks = await unifiedTasks.getAllTasks();
+    res.json(tasks);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/unified/projects', async (req, res) => {
+  try {
+    const projects = await unifiedTasks.getProjects();
+    res.json(projects);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/unified/command', async (req, res) => {
+  try {
+    const { command, context } = req.body;
+    const parsed = unifiedTasks.parseCommand(command);
+    const result = await unifiedTasks.executeCommand(parsed, context || {});
+    res.json({ parsed, result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ============================================
 // START SERVER
 // ============================================
