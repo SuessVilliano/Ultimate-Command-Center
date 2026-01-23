@@ -35,6 +35,7 @@ import { unifiedTasks } from './lib/unified-tasks.js';
 import * as githubPortfolio from './lib/github-portfolio.js';
 import { marketData } from './lib/market-data.js';
 import * as taskSync from './lib/task-sync-service.js';
+import * as briefing from './lib/proactive-briefing.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -71,9 +72,11 @@ try {
   memory.initConversationTables();
   agentKnowledge.initAgentKnowledge();
   taskSync.initSyncTables();
+  briefing.initBriefingTables();
   console.log('Database: Initialized');
   console.log('Conversation Memory: Initialized');
   console.log('Task Sync: Initialized');
+  console.log('Proactive Briefing: Initialized');
 } catch (e) {
   console.error('Database initialization failed:', e.message);
 }
@@ -2238,6 +2241,177 @@ app.post('/api/sync/mappings', (req, res) => {
   try {
     const result = taskSync.createTaskMapping(req.body);
     res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// PROACTIVE BRIEFING & ADHD FEATURES
+// ============================================
+
+// Generate daily briefing
+app.get('/api/briefing', async (req, res) => {
+  try {
+    const { type = 'morning' } = req.query;
+    const result = await briefing.generateBriefing(type);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Parking Lot - Quick capture
+app.post('/api/parking-lot', (req, res) => {
+  try {
+    const { thought, context, priority } = req.body;
+    const result = briefing.addToParkingLot(thought, context, priority);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/parking-lot', (req, res) => {
+  try {
+    const { limit = 20 } = req.query;
+    const items = briefing.getParkingLotItems(parseInt(limit));
+    res.json({ items });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/parking-lot/:id/process', (req, res) => {
+  try {
+    const result = briefing.processParkingLotItem(req.params.id);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/parking-lot', (req, res) => {
+  try {
+    const result = briefing.clearParkingLot();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Pomodoro Timer
+app.post('/api/pomodoro/start', (req, res) => {
+  try {
+    const { taskDescription, taskId, duration = 25 } = req.body;
+    const result = briefing.startPomodoro(taskDescription, taskId, duration);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/pomodoro/end', (req, res) => {
+  try {
+    const { sessionId, completed = true } = req.body;
+    const result = briefing.endPomodoro(sessionId, completed);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/pomodoro/active', (req, res) => {
+  try {
+    const session = briefing.getActivePomodoro();
+    res.json({ session });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/pomodoro/interrupt', (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    const result = briefing.recordInterruption(sessionId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Activity tracking - "What was I doing?"
+app.post('/api/activity', (req, res) => {
+  try {
+    const { action, context, page } = req.body;
+    briefing.logActivity(action, context, page);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/activity/recent', (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+    const activities = briefing.getRecentActivity(parseInt(limit));
+    res.json({ activities });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/activity/what-was-i-doing', (req, res) => {
+  try {
+    const summary = briefing.getWhatWasIDoing();
+    res.json(summary);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Automation Rules
+app.post('/api/automation/rules', (req, res) => {
+  try {
+    const result = briefing.createAutomationRule(req.body);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/automation/rules', (req, res) => {
+  try {
+    const rules = briefing.getAutomationRules();
+    res.json({ rules });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Calendar endpoints
+app.get('/api/calendar/today', (req, res) => {
+  try {
+    const events = calendarService.getTodaysEvents();
+    res.json({ events: events.map(calendarService.formatEventForDisplay) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/calendar/summary', (req, res) => {
+  try {
+    const summary = calendarService.getCalendarSummary();
+    res.json(summary);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/calendar/free-time', (req, res) => {
+  try {
+    const freeBlocks = calendarService.getFreeTimeBlocks();
+    res.json({ freeBlocks });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

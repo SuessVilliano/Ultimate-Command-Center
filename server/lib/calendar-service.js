@@ -281,6 +281,101 @@ export function getOAuthUrl(clientId, redirectUri) {
     `&access_type=online`;
 }
 
+/**
+ * Get free time blocks for today
+ */
+export function getFreeTimeBlocks() {
+  const todayEvents = getTodaysEvents();
+  const now = new Date();
+  const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 18, 0, 0); // 6 PM
+
+  if (now >= endOfDay) return [];
+
+  const freeBlocks = [];
+  let currentTime = now;
+
+  const sortedEvents = todayEvents
+    .filter(e => new Date(e.end_time || e.start_time) > now)
+    .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+
+  for (const event of sortedEvents) {
+    const eventStart = new Date(event.start_time);
+
+    if (eventStart > currentTime) {
+      const durationMins = Math.floor((eventStart - currentTime) / (1000 * 60));
+      if (durationMins >= 15) {
+        freeBlocks.push({
+          start: currentTime.toISOString(),
+          end: eventStart.toISOString(),
+          durationMinutes: durationMins
+        });
+      }
+    }
+
+    const eventEnd = new Date(event.end_time || event.start_time);
+    if (eventEnd > currentTime) {
+      currentTime = eventEnd;
+    }
+  }
+
+  if (currentTime < endOfDay) {
+    const durationMins = Math.floor((endOfDay - currentTime) / (1000 * 60));
+    if (durationMins >= 15) {
+      freeBlocks.push({
+        start: currentTime.toISOString(),
+        end: endOfDay.toISOString(),
+        durationMinutes: durationMins
+      });
+    }
+  }
+
+  return freeBlocks;
+}
+
+/**
+ * Get next meeting
+ */
+export function getNextMeeting() {
+  const upcoming = getUpcomingEvents(8);
+  return upcoming[0] || null;
+}
+
+/**
+ * Check if user is in a meeting now
+ */
+export function isInMeeting() {
+  const now = new Date();
+  const todayEvents = getTodaysEvents();
+
+  return todayEvents.some(event => {
+    const start = new Date(event.start_time);
+    const end = new Date(event.end_time || event.start_time);
+    return now >= start && now <= end;
+  });
+}
+
+/**
+ * Get calendar summary for briefing
+ */
+export function getCalendarSummary() {
+  const todayEvents = getTodaysEvents();
+  const freeBlocks = getFreeTimeBlocks();
+  const nextMeeting = getNextMeeting();
+  const inMeeting = isInMeeting();
+
+  const totalFreeMinutes = freeBlocks.reduce((sum, block) => sum + block.durationMinutes, 0);
+
+  return {
+    todayEventCount: todayEvents.length,
+    todayEvents: todayEvents.slice(0, 5).map(formatEventForDisplay),
+    freeTimeMinutes: totalFreeMinutes,
+    freeBlocks: freeBlocks.slice(0, 3),
+    nextMeeting: nextMeeting ? formatEventForDisplay(nextMeeting) : null,
+    isInMeeting: inMeeting,
+    suggestedFocusTime: freeBlocks.find(b => b.durationMinutes >= 60) || null
+  };
+}
+
 export default {
   initCalendarService,
   fetchCalendarEvents,
@@ -289,5 +384,9 @@ export default {
   getUpcomingEvents,
   getEventsNeedingReminder,
   formatEventForDisplay,
-  getOAuthUrl
+  getOAuthUrl,
+  getFreeTimeBlocks,
+  getNextMeeting,
+  isInMeeting,
+  getCalendarSummary
 };
