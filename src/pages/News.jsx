@@ -253,9 +253,12 @@ function News() {
       </div>
 
       {/* Market Overview Cards */}
-      {marketData?.crypto && (
+      {marketData?.crypto && Object.keys(marketData.crypto).length > 0 && (
         <div className="grid grid-cols-3 gap-4">
-          {Object.entries(marketData.crypto).map(([symbol, data]) => {
+          {['BTC', 'ETH', 'SOL'].map(symbol => {
+            const data = marketData.crypto[symbol];
+            if (!data) return null;
+
             const Icon = MarketIcons[symbol] || DollarSign;
             const isPositive = (data.change24h || 0) >= 0;
 
@@ -295,7 +298,7 @@ function News() {
                 </div>
               </div>
             );
-          })}
+          }).filter(Boolean)}
         </div>
       )}
 

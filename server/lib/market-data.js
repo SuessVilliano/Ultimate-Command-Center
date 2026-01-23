@@ -210,6 +210,23 @@ async function getBBFinanceStats(symbol) {
 }
 
 /**
+ * Fetch coin data from CoinGecko (free fallback)
+ */
+async function fetchCoinGecko(coinId) {
+  try {
+    const response = await fetch(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd&include_24hr_change=true`
+    );
+    if (response.ok) {
+      return response.json();
+    }
+  } catch (e) {
+    console.error('CoinGecko error:', e.message);
+  }
+  return null;
+}
+
+/**
  * Aggregate market data for dashboard
  */
 async function getMarketOverview() {
@@ -227,11 +244,13 @@ async function getMarketOverview() {
   }
 
   // Fetch all data in parallel
-  const [cryptoStats, topCoins, binanceTickers, movers] = await Promise.all([
+  const [cryptoStats, topCoins, binanceTickers, movers, solanaPrice] = await Promise.all([
     getCryptoStats(),
-    getTopCoins(5),
+    getTopCoins(10), // Get top 10 to have a better chance of including SOL
     getBinanceTickers(['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT']),
-    getMarketMovers('US', 'volume_gainers')
+    getMarketMovers('US', 'volume_gainers'),
+    // Fallback: fetch SOL from CoinGecko if not in top coins
+    fetchCoinGecko('solana')
   ]);
 
   // Process crypto data
@@ -272,6 +291,15 @@ async function getMarketOverview() {
         };
       }
     });
+  }
+
+  // Add SOL from CoinGecko if not already present
+  if (!cryptoData['SOL'] && solanaPrice?.solana) {
+    cryptoData['SOL'] = {
+      name: 'Solana',
+      price: solanaPrice.solana.usd || 0,
+      change24h: solanaPrice.solana.usd_24h_change || 0
+    };
   }
 
   // Update cache
