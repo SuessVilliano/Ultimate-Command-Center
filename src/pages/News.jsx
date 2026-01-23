@@ -108,15 +108,21 @@ function News() {
 
   const fetchFinancialNews = async () => {
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
       const response = await fetch(
-        `${AI_SERVER_URL}/api/news/financial?topics=${selectedTopics.join(',')}&limit=20`
+        `${AI_SERVER_URL}/api/news/financial?topics=${selectedTopics.join(',')}&limit=20`,
+        { signal: controller.signal }
       );
+      clearTimeout(timeoutId);
+
       if (response.ok) {
         const data = await response.json();
         setFinancialNews(data.news || []);
       }
     } catch (e) {
-      console.log('Could not fetch financial news');
+      console.log('Could not fetch financial news:', e.message);
       // Use cached
       try {
         const cached = await fetch(`${AI_SERVER_URL}/api/news/financial/cached?limit=20`);
@@ -124,31 +130,47 @@ function News() {
           const data = await cached.json();
           setFinancialNews(data.news || []);
         }
-      } catch (e2) {}
+      } catch (e2) {
+        console.log('Could not fetch cached news');
+      }
     }
   };
 
   const fetchPersonalUpdates = async () => {
     try {
-      const response = await fetch(`${AI_SERVER_URL}/api/news/personal?limit=20`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      const response = await fetch(`${AI_SERVER_URL}/api/news/personal?limit=20`, {
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
       if (response.ok) {
         const data = await response.json();
         setPersonalUpdates(data.updates || []);
       }
     } catch (e) {
-      console.log('Could not fetch personal updates');
+      console.log('Could not fetch personal updates:', e.message);
     }
   };
 
   const fetchMarketData = async () => {
     try {
-      const response = await fetch(`${AI_SERVER_URL}/api/news/market`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      const response = await fetch(`${AI_SERVER_URL}/api/news/market`, {
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
       if (response.ok) {
         const data = await response.json();
         setMarketData(data);
       }
     } catch (e) {
-      console.log('Could not fetch market data');
+      console.log('Could not fetch market data:', e.message);
     }
   };
 
@@ -189,38 +211,30 @@ function News() {
     return `${Math.floor(diff / 86400)}d ago`;
   };
 
-  // Show loading screen on initial load
-  if (loading && financialNews.length === 0 && !marketData) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <RefreshCw className="w-8 h-8 animate-spin text-purple-500 mx-auto mb-4" />
-          <p className={isDark ? 'text-gray-400' : 'text-gray-500'}>Loading News & Markets...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Show error state
-  if (error && financialNews.length === 0) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-4" />
-          <p className={isDark ? 'text-gray-400' : 'text-gray-500'}>{error}</p>
-          <button
-            onClick={fetchAllData}
-            className="mt-4 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
-          >
-            Retry
-          </button>
-        </div>
-      </div>
-    );
-  }
+  // Show inline loading indicator but always render the page structure
+  const isInitialLoad = loading && financialNews.length === 0 && !marketData;
 
   return (
     <div className="space-y-6">
+      {/* Loading Overlay */}
+      {isInitialLoad && (
+        <div className="flex items-center justify-center py-8">
+          <RefreshCw className="w-6 h-6 animate-spin text-purple-500 mr-3" />
+          <span className={isDark ? 'text-gray-400' : 'text-gray-500'}>Loading News & Markets...</span>
+        </div>
+      )}
+
+      {/* Error Banner */}
+      {error && (
+        <div className={`p-4 rounded-lg ${isDark ? 'bg-red-900/20 border border-red-900/30' : 'bg-red-50 border border-red-200'}`}>
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-5 h-5 text-red-500" />
+            <span className={isDark ? 'text-red-400' : 'text-red-600'}>{error}</span>
+            <button onClick={fetchAllData} className="ml-auto text-sm underline">Retry</button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
