@@ -54,9 +54,102 @@ function Integrations() {
   const [commandResult, setCommandResult] = useState(null);
   const [executingCommand, setExecutingCommand] = useState(false);
 
+  // Sync State
+  const [syncStatus, setSyncStatus] = useState(null);
+  const [syncHistory, setSyncHistory] = useState([]);
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [selectedSourceProject, setSelectedSourceProject] = useState(null);
+  const [selectedTargetProject, setSelectedTargetProject] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+
   useEffect(() => {
     loadIntegrationStatus();
+    loadSyncStatus();
   }, []);
+
+  // ============================================
+  // SYNC FUNCTIONS
+  // ============================================
+
+  const loadSyncStatus = async () => {
+    try {
+      const [statusRes, historyRes] = await Promise.all([
+        fetch(`${API_URL}/api/sync/status`),
+        fetch(`${API_URL}/api/sync/history?limit=10`)
+      ]);
+
+      if (statusRes.ok) {
+        const data = await statusRes.json();
+        setSyncStatus(data);
+      }
+      if (historyRes.ok) {
+        const data = await historyRes.json();
+        setSyncHistory(data.history || []);
+      }
+    } catch (error) {
+      console.error('Failed to load sync status:', error);
+    }
+  };
+
+  const performProjectSync = async () => {
+    if (!selectedSourceProject || !selectedTargetProject) {
+      alert('Please select both source and target projects');
+      return;
+    }
+
+    setSyncing(true);
+    try {
+      const response = await fetch(`${API_URL}/api/sync/projects`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sourcePlatform: selectedSourceProject.platform,
+          sourceProjectId: selectedSourceProject.id,
+          targetPlatform: selectedTargetProject.platform,
+          targetProjectId: selectedTargetProject.id
+        })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        alert(`Sync complete! Created: ${result.created?.length || 0}, Skipped: ${result.skipped?.length || 0}`);
+        loadSyncStatus();
+      } else {
+        const error = await response.json();
+        alert(`Sync failed: ${error.error}`);
+      }
+    } catch (error) {
+      alert(`Sync failed: ${error.message}`);
+    }
+    setSyncing(false);
+  };
+
+  const getAllProjects = () => {
+    const projects = [];
+
+    // Taskade projects
+    Object.entries(taskadeProjects).forEach(([workspaceId, prjs]) => {
+      prjs.forEach(p => {
+        const workspace = taskadeWorkspaces.find(w => w.id === workspaceId);
+        projects.push({
+          id: p.id,
+          name: `${workspace?.name || 'Workspace'} / ${p.name}`,
+          platform: 'taskade'
+        });
+      });
+    });
+
+    // Nifty projects
+    niftyProjects.forEach(p => {
+      projects.push({
+        id: p.id,
+        name: p.name,
+        platform: 'nifty'
+      });
+    });
+
+    return projects;
+  };
 
   const loadIntegrationStatus = async () => {
     setLoading(true);
@@ -562,6 +655,152 @@ function Integrations() {
             <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Total Configured</p>
           </div>
         </div>
+      </div>
+
+      {/* Cross-Platform Sync */}
+      <div className={`rounded-xl border p-6 ${isDark ? 'bg-[#0a0a0f] border-cyan-900/30' : 'bg-white border-cyan-200 shadow-sm'}`}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-cyan-500/20">
+              <ArrowRightLeft className="w-6 h-6 text-cyan-400" />
+            </div>
+            <div>
+              <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>Cross-Platform Task Sync</h3>
+              <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Sync tasks between Taskade and Nifty automatically</p>
+            </div>
+          </div>
+          <button
+            onClick={loadSyncStatus}
+            className={`p-2 rounded-lg ${isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}
+          >
+            <RefreshCw className={`w-4 h-4 ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />
+          </button>
+        </div>
+
+        {/* Sync Status */}
+        {syncStatus && (
+          <div className="grid grid-cols-3 gap-4 mb-6">
+            <div className={`p-3 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+              <p className="text-xl font-bold text-cyan-400">{syncStatus.mappings || 0}</p>
+              <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Task Mappings</p>
+            </div>
+            <div className={`p-3 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+              <p className="text-xl font-bold text-purple-400">{syncStatus.activeConfigs || 0}</p>
+              <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Active Sync Rules</p>
+            </div>
+            <div className={`p-3 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+              <p className="text-xl font-bold text-green-400">
+                {Object.values(syncStatus.platforms || {}).filter(Boolean).length}
+              </p>
+              <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Platforms Connected</p>
+            </div>
+          </div>
+        )}
+
+        {/* Sync Setup */}
+        <div className={`p-4 rounded-lg border mb-4 ${isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-gray-50'}`}>
+          <h4 className={`font-medium mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>Set Up Project Sync</h4>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className={`block text-xs mb-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Source Project</label>
+              <select
+                value={selectedSourceProject ? `${selectedSourceProject.platform}:${selectedSourceProject.id}` : ''}
+                onChange={(e) => {
+                  const [platform, id] = e.target.value.split(':');
+                  const proj = getAllProjects().find(p => p.platform === platform && p.id === id);
+                  setSelectedSourceProject(proj || null);
+                }}
+                className={`w-full px-3 py-2 rounded-lg border text-sm ${
+                  isDark
+                    ? 'bg-black/50 border-purple-900/30 text-white'
+                    : 'bg-white border-gray-200 text-gray-900'
+                }`}
+              >
+                <option value="">Select source...</option>
+                {getAllProjects().map((p) => (
+                  <option key={`${p.platform}:${p.id}`} value={`${p.platform}:${p.id}`}>
+                    [{p.platform.toUpperCase()}] {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={`block text-xs mb-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Target Project</label>
+              <select
+                value={selectedTargetProject ? `${selectedTargetProject.platform}:${selectedTargetProject.id}` : ''}
+                onChange={(e) => {
+                  const [platform, id] = e.target.value.split(':');
+                  const proj = getAllProjects().find(p => p.platform === platform && p.id === id);
+                  setSelectedTargetProject(proj || null);
+                }}
+                className={`w-full px-3 py-2 rounded-lg border text-sm ${
+                  isDark
+                    ? 'bg-black/50 border-purple-900/30 text-white'
+                    : 'bg-white border-gray-200 text-gray-900'
+                }`}
+              >
+                <option value="">Select target...</option>
+                {getAllProjects().filter(p =>
+                  !selectedSourceProject || p.platform !== selectedSourceProject.platform || p.id !== selectedSourceProject.id
+                ).map((p) => (
+                  <option key={`${p.platform}:${p.id}`} value={`${p.platform}:${p.id}`}>
+                    [{p.platform.toUpperCase()}] {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <button
+            onClick={performProjectSync}
+            disabled={syncing || !selectedSourceProject || !selectedTargetProject}
+            className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {syncing ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                Syncing...
+              </>
+            ) : (
+              <>
+                <ArrowRightLeft className="w-4 h-4" />
+                Sync Projects
+              </>
+            )}
+          </button>
+          <p className={`text-xs mt-2 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+            This will copy all tasks from source to target and enable auto-sync for future changes
+          </p>
+        </div>
+
+        {/* Recent Sync History */}
+        {syncHistory.length > 0 && (
+          <div>
+            <h4 className={`font-medium mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>Recent Sync Activity</h4>
+            <div className="space-y-2 max-h-40 overflow-y-auto">
+              {syncHistory.map((item, index) => (
+                <div
+                  key={index}
+                  className={`flex items-center justify-between p-2 rounded text-sm ${
+                    isDark ? 'bg-white/5' : 'bg-gray-50'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${
+                      item.status === 'success' ? 'bg-green-400' :
+                      item.status === 'error' ? 'bg-red-400' : 'bg-yellow-400'
+                    }`} />
+                    <span className={isDark ? 'text-gray-300' : 'text-gray-700'}>
+                      {item.action}: {item.task_title || item.source_platform} → {item.target_platform}
+                    </span>
+                  </div>
+                  <span className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                    {new Date(item.created_at).toLocaleTimeString()}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

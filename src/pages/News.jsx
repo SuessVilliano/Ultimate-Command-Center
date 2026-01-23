@@ -537,14 +537,18 @@ function News() {
               Data Sources
             </h3>
             <ul className={`text-xs space-y-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-              <li>CoinGecko (Crypto prices)</li>
-              <li>Alpha Vantage (Market news)</li>
-              <li>Finnhub (Financial data)</li>
-              <li>Freshdesk (Ticket updates)</li>
+              <li>Coinranking (Crypto stats)</li>
+              <li>Binance (Real-time prices)</li>
+              <li>Benzinga (Market news)</li>
+              <li>TradingView (Market movers)</li>
+              <li>Real-Time News (Headlines)</li>
+              <li>Alpha Vantage (Stock quotes)</li>
             </ul>
-            <p className={`text-xs mt-2 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-              Add API keys to .env for more data
-            </p>
+            {marketData?.source && (
+              <p className={`text-xs mt-2 ${isDark ? 'text-green-400' : 'text-green-600'}`}>
+                Source: {marketData.source === 'rapidapi' ? 'RapidAPI (Premium)' : 'CoinGecko (Free)'}
+              </p>
+            )}
           </div>
         </div>
       </div>

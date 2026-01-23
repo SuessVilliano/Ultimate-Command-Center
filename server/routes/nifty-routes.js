@@ -23,14 +23,34 @@ export function registerNiftyRoutes(app) {
   // OAuth callback - exchange code for token
   app.get('/api/nifty/callback', async (req, res) => {
     try {
-      const { code } = req.query;
-      if (!code) {
-        return res.status(400).json({ error: 'Authorization code required' });
+      const { code, error: oauthError, error_description } = req.query;
+
+      // Determine frontend URL (for redirect after OAuth)
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
+
+      console.log('Nifty OAuth callback received:', { code: code ? 'present' : 'missing', error: oauthError });
+
+      if (oauthError) {
+        const errorMsg = error_description || oauthError;
+        console.error('Nifty OAuth error from provider:', errorMsg);
+        return res.redirect(`${frontendUrl}/?page=integrations&nifty_error=${encodeURIComponent(errorMsg)}`);
       }
+
+      if (!code) {
+        console.error('Nifty OAuth: No code received');
+        return res.redirect(`${frontendUrl}/?page=integrations&nifty_error=${encodeURIComponent('No authorization code received')}`);
+      }
+
+      console.log('Exchanging code for token...');
       const tokens = await nifty.exchangeCodeForToken(code);
-      res.json({ success: true, message: 'Authentication successful', tokens });
+      console.log('Token exchange successful');
+
+      // Redirect back to integrations page with success
+      res.redirect(`${frontendUrl}/?page=integrations&nifty_connected=true`);
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      console.error('Nifty OAuth token exchange error:', error.message);
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
+      res.redirect(`${frontendUrl}/?page=integrations&nifty_error=${encodeURIComponent(error.message)}`);
     }
   });
 
@@ -38,7 +58,16 @@ export function registerNiftyRoutes(app) {
   app.get('/api/nifty/auth/status', (req, res) => {
     try {
       const status = nifty.getTokenStatus();
-      res.json(status);
+      const redirectUri = process.env.NIFTY_REDIRECT_URI || 'Not configured';
+
+      res.json({
+        ...status,
+        authenticated: status.hasAccessToken && !status.isExpired,
+        redirectUri,
+        configNote: redirectUri.includes('localhost')
+          ? 'Add this redirect URI to your Nifty OAuth app: ' + redirectUri
+          : null
+      });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }

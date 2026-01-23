@@ -1,167 +1,99 @@
 /**
- * TaskMagic MCP Integration
- * Full MCP control for TaskMagic automations
+ * TaskMagic Integration
+ *
+ * NOTE: TaskMagic does NOT have a REST API.
+ * Integration works via webhooks only.
+ *
+ * The TASKMAGIC_MCP_TOKEN is for Model Context Protocol (AI) integration,
+ * not for TaskMagic's internal API.
  */
-
-const TASKMAGIC_MCP_BASE = 'https://api.taskmagic.com/mcp/v1';
 
 /**
- * Make TaskMagic MCP API request
+ * Trigger a TaskMagic webhook with payload
  */
-async function taskmagicMCPRequest(endpoint, options = {}) {
-  const token = process.env.TASKMAGIC_MCP_TOKEN;
-  if (!token) {
-    throw new Error('TASKMAGIC_MCP_TOKEN not configured');
+async function triggerWebhook(webhookUrl, payload = {}) {
+  if (!webhookUrl) {
+    throw new Error('Webhook URL required');
   }
 
-  const response = await fetch(`${TASKMAGIC_MCP_BASE}${endpoint}`, {
-    ...options,
+  const response = await fetch(webhookUrl, {
+    method: 'POST',
     headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      ...options.headers
-    }
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
   });
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`TaskMagic MCP error: ${response.status} - ${errorText}`);
+    throw new Error(`TaskMagic webhook error: ${response.status} - ${errorText}`);
   }
 
-  return response.json();
+  return { success: true, status: response.status };
 }
 
 export const taskmagicMCP = {
-  // Check if MCP is configured
+  // Check if webhook is configured
   isConfigured() {
-    return !!process.env.TASKMAGIC_MCP_TOKEN;
+    return !!process.env.TASKMAGIC_WEBHOOK_URL;
   },
 
-  // Get all bots/automations
-  async getBots() {
-    try {
-      return await taskmagicMCPRequest('/bots');
-    } catch (e) {
-      console.error('TaskMagic getBots error:', e.message);
-      return { bots: [], error: e.message };
+  // Get webhook URL
+  getWebhookUrl() {
+    return process.env.TASKMAGIC_WEBHOOK_URL || null;
+  },
+
+  // Trigger the default webhook
+  async trigger(payload = {}) {
+    const webhookUrl = process.env.TASKMAGIC_WEBHOOK_URL;
+    if (!webhookUrl) {
+      throw new Error('TASKMAGIC_WEBHOOK_URL not configured');
     }
+    return triggerWebhook(webhookUrl, payload);
   },
 
-  // Get specific bot details
-  async getBot(botId) {
-    return taskmagicMCPRequest(`/bots/${botId}`);
-  },
-
-  // Run a bot/automation
-  async runBot(botId, params = {}) {
-    return taskmagicMCPRequest(`/bots/${botId}/run`, {
-      method: 'POST',
-      body: JSON.stringify(params)
-    });
-  },
-
-  // Get bot run history
-  async getBotRuns(botId, limit = 10) {
-    return taskmagicMCPRequest(`/bots/${botId}/runs?limit=${limit}`);
-  },
-
-  // Get specific run status
-  async getRunStatus(runId) {
-    return taskmagicMCPRequest(`/runs/${runId}`);
-  },
-
-  // Stop a running bot
-  async stopRun(runId) {
-    return taskmagicMCPRequest(`/runs/${runId}/stop`, {
-      method: 'POST'
-    });
-  },
-
-  // Get all available actions/tasks
-  async getActions() {
-    try {
-      return await taskmagicMCPRequest('/actions');
-    } catch (e) {
-      console.error('TaskMagic getActions error:', e.message);
-      return { actions: [], error: e.message };
-    }
-  },
-
-  // Execute a specific action
-  async executeAction(actionId, params = {}) {
-    return taskmagicMCPRequest(`/actions/${actionId}/execute`, {
-      method: 'POST',
-      body: JSON.stringify(params)
-    });
-  },
-
-  // Get workspace info
-  async getWorkspace() {
-    try {
-      return await taskmagicMCPRequest('/workspace');
-    } catch (e) {
-      console.error('TaskMagic getWorkspace error:', e.message);
-      return { error: e.message };
-    }
-  },
-
-  // Create a new bot
-  async createBot(config) {
-    return taskmagicMCPRequest('/bots', {
-      method: 'POST',
-      body: JSON.stringify(config)
-    });
-  },
-
-  // Update bot configuration
-  async updateBot(botId, config) {
-    return taskmagicMCPRequest(`/bots/${botId}`, {
-      method: 'PUT',
-      body: JSON.stringify(config)
-    });
-  },
-
-  // Delete a bot
-  async deleteBot(botId) {
-    return taskmagicMCPRequest(`/bots/${botId}`, {
-      method: 'DELETE'
-    });
-  },
-
-  // Get schedules
-  async getSchedules() {
-    try {
-      return await taskmagicMCPRequest('/schedules');
-    } catch (e) {
-      return { schedules: [], error: e.message };
-    }
-  },
-
-  // Create schedule for a bot
-  async createSchedule(botId, schedule) {
-    return taskmagicMCPRequest('/schedules', {
-      method: 'POST',
-      body: JSON.stringify({ botId, ...schedule })
-    });
+  // Trigger a specific webhook URL
+  async triggerCustom(webhookUrl, payload = {}) {
+    return triggerWebhook(webhookUrl, payload);
   },
 
   // Get integration status
+  // Note: TaskMagic doesn't have an API to check connection,
+  // we can only verify the webhook URL is configured
   async getStatus() {
     const configured = this.isConfigured();
-    if (!configured) {
-      return { configured: false, connected: false };
+    return {
+      configured,
+      connected: configured, // If webhook URL exists, consider it "connected"
+      webhookUrl: configured ? this.getWebhookUrl() : null,
+      note: 'TaskMagic uses webhooks only - no REST API available'
+    };
+  },
+
+  // Simulate bots list (stored locally or retrieved from database)
+  async getBots() {
+    // Since TaskMagic has no API, bots must be configured manually
+    // Return empty list or configured bots from database
+    return {
+      bots: [],
+      note: 'Configure TaskMagic bots manually. Use webhooks to trigger automations.'
+    };
+  },
+
+  // Run automation via webhook
+  async runBot(botId, params = {}) {
+    // For TaskMagic, "running a bot" means triggering its webhook
+    // The botId would be the webhook identifier
+    const webhookUrl = process.env.TASKMAGIC_WEBHOOK_URL;
+    if (!webhookUrl) {
+      throw new Error('No webhook URL configured');
     }
 
-    try {
-      const workspace = await this.getWorkspace();
-      return {
-        configured: true,
-        connected: !workspace.error,
-        workspace: workspace.error ? null : workspace
-      };
-    } catch (e) {
-      return { configured: true, connected: false, error: e.message };
-    }
+    return this.trigger({
+      action: 'run_bot',
+      botId,
+      ...params
+    });
   }
 };
 

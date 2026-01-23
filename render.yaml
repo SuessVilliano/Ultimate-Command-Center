@@ -1,10 +1,11 @@
 services:
   - type: web
-    name: liv8-ai-server
+    name: liv8-command-center-api
     runtime: node
     plan: free
-    buildCommand: cd server && npm install
-    startCommand: cd server && node server.js
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node server.js
     healthCheckPath: /health
     autoDeploy: true
     envVars:
@@ -15,16 +16,29 @@ services:
       - key: AI_PROVIDER
         value: claude
       - key: SCHEDULE_ENABLED
-        value: "true"
+        value: "false"
+      - key: APP_URL
+        value: https://commandcenter.liv8.co
+      - key: FRONTEND_URL
+        value: https://commandcenter.liv8.co
+      # Secrets - set in Render dashboard
       - key: ANTHROPIC_API_KEY
-        sync: false
-      - key: OPENAI_API_KEY
         sync: false
       - key: TASKADE_API_KEY
         sync: false
       - key: TASKMAGIC_WEBHOOK_URL
         sync: false
       - key: TASKMAGIC_MCP_TOKEN
+        sync: false
+      - key: NIFTY_CLIENT_ID
+        sync: false
+      - key: NIFTY_CLIENT_SECRET
+        sync: false
+      - key: NIFTY_REDIRECT_URI
+        sync: false
+      - key: RAPIDAPI_KEY
+        sync: false
+      - key: BENZINGA_API_KEY
         sync: false
       - key: GHL_API_KEY
         sync: false
@@ -33,18 +47,6 @@ services:
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY
-        sync: false
-      - key: NIFTY_CLIENT_ID
-        sync: false
-      - key: NIFTY_CLIENT_SECRET
-        sync: false
-      - key: NIFTY_REDIRECT_URI
-        sync: false
-      - key: NIFTY_ACCESS_TOKEN
-        sync: false
-      - key: NIFTY_REFRESH_TOKEN
-        sync: false
-      - key: N8N_WEBHOOK_URL
         sync: false
       - key: FRESHDESK_DOMAIN
         sync: false
@@ -60,12 +62,13 @@ services:
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist
     autoDeploy: true
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: no-cache
     envVars:
       - key: VITE_API_URL
-        fromService:
-          type: web
-          name: liv8-ai-server
-          property: host
+        value: https://liv8-command-center-api.onrender.com
     routes:
       - type: rewrite
         source: /*

@@ -1,9 +1,15 @@
 /**
  * LIV8 Command Center - News Service
  * Provides financial news (NASDAQ, Forex, Crypto) and personal updates
+ *
+ * Uses:
+ * - RapidAPI (Coinranking, Binance, Real-time News, Alpha Vantage, Trading View)
+ * - Benzinga
+ * - CoinGecko (fallback)
  */
 
 import * as db from './database.js';
+import { marketData } from './market-data.js';
 
 // News cache
 let newsCache = {
@@ -24,6 +30,7 @@ const FINANCIAL_TOPICS = {
 
 /**
  * Fetch financial news from free APIs
+ * Enhanced with RapidAPI and Benzinga sources via marketData module
  */
 export async function fetchFinancialNews(options = {}) {
   const {
@@ -34,22 +41,33 @@ export async function fetchFinancialNews(options = {}) {
   const allNews = [];
 
   try {
-    // Using multiple free news sources
-
-    // 1. CoinGecko for crypto news (free, no API key needed)
-    if (topics.includes('CRYPTO_BTC') || topics.includes('CRYPTO_SOL')) {
-      const cryptoNews = await fetchCryptoNews();
-      allNews.push(...cryptoNews);
+    // Try RapidAPI sources first (if configured)
+    if (marketData.isConfigured()) {
+      try {
+        const topicsStr = topics.join(',');
+        const rapidNews = await marketData.getFinancialNews(topicsStr, limit);
+        allNews.push(...rapidNews);
+      } catch (e) {
+        console.log('RapidAPI news fetch failed, falling back to free APIs:', e.message);
+      }
     }
 
-    // 2. Alpha Vantage News (free tier available)
-    // Note: Requires API key for full access
-    const alphaNews = await fetchAlphaVantageNews(topics);
-    allNews.push(...alphaNews);
+    // If no news from RapidAPI or not configured, use free sources
+    if (allNews.length < 5) {
+      // 1. CoinGecko for crypto news (free, no API key needed)
+      if (topics.includes('CRYPTO_BTC') || topics.includes('CRYPTO_SOL')) {
+        const cryptoNews = await fetchCryptoNews();
+        allNews.push(...cryptoNews);
+      }
 
-    // 3. Finnhub (free tier)
-    const finnhubNews = await fetchFinnhubNews(topics);
-    allNews.push(...finnhubNews);
+      // 2. Alpha Vantage News (free tier available)
+      const alphaNews = await fetchAlphaVantageNews(topics);
+      allNews.push(...alphaNews);
+
+      // 3. Finnhub (free tier)
+      const finnhubNews = await fetchFinnhubNews(topics);
+      allNews.push(...finnhubNews);
+    }
 
     // Sort by date and deduplicate
     const uniqueNews = deduplicateNews(allNews);
@@ -384,10 +402,30 @@ export function getCachedFinancialNews(options = {}) {
 
 /**
  * Get market summary (prices for watched assets)
+ * Enhanced with RapidAPI sources (Coinranking, Binance) via marketData module
  */
 export async function getMarketSummary() {
   try {
-    // CoinGecko for crypto prices (free)
+    // Try RapidAPI sources first (if configured) - more comprehensive data
+    if (marketData.isConfigured()) {
+      try {
+        const overview = await marketData.getMarketOverview();
+        if (overview && overview.crypto && Object.keys(overview.crypto).length > 0) {
+          return {
+            crypto: overview.crypto,
+            stats: overview.stats || null,
+            movers: overview.movers || null,
+            lastUpdate: new Date().toISOString(),
+            source: 'rapidapi',
+            cached: overview.cached || false
+          };
+        }
+      } catch (e) {
+        console.log('RapidAPI market data failed, falling back to CoinGecko:', e.message);
+      }
+    }
+
+    // Fallback to CoinGecko (free)
     const cryptoResponse = await fetch(
       'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,solana,ethereum&vs_currencies=usd&include_24hr_change=true'
     );
@@ -397,28 +435,30 @@ export async function getMarketSummary() {
       crypto = await cryptoResponse.json();
     }
 
-    // For stocks, you'd need Alpha Vantage or similar with API key
-    // This is a placeholder structure
     return {
       crypto: {
         BTC: {
+          name: 'Bitcoin',
           price: crypto.bitcoin?.usd || 0,
           change24h: crypto.bitcoin?.usd_24h_change || 0
         },
         SOL: {
+          name: 'Solana',
           price: crypto.solana?.usd || 0,
           change24h: crypto.solana?.usd_24h_change || 0
         },
         ETH: {
+          name: 'Ethereum',
           price: crypto.ethereum?.usd || 0,
           change24h: crypto.ethereum?.usd_24h_change || 0
         }
       },
-      lastUpdate: new Date().toISOString()
+      lastUpdate: new Date().toISOString(),
+      source: 'coingecko'
     };
   } catch (error) {
     console.error('Market summary error:', error.message);
-    return { crypto: {}, lastUpdate: null };
+    return { crypto: {}, lastUpdate: null, error: error.message };
   }
 }
 

@@ -33,6 +33,8 @@ import { registerNiftyRoutes } from './routes/nifty-routes.js';
 import { taskmagicMCP } from './lib/taskmagic-mcp.js';
 import { unifiedTasks } from './lib/unified-tasks.js';
 import * as githubPortfolio from './lib/github-portfolio.js';
+import { marketData } from './lib/market-data.js';
+import * as taskSync from './lib/task-sync-service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -68,8 +70,10 @@ try {
   db.initDatabase();
   memory.initConversationTables();
   agentKnowledge.initAgentKnowledge();
+  taskSync.initSyncTables();
   console.log('Database: Initialized');
   console.log('Conversation Memory: Initialized');
+  console.log('Task Sync: Initialized');
 } catch (e) {
   console.error('Database initialization failed:', e.message);
 }
@@ -837,6 +841,110 @@ app.get('/api/news/market', async (req, res) => {
 // Get all news topics
 app.get('/api/news/topics', (req, res) => {
   res.json({ topics: newsService.FINANCIAL_TOPICS });
+});
+
+// ============================================
+// MARKET DATA ENDPOINTS (RapidAPI + Benzinga)
+// ============================================
+
+// Get full market overview (crypto, movers, stats)
+app.get('/api/market/overview', async (req, res) => {
+  try {
+    const overview = await marketData.getMarketOverview();
+    res.json(overview);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get aggregated financial news from multiple sources
+app.get('/api/market/news', async (req, res) => {
+  try {
+    const { topics, limit } = req.query;
+    const news = await marketData.getFinancialNews(
+      topics || 'NASDAQ,CRYPTO_BTC',
+      parseInt(limit) || 20
+    );
+    res.json({ news });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get crypto stats from Coinranking
+app.get('/api/market/crypto/stats', async (req, res) => {
+  try {
+    const stats = await marketData.getCryptoStats();
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get top coins from Coinranking
+app.get('/api/market/crypto/coins', async (req, res) => {
+  try {
+    const { limit } = req.query;
+    const coins = await marketData.getTopCoins(parseInt(limit) || 10);
+    res.json({ coins });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get Binance tickers
+app.get('/api/market/crypto/binance', async (req, res) => {
+  try {
+    const { symbols } = req.query;
+    const symbolList = symbols ? symbols.split(',') : ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'];
+    const tickers = await marketData.getBinanceTickers(symbolList);
+    res.json({ tickers });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get stock quote
+app.get('/api/market/stock/:symbol', async (req, res) => {
+  try {
+    const quote = await marketData.getStockQuote(req.params.symbol);
+    res.json(quote);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get market movers from TradingView
+app.get('/api/market/movers', async (req, res) => {
+  try {
+    const { exchange, type } = req.query;
+    const movers = await marketData.getMarketMovers(
+      exchange || 'US',
+      type || 'volume_gainers'
+    );
+    res.json(movers);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get Benzinga news
+app.get('/api/market/benzinga', async (req, res) => {
+  try {
+    const { tickers, limit } = req.query;
+    const news = await marketData.getBenzingaNews(
+      tickers || 'AAPL,TSLA,MSFT',
+      parseInt(limit) || 20
+    );
+    res.json({ news });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get market data API status
+app.get('/api/market/status', (req, res) => {
+  res.json(marketData.getStatus());
 });
 
 // ============================================
@@ -2015,6 +2123,121 @@ app.post('/api/unified/command', async (req, res) => {
     const parsed = unifiedTasks.parseCommand(command);
     const result = await unifiedTasks.executeCommand(parsed, context || {});
     res.json({ parsed, result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// TASK SYNC - Bidirectional Platform Sync
+// ============================================
+
+// Get sync status overview
+app.get('/api/sync/status', (req, res) => {
+  try {
+    const status = taskSync.getSyncStatus();
+    res.json(status);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all sync configurations
+app.get('/api/sync/configs', (req, res) => {
+  try {
+    const configs = taskSync.getSyncConfigs();
+    res.json({ configs });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create sync configuration between two projects
+app.post('/api/sync/configs', (req, res) => {
+  try {
+    const result = taskSync.createSyncConfig(req.body);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get sync history
+app.get('/api/sync/history', (req, res) => {
+  try {
+    const { limit } = req.query;
+    const history = taskSync.getSyncHistory(parseInt(limit) || 50);
+    res.json({ history });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Full project sync (one-time)
+app.post('/api/sync/projects', async (req, res) => {
+  try {
+    const { sourcePlatform, sourceProjectId, targetPlatform, targetProjectId } = req.body;
+
+    if (!sourcePlatform || !sourceProjectId || !targetPlatform || !targetProjectId) {
+      return res.status(400).json({ error: 'All parameters required: sourcePlatform, sourceProjectId, targetPlatform, targetProjectId' });
+    }
+
+    const result = await taskSync.fullProjectSync(sourcePlatform, sourceProjectId, targetPlatform, targetProjectId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Sync task creation (called after creating a task)
+app.post('/api/sync/task/create', async (req, res) => {
+  try {
+    const { platform, projectId, task } = req.body;
+    const result = await taskSync.syncTaskCreate(platform, projectId, task);
+    res.json({ synced: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Sync task completion
+app.post('/api/sync/task/complete', async (req, res) => {
+  try {
+    const { platform, taskId } = req.body;
+    const result = await taskSync.syncTaskComplete(platform, taskId);
+    res.json({ synced: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Sync task update
+app.post('/api/sync/task/update', async (req, res) => {
+  try {
+    const { platform, taskId, updates } = req.body;
+    const result = await taskSync.syncTaskUpdate(platform, taskId, updates);
+    res.json({ synced: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get task mappings
+app.get('/api/sync/mappings/:platform/:taskId', (req, res) => {
+  try {
+    const { platform, taskId } = req.params;
+    const mappings = taskSync.getTaskMappings(platform, taskId);
+    res.json({ mappings });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create manual task mapping
+app.post('/api/sync/mappings', (req, res) => {
+  try {
+    const result = taskSync.createTaskMapping(req.body);
+    res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

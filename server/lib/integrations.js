@@ -474,7 +474,7 @@ export async function checkIntegrationStatus() {
     taskmagic: { configured: !!process.env.TASKMAGIC_WEBHOOK_URL, connected: false },
     ghl: { configured: !!process.env.GHL_API_KEY, connected: false },
     supabase: { configured: !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY), connected: false },
-    nifty: { configured: \!\!(process.env.NIFTY_CLIENT_ID && process.env.NIFTY_CLIENT_SECRET), connected: false }
+    nifty: { configured: !!(process.env.NIFTY_CLIENT_ID && process.env.NIFTY_CLIENT_SECRET), connected: false }
   };
 
   // Test Taskade

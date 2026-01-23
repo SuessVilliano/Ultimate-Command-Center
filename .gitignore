@@ -38,3 +38,5 @@ Thumbs.db
 # SQLite database
 server/data/*.db
 *.db
+server/.env.production
+server/server.log
