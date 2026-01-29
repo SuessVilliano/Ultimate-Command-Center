@@ -18,7 +18,8 @@ import {
   MessageSquare,
   Newspaper,
   TrendingUp,
-  Plug
+  Plug,
+  Inbox
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -28,6 +29,7 @@ const menuItems = [
   { id: 'agent-team', label: 'Agent Team', icon: Bot },
   { id: 'news', label: 'News & Markets', icon: TrendingUp },
   { id: 'inbox', label: 'Team Inbox', icon: MessageSquare },
+  { id: 'action-feed', label: 'Action Feed', icon: Inbox },
   { id: 'tickets', label: 'Support Tickets', icon: Ticket },
   { id: 'projects', label: 'Projects', icon: FolderKanban },
   { id: 'agents', label: 'Agents Config', icon: Zap },

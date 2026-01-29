@@ -2345,6 +2345,26 @@ app.get('/api/briefing', async (req, res) => {
   }
 });
 
+// Smart Daily Report - Comprehensive ticket analysis
+app.get('/api/briefing/smart-report', async (req, res) => {
+  try {
+    const report = await briefing.generateSmartDailyReport();
+    res.json(report);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Smart Ticket Queue - Prioritized ticket view
+app.get('/api/briefing/ticket-queue', (req, res) => {
+  try {
+    const queue = briefing.getSmartTicketQueue();
+    res.json(queue);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Parking Lot - Quick capture
 app.post('/api/parking-lot', (req, res) => {
   try {

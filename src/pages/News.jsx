@@ -20,12 +20,13 @@ import {
   AlertCircle,
   BookOpen,
   Maximize2,
-  Minimize2,
   X
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 
-const AI_SERVER_URL = 'http://localhost:3005';
+const AI_SERVER_URL = import.meta.env.VITE_API_URL
+  ? `https://${import.meta.env.VITE_API_URL}`
+  : 'http://localhost:3005';
 
 // Error Boundary Component
 class ErrorBoundary extends React.Component {
@@ -179,19 +180,27 @@ function News() {
   };
 
   const formatPrice = (price) => {
-    if (!price) return '$0.00';
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: price > 100 ? 0 : 2
-    }).format(price);
+    if (!price || isNaN(price)) return '$0.00';
+    try {
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: price > 100 ? 0 : 2
+      }).format(price);
+    } catch (e) {
+      return '$0.00';
+    }
   };
 
   const formatChange = (change) => {
-    if (!change) return '0.00%';
-    const formatted = change.toFixed(2);
-    return change >= 0 ? `+${formatted}%` : `${formatted}%`;
+    if (change === null || change === undefined || isNaN(change)) return '0.00%';
+    try {
+      const formatted = Number(change).toFixed(2);
+      return change >= 0 ? `+${formatted}%` : `${formatted}%`;
+    } catch (e) {
+      return '0.00%';
+    }
   };
 
   const getUpdateIcon = (type) => {
@@ -205,44 +214,32 @@ function News() {
   };
 
   const timeAgo = (date) => {
-    const now = new Date();
-    const then = new Date(date);
-    const diff = Math.floor((now - then) / 1000);
+    if (!date) return 'Recently';
+    try {
+      const now = new Date();
+      const then = new Date(date);
+      if (isNaN(then.getTime())) return 'Recently';
+      const diff = Math.floor((now - then) / 1000);
 
-    if (diff < 60) return 'Just now';
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-    return `${Math.floor(diff / 86400)}d ago`;
+      if (diff < 0) return 'Just now';
+      if (diff < 60) return 'Just now';
+      if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+      if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+      return `${Math.floor(diff / 86400)}d ago`;
+    } catch (e) {
+      return 'Recently';
+    }
   };
 
   const isInitialLoad = loading && financialNews.length === 0 && !marketData;
 
-  // Full-screen journal modal
-  if (journalFullscreen) {
-    return (
-      <div className="fixed inset-0 z-50 bg-[#030305]">
-        <div className="flex items-center justify-between p-4 border-b border-purple-900/30">
-          <div className="flex items-center gap-3">
-            <BookOpen className="w-6 h-6 text-cyan-400" />
-            <h1 className="text-xl font-bold text-white">Hybrid Trade Journal</h1>
-          </div>
-          <button
-            onClick={() => setJournalFullscreen(false)}
-            className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg"
-          >
-            <Minimize2 className="w-4 h-4" />
-            Exit Fullscreen
-          </button>
-        </div>
-        <iframe
-          src="https://hybridjournal.co"
-          className="w-full h-[calc(100vh-73px)]"
-          title="Hybrid Trade Journal"
-          allow="clipboard-write"
-        />
-      </div>
-    );
-  }
+  // Full-screen journal - open in new tab instead (iframe blocked by OAuth)
+  useEffect(() => {
+    if (journalFullscreen) {
+      window.open('https://hybridjournal.co', '_blank');
+      setJournalFullscreen(false);
+    }
+  }, [journalFullscreen]);
 
   return (
     <div className="space-y-6">
@@ -297,11 +294,11 @@ function News() {
       </div>
 
       {/* Market Overview Cards */}
-      {marketData?.crypto && Object.keys(marketData.crypto).length > 0 && (
+      {marketData?.crypto && typeof marketData.crypto === 'object' && Object.keys(marketData.crypto).length > 0 && (
         <div className="grid grid-cols-3 gap-4">
           {['BTC', 'ETH', 'SOL'].map(symbol => {
-            const data = marketData.crypto[symbol];
-            if (!data) return null;
+            const data = marketData.crypto?.[symbol];
+            if (!data || typeof data !== 'object') return null;
 
             const Icon = MarketIcons[symbol] || DollarSign;
             const isPositive = (data.change24h || 0) >= 0;
@@ -373,48 +370,61 @@ function News() {
 
       {/* Content */}
       {activeTab === 'journal' ? (
-        /* Trade Journal Tab */
-        <div className={`rounded-xl border ${isDark ? 'border-cyan-500/30 bg-cyan-500/5' : 'border-cyan-200 bg-cyan-50'}`}>
-          <div className={`p-4 border-b ${isDark ? 'border-cyan-500/30' : 'border-cyan-200'} flex items-center justify-between`}>
-            <div className="flex items-center gap-3">
-              <BookOpen className={`w-5 h-5 ${isDark ? 'text-cyan-400' : 'text-cyan-600'}`} />
-              <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                Hybrid Trade Journal
-              </h3>
-              <span className={`text-xs px-2 py-1 rounded-full ${isDark ? 'bg-cyan-500/20 text-cyan-300' : 'bg-cyan-100 text-cyan-700'}`}>
-                hybridjournal.co
-              </span>
+        /* Trade Journal Tab - Launch Panel (iframe doesn't work due to OAuth) */
+        <div className={`rounded-xl border ${isDark ? 'border-cyan-500/30 bg-gradient-to-br from-cyan-900/20 to-purple-900/20' : 'border-cyan-200 bg-gradient-to-br from-cyan-50 to-purple-50'}`}>
+          <div className="p-8 text-center">
+            <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center">
+              <BookOpen className="w-10 h-10 text-white" />
             </div>
-            <div className="flex items-center gap-2">
+            <h2 className={`text-2xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              Hybrid Trade Journal
+            </h2>
+            <p className={`mb-6 max-w-md mx-auto ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+              Your professional trading journal for tracking trades, analyzing performance, and improving your strategy.
+            </p>
+
+            <div className="flex items-center justify-center gap-4 mb-8">
               <a
                 href="https://hybridjournal.co"
                 target="_blank"
                 rel="noopener noreferrer"
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm ${
+                className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-600 to-purple-600 text-white font-medium hover:opacity-90 transition-opacity shadow-lg"
+              >
+                <ExternalLink className="w-5 h-5" />
+                Open Trade Journal
+              </a>
+              <a
+                href="https://hybridjournal.co/dashboard"
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`flex items-center gap-2 px-6 py-3 rounded-xl font-medium ${
                   isDark ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
                 }`}
               >
-                <ExternalLink className="w-4 h-4" />
-                Open in New Tab
+                <TrendingUp className="w-5 h-5" />
+                Dashboard
               </a>
-              <button
-                onClick={() => setJournalFullscreen(true)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm ${
-                  isDark ? 'bg-cyan-600 hover:bg-cyan-700 text-white' : 'bg-cyan-500 hover:bg-cyan-600 text-white'
-                }`}
-              >
-                <Maximize2 className="w-4 h-4" />
-                Fullscreen
-              </button>
             </div>
-          </div>
-          <div className="relative" style={{ height: '600px' }}>
-            <iframe
-              src="https://hybridjournal.co"
-              className="w-full h-full rounded-b-xl"
-              title="Hybrid Trade Journal"
-              allow="clipboard-write"
-            />
+
+            {/* Quick Stats Placeholder */}
+            <div className={`grid grid-cols-3 gap-4 max-w-lg mx-auto p-4 rounded-xl ${isDark ? 'bg-white/5' : 'bg-white'}`}>
+              <div className="text-center">
+                <p className={`text-2xl font-bold ${isDark ? 'text-cyan-400' : 'text-cyan-600'}`}>-</p>
+                <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>Today's Trades</p>
+              </div>
+              <div className="text-center">
+                <p className={`text-2xl font-bold ${isDark ? 'text-green-400' : 'text-green-600'}`}>-</p>
+                <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>Win Rate</p>
+              </div>
+              <div className="text-center">
+                <p className={`text-2xl font-bold ${isDark ? 'text-purple-400' : 'text-purple-600'}`}>-</p>
+                <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>P&L</p>
+              </div>
+            </div>
+
+            <p className={`text-xs mt-4 ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>
+              Opens in a new tab for secure Google authentication
+            </p>
           </div>
         </div>
       ) : (

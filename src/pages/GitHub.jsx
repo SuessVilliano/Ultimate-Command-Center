@@ -39,7 +39,9 @@ const REPOS_STORAGE_KEY = 'liv8_github_repos';
 const REPOS_LAST_FETCH_KEY = 'liv8_github_repos_last_fetch';
 
 // AI Server URL
-const AI_SERVER_URL = 'http://localhost:3005';
+const AI_SERVER_URL = import.meta.env.VITE_API_URL
+  ? `https://${import.meta.env.VITE_API_URL}`
+  : 'http://localhost:3005';
 
 function GitHub() {
   const [repos, setRepos] = useState([]);

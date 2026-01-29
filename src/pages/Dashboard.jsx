@@ -45,6 +45,7 @@ import {
   domains,
   valuationSummary
 } from '../data/portfolio';
+import ProactiveAIDashboard from '../components/ProactiveAIDashboard';
 
 // Storage keys
 const STORAGE_KEYS = {
@@ -56,7 +57,307 @@ const STORAGE_KEYS = {
 };
 
 // Default schedule template for a high-performer with ADHD
-const AI_SERVER_URL = 'http://localhost:3005';
+const AI_SERVER_URL = import.meta.env.VITE_API_URL
+  ? `https://${import.meta.env.VITE_API_URL}`
+  : 'http://localhost:3005';
+
+// AI Briefing Component
+function AIBriefingCard() {
+  const [briefing, setBriefing] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  const fetchBriefing = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`${AI_SERVER_URL}/api/briefing`);
+      if (response.ok) {
+        const data = await response.json();
+        setBriefing(data);
+      }
+    } catch (e) {
+      console.log('Could not fetch briefing');
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchBriefing();
+  }, []);
+
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+
+  return (
+    <div className="card p-6 bg-gradient-to-br from-cyan-900/30 to-purple-900/30 border-cyan-500/30">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+          <Sparkles className="w-5 h-5 text-cyan-400" />
+          AI Daily Briefing
+        </h3>
+        <button
+          onClick={fetchBriefing}
+          disabled={loading}
+          className="px-3 py-1 text-xs rounded bg-white/10 text-gray-400 hover:bg-white/20"
+        >
+          {loading ? 'Loading...' : 'Refresh'}
+        </button>
+      </div>
+
+      {briefing ? (
+        <div className="space-y-3">
+          <p className="text-cyan-300 font-medium">{briefing.greeting}!</p>
+
+          {briefing.aiSummary && (
+            <div className="p-4 rounded-lg bg-white/5 border border-white/10">
+              <p className="text-sm text-gray-300 whitespace-pre-wrap">
+                {expanded ? briefing.aiSummary : briefing.aiSummary.substring(0, 300)}
+                {briefing.aiSummary.length > 300 && !expanded && '...'}
+              </p>
+              {briefing.aiSummary.length > 300 && (
+                <button
+                  onClick={() => setExpanded(!expanded)}
+                  className="text-xs text-cyan-400 mt-2 hover:underline"
+                >
+                  {expanded ? 'Show less' : 'Read more'}
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="p-2 rounded bg-white/5">
+              <p className="text-lg font-bold text-cyan-400">{briefing.calendar?.todayEventCount || 0}</p>
+              <p className="text-xs text-gray-400">Events</p>
+            </div>
+            <div className="p-2 rounded bg-white/5">
+              <p className="text-lg font-bold text-green-400">
+                {briefing.calendar?.freeTimeMinutes ? Math.floor(briefing.calendar.freeTimeMinutes / 60) : 0}h
+              </p>
+              <p className="text-xs text-gray-400">Free Time</p>
+            </div>
+            <div className="p-2 rounded bg-white/5">
+              <p className="text-lg font-bold text-purple-400">
+                {briefing.calendar?.nextMeeting ? '1' : '0'}
+              </p>
+              <p className="text-xs text-gray-400">Next Meeting</p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="text-center py-4">
+          {loading ? (
+            <div className="w-6 h-6 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin mx-auto" />
+          ) : (
+            <p className="text-gray-400">Click refresh to generate your briefing</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// What Was I Doing Card
+function WhatWasIDoingCard() {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const response = await fetch(`${AI_SERVER_URL}/api/activity/what-was-i-doing`);
+        if (response.ok) {
+          const result = await response.json();
+          setData(result);
+        }
+      } catch (e) {}
+    };
+    fetchData();
+    const interval = setInterval(fetchData, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (!data) return null;
+
+  return (
+    <div className="card p-4 border-yellow-500/30 bg-yellow-500/5">
+      <div className="flex items-center gap-2 mb-2">
+        <Brain className="w-4 h-4 text-yellow-400" />
+        <span className="text-sm font-medium text-yellow-400">What was I doing?</span>
+      </div>
+      <p className="text-sm text-gray-300">{data.summary}</p>
+      {data.activePomodoro && (
+        <p className="text-xs text-cyan-400 mt-1">
+          Active Pomodoro: {data.activePomodoro.task_description} ({data.activePomodoro.remainingMinutes}m left)
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Parking Lot - Quick Thought Capture for ADHD
+function ParkingLotCard() {
+  const [thoughts, setThoughts] = useState([]);
+  const [newThought, setNewThought] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const fetchThoughts = async () => {
+    try {
+      const response = await fetch(`${AI_SERVER_URL}/api/parking-lot`);
+      if (response.ok) {
+        const data = await response.json();
+        setThoughts(data.items || []);
+      }
+    } catch (e) {}
+  };
+
+  useEffect(() => {
+    fetchThoughts();
+  }, []);
+
+  const addThought = async () => {
+    if (!newThought.trim()) return;
+    setLoading(true);
+    try {
+      const response = await fetch(`${AI_SERVER_URL}/api/parking-lot`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ thought: newThought.trim() })
+      });
+      if (response.ok) {
+        setNewThought('');
+        fetchThoughts();
+      }
+    } catch (e) {}
+    setLoading(false);
+  };
+
+  const processThought = async (id) => {
+    try {
+      await fetch(`${AI_SERVER_URL}/api/parking-lot/${id}/process`, { method: 'POST' });
+      fetchThoughts();
+    } catch (e) {}
+  };
+
+  return (
+    <div className="card p-4 border-orange-500/30 bg-orange-500/5">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <StickyNote className="w-4 h-4 text-orange-400" />
+          <span className="text-sm font-medium text-orange-400">Parking Lot</span>
+        </div>
+        <span className="text-xs text-gray-500">{thoughts.length} thoughts</span>
+      </div>
+
+      <div className="flex gap-2 mb-3">
+        <input
+          type="text"
+          value={newThought}
+          onChange={(e) => setNewThought(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && addThought()}
+          placeholder="Quick capture..."
+          className="flex-1 px-3 py-1.5 text-sm rounded bg-white/10 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-orange-500"
+        />
+        <button
+          onClick={addThought}
+          disabled={loading || !newThought.trim()}
+          className="px-3 py-1.5 rounded bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 disabled:opacity-50 text-sm"
+        >
+          +
+        </button>
+      </div>
+
+      {thoughts.length > 0 && (
+        <div className="space-y-1 max-h-[120px] overflow-y-auto">
+          {thoughts.slice(0, 5).map((item) => (
+            <div key={item.id} className="flex items-center gap-2 p-2 rounded bg-white/5 group">
+              <p className="text-xs text-gray-300 flex-1 truncate">{item.thought}</p>
+              <button
+                onClick={() => processThought(item.id)}
+                className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-white/10 text-gray-500 hover:text-green-400 transition-all"
+                title="Mark as processed"
+              >
+                <CheckCircle className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// AI Memory Card - What the AI has learned
+function AIMemoryCard() {
+  const [summary, setSummary] = useState(null);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    const fetchMemory = async () => {
+      try {
+        const response = await fetch(`${AI_SERVER_URL}/api/memory/summary`);
+        if (response.ok) {
+          const data = await response.json();
+          setSummary(data);
+        }
+      } catch (e) {}
+    };
+    fetchMemory();
+  }, []);
+
+  if (!summary || summary.total === 0) return null;
+
+  const categoryIcons = {
+    personal: '👤',
+    work: '💼',
+    preferences: '⚙️',
+    business: '🏢',
+    trading: '📈',
+    contact: '📧'
+  };
+
+  return (
+    <div className="card p-4 border-purple-500/30 bg-purple-500/5">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Brain className="w-4 h-4 text-purple-400" />
+          <span className="text-sm font-medium text-purple-400">AI Memory</span>
+        </div>
+        <span className="text-xs text-gray-500">{summary.total} facts learned</span>
+      </div>
+
+      {/* Category breakdown */}
+      <div className="flex flex-wrap gap-2 mb-3">
+        {summary.byCategory.map((cat) => (
+          <span
+            key={cat.category}
+            className="px-2 py-1 text-xs rounded-full bg-white/10 text-gray-300"
+          >
+            {categoryIcons[cat.category] || '📝'} {cat.category}: {cat.count}
+          </span>
+        ))}
+      </div>
+
+      {/* Recent facts */}
+      {expanded && summary.recent.length > 0 && (
+        <div className="space-y-1 mb-2">
+          <p className="text-xs text-gray-500 mb-1">Recently learned:</p>
+          {summary.recent.map((fact) => (
+            <p key={fact.id} className="text-xs text-gray-400 truncate">
+              • {fact.fact}
+            </p>
+          ))}
+        </div>
+      )}
+
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="text-xs text-purple-400 hover:underline"
+      >
+        {expanded ? 'Show less' : 'Show what I know'}
+      </button>
+    </div>
+  );
+}
 
 // Google Calendar Widget Component
 function GoogleCalendarWidget() {
@@ -677,6 +978,23 @@ function Dashboard() {
 
         {/* Right Column - Wellness & Stats */}
         <div className="space-y-6">
+          {/* AI Daily Briefing */}
+          <AIBriefingCard />
+
+          {/* Proactive AI Dashboard */}
+          <div className="card p-4">
+            <ProactiveAIDashboard isDark={true} />
+          </div>
+
+          {/* What Was I Doing - ADHD Context Recovery */}
+          <WhatWasIDoingCard />
+
+          {/* Parking Lot - Quick Thought Capture */}
+          <ParkingLotCard />
+
+          {/* AI Memory - What the AI has learned */}
+          <AIMemoryCard />
+
           {/* Wellness Tracker */}
           <div className="card p-6">
             <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
