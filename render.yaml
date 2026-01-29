@@ -14,7 +14,10 @@ services:
       - key: PORT
         value: "3005"
       - key: AI_PROVIDER
-        value: claude
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+        value: gemini
       - key: SCHEDULE_ENABLED
         value: "false"
       - key: APP_URL
