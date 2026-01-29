@@ -36,6 +36,10 @@ import * as githubPortfolio from './lib/github-portfolio.js';
 import { marketData } from './lib/market-data.js';
 import * as taskSync from './lib/task-sync-service.js';
 import * as briefing from './lib/proactive-briefing.js';
+import * as unifiedInbox from './lib/unified-inbox.js';
+import * as proactiveEngine from './lib/proactive-ai-engine.js';
+import * as eventBus from './lib/cross-platform-event-bus.js';
+import * as workflowOrchestrator from './lib/unified-workflow-orchestrator.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -73,10 +77,12 @@ try {
   agentKnowledge.initAgentKnowledge();
   taskSync.initSyncTables();
   briefing.initBriefingTables();
+  unifiedInbox.initUnifiedInboxTables();
   console.log('Database: Initialized');
   console.log('Conversation Memory: Initialized');
   console.log('Task Sync: Initialized');
   console.log('Proactive Briefing: Initialized');
+  console.log('Unified Inbox: Initialized');
 } catch (e) {
   console.error('Database initialization failed:', e.message);
 }
@@ -85,7 +91,8 @@ try {
 const aiStatus = ai.initAIProviders({
   anthropicKey: process.env.ANTHROPIC_API_KEY,
   openaiKey: process.env.OPENAI_API_KEY,
-  provider: process.env.AI_PROVIDER || 'claude'
+  geminiKey: process.env.GEMINI_API_KEY,
+  provider: process.env.AI_PROVIDER || 'gemini'
 });
 console.log('AI Providers:', aiStatus);
 
@@ -117,6 +124,26 @@ if (scheduleEnabled) {
 } else {
   console.log('Scheduled jobs: Disabled (set SCHEDULE_ENABLED=true to enable)');
 }
+
+// Initialize Proactive AI Engine
+const proactiveEnabled = process.env.PROACTIVE_AI_ENABLED !== 'false';
+if (proactiveEnabled) {
+  proactiveEngine.initProactiveEngine({
+    checkIntervalMinutes: parseInt(process.env.PROACTIVE_CHECK_INTERVAL) || 5,
+    enableAutoActions: process.env.PROACTIVE_AUTO_ACTIONS !== 'false'
+  });
+  console.log('Proactive AI Engine: Enabled');
+} else {
+  console.log('Proactive AI Engine: Disabled (set PROACTIVE_AI_ENABLED=true to enable)');
+}
+
+// Initialize Cross-Platform Event Bus
+eventBus.initializeDefaultChains();
+console.log('Cross-Platform Event Bus: Initialized');
+
+// Initialize Workflow Orchestrator
+workflowOrchestrator.initWorkflowOrchestrator();
+console.log('Workflow Orchestrator: Initialized');
 
 // ============================================
 // HEALTH & STATUS ENDPOINTS
@@ -1108,6 +1135,63 @@ app.post('/api/memory/context', (req, res) => {
     const { key, value, category } = req.body;
     memory.setUserContext(key, value, category);
     res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete a fact
+app.delete('/api/memory/facts/:id', (req, res) => {
+  try {
+    const dbInstance = db.getDb();
+    const stmt = dbInstance.prepare('DELETE FROM memory_facts WHERE id = ?');
+    stmt.run(parseInt(req.params.id));
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get memory summary (for dashboard)
+app.get('/api/memory/summary', (req, res) => {
+  try {
+    const dbInstance = db.getDb();
+
+    // Get fact counts by category
+    const categoryStmt = dbInstance.prepare(`
+      SELECT category, COUNT(*) as count
+      FROM memory_facts
+      GROUP BY category
+    `);
+    const categories = categoryStmt.all();
+
+    // Get total facts
+    const totalStmt = dbInstance.prepare('SELECT COUNT(*) as total FROM memory_facts');
+    const total = totalStmt.get();
+
+    // Get recent facts
+    const recentStmt = dbInstance.prepare(`
+      SELECT * FROM memory_facts
+      ORDER BY created_at DESC
+      LIMIT 5
+    `);
+    const recent = recentStmt.all();
+
+    // Get most referenced facts
+    const topStmt = dbInstance.prepare(`
+      SELECT * FROM memory_facts
+      WHERE times_referenced > 0
+      ORDER BY times_referenced DESC
+      LIMIT 5
+    `);
+    const topReferenced = topStmt.all();
+
+    res.json({
+      total: total.total,
+      byCategory: categories,
+      recent,
+      topReferenced
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -2412,6 +2496,454 @@ app.get('/api/calendar/free-time', (req, res) => {
   try {
     const freeBlocks = calendarService.getFreeTimeBlocks();
     res.json({ freeBlocks });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// UNIFIED INBOX ROUTES
+// ============================================
+
+// Get unified inbox items
+app.get('/api/inbox', (req, res) => {
+  try {
+    const { limit, status, type } = req.query;
+    const items = unifiedInbox.getInboxItems({
+      limit: parseInt(limit) || 50,
+      status: status || null,
+      type: type || null
+    });
+    res.json({ items });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get unread counts
+app.get('/api/inbox/counts', (req, res) => {
+  try {
+    const counts = unifiedInbox.getUnreadCounts();
+    res.json(counts);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add item to inbox
+app.post('/api/inbox', (req, res) => {
+  try {
+    const result = unifiedInbox.addToInbox(req.body);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Mark item as read
+app.post('/api/inbox/:id/read', (req, res) => {
+  try {
+    const { feedType } = req.body;
+    const result = unifiedInbox.markAsRead(parseInt(req.params.id), feedType);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Snooze item
+app.post('/api/inbox/:id/snooze', (req, res) => {
+  try {
+    const { minutes } = req.body;
+    const result = unifiedInbox.snoozeItem(parseInt(req.params.id), minutes || 60);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Dismiss item
+app.post('/api/inbox/:id/dismiss', (req, res) => {
+  try {
+    const { feedType } = req.body;
+    const result = unifiedInbox.dismissItem(parseInt(req.params.id), feedType);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add notification
+app.post('/api/inbox/notification', (req, res) => {
+  try {
+    const result = unifiedInbox.addNotification(req.body);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Refresh/sync inbox
+app.post('/api/inbox/refresh', async (req, res) => {
+  try {
+    const result = await unifiedInbox.refreshInbox();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// PROACTIVE AI ENGINE ROUTES
+// ============================================
+
+// Get proactive engine state
+app.get('/api/proactive/state', (req, res) => {
+  try {
+    const state = proactiveEngine.getProactiveState();
+    res.json(state);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Trigger manual proactive check
+app.post('/api/proactive/check', async (req, res) => {
+  try {
+    const result = await proactiveEngine.triggerProactiveCheck();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get proactive action plan
+app.get('/api/proactive/plan', async (req, res) => {
+  try {
+    const plan = await proactiveEngine.getProactiveActionPlan();
+    res.json(plan);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Execute a specific AI suggestion
+app.post('/api/proactive/execute-suggestion', async (req, res) => {
+  try {
+    const { suggestionIndex } = req.body;
+    const result = await proactiveEngine.executeSuggestion(suggestionIndex);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Start/stop proactive engine
+app.post('/api/proactive/toggle', (req, res) => {
+  try {
+    const { enabled, checkIntervalMinutes } = req.body;
+    if (enabled) {
+      proactiveEngine.initProactiveEngine({ checkIntervalMinutes: checkIntervalMinutes || 5 });
+    } else {
+      proactiveEngine.stopProactiveEngine();
+    }
+    res.json({ enabled, status: proactiveEngine.getProactiveState() });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Clear pending actions
+app.post('/api/proactive/clear-actions', (req, res) => {
+  try {
+    proactiveEngine.clearPendingActions();
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// CROSS-PLATFORM EVENT BUS ROUTES
+// ============================================
+
+// Get event bus status
+app.get('/api/events/status', (req, res) => {
+  try {
+    const status = eventBus.getStatus();
+    res.json(status);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get event history
+app.get('/api/events/history', (req, res) => {
+  try {
+    const { eventType, platform, limit } = req.query;
+    const history = eventBus.getEventHistory({
+      eventType,
+      platform,
+      limit: parseInt(limit) || 50
+    });
+    res.json({ history });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Emit a manual event
+app.post('/api/events/emit', async (req, res) => {
+  try {
+    const { event, data, source } = req.body;
+    const result = await eventBus.emit(event, data, { source: source || 'api' });
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get registered chains
+app.get('/api/events/chains', (req, res) => {
+  try {
+    const chains = eventBus.getChains();
+    res.json({ chains });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Toggle a chain
+app.post('/api/events/chains/:chainId/toggle', (req, res) => {
+  try {
+    const { enabled } = req.body;
+    const success = eventBus.toggleChain(req.params.chainId, enabled);
+    res.json({ success });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Register a new chain
+app.post('/api/events/chains', (req, res) => {
+  try {
+    const chainId = eventBus.registerChain(req.body);
+    res.json({ chainId, success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete a chain
+app.delete('/api/events/chains/:chainId', (req, res) => {
+  try {
+    eventBus.removeChain(req.params.chainId);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Webhook endpoint for external platforms
+app.post('/api/events/webhook/:platform', async (req, res) => {
+  try {
+    const result = await eventBus.handleWebhook(req.params.platform, req.body);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// WORKFLOW ORCHESTRATOR ROUTES
+// ============================================
+
+// Get all workflow templates
+app.get('/api/workflows/templates', (req, res) => {
+  try {
+    const templates = workflowOrchestrator.getWorkflowTemplates();
+    res.json({ templates });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Execute a workflow
+app.post('/api/workflows/execute', async (req, res) => {
+  try {
+    const { templateId, inputs } = req.body;
+    const result = await workflowOrchestrator.executeWorkflow(templateId, inputs || {});
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create a custom workflow
+app.post('/api/workflows', (req, res) => {
+  try {
+    const workflow = workflowOrchestrator.createWorkflow(req.body);
+    res.json(workflow);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get workflow execution history
+app.get('/api/workflows/history', (req, res) => {
+  try {
+    const { limit } = req.query;
+    const history = workflowOrchestrator.getWorkflowHistory(parseInt(limit) || 20);
+    res.json({ history });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get active workflows
+app.get('/api/workflows/active', (req, res) => {
+  try {
+    const active = workflowOrchestrator.getActiveWorkflows();
+    res.json({ active });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get AI workflow suggestion
+app.post('/api/workflows/suggest', async (req, res) => {
+  try {
+    const { description } = req.body;
+    const suggestion = await workflowOrchestrator.suggestWorkflow(description);
+    res.json(suggestion);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Quick action: Create task everywhere
+app.post('/api/workflows/quick/task-everywhere', async (req, res) => {
+  try {
+    const result = await workflowOrchestrator.createTaskEverywhere(req.body);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Quick action: Complete task everywhere
+app.post('/api/workflows/quick/complete-everywhere', async (req, res) => {
+  try {
+    const result = await workflowOrchestrator.completeTaskEverywhere(req.body);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// UNIFIED COMMAND ENDPOINT
+// ============================================
+
+// Natural language command processor for cross-platform actions
+app.post('/api/command', async (req, res) => {
+  try {
+    const { command, context } = req.body;
+
+    if (!command) {
+      return res.status(400).json({ error: 'Command is required' });
+    }
+
+    // Use AI to parse and route the command
+    const prompt = `Parse this command and determine what action to take:
+
+Command: "${command}"
+
+Available actions:
+1. create_task - Create a task (platforms: taskade, nifty, or both)
+2. complete_task - Complete a task
+3. sync_tasks - Sync tasks between platforms
+4. trigger_workflow - Run a predefined workflow
+5. search - Search across platforms
+6. briefing - Get daily briefing
+7. status - Check system status
+
+Respond with JSON:
+{
+  "action": "action_name",
+  "platforms": ["platform1", "platform2"],
+  "params": { "key": "value" },
+  "confidence": 0-100
+}`;
+
+    const response = await ai.chat([{ role: 'user', content: prompt }], {
+      systemPrompt: 'You are a command parser. Return only valid JSON.',
+      maxTokens: 500
+    });
+
+    let parsed;
+    try {
+      const jsonMatch = response.text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        parsed = JSON.parse(jsonMatch[0]);
+      }
+    } catch (e) {
+      parsed = { action: 'unknown', confidence: 0 };
+    }
+
+    // Execute the parsed command
+    let result;
+    switch (parsed.action) {
+      case 'create_task':
+        if (parsed.platforms?.length > 1 || parsed.platforms?.includes('both')) {
+          result = await workflowOrchestrator.createTaskEverywhere(parsed.params);
+        } else {
+          result = await unifiedTasks.createTask(
+            parsed.platforms?.[0] || 'taskade',
+            parsed.params?.projectId,
+            parsed.params
+          );
+        }
+        break;
+
+      case 'sync_tasks':
+        result = await taskSync.fullProjectSync(
+          parsed.params?.sourcePlatform || 'taskade',
+          parsed.params?.sourceProjectId,
+          parsed.params?.targetPlatform || 'nifty',
+          parsed.params?.targetProjectId
+        );
+        break;
+
+      case 'trigger_workflow':
+        result = await workflowOrchestrator.executeWorkflow(
+          parsed.params?.workflowId || 'multi_platform_task',
+          parsed.params
+        );
+        break;
+
+      case 'briefing':
+        result = await briefing.generateBriefing(parsed.params?.type || 'morning');
+        break;
+
+      case 'status':
+        result = {
+          proactive: proactiveEngine.getProactiveState(),
+          events: eventBus.getStatus(),
+          sync: taskSync.getSyncStatus()
+        };
+        break;
+
+      default:
+        result = { message: 'Command understood but not implemented', parsed };
+    }
+
+    res.json({
+      command,
+      parsed,
+      result
+    });
+
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

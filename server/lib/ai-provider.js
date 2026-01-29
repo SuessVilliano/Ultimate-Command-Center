@@ -5,14 +5,17 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getSetting, setSetting, logAgentInteraction } from './database.js';
 
 // Provider instances
 let anthropicClient = null;
 let openaiClient = null;
+let geminiClient = null;
 
 // Current configuration
-let currentProvider = 'claude';
+let currentProvider = 'gemini';
+let storedKeys = { anthropic: null, openai: null, gemini: null };
 let currentModel = null;
 
 /**
@@ -21,6 +24,8 @@ let currentModel = null;
 export function initAIProviders(config = {}) {
   const anthropicKey = config.anthropicKey || process.env.ANTHROPIC_API_KEY;
   const openaiKey = config.openaiKey || process.env.OPENAI_API_KEY;
+  const geminiKey = config.geminiKey || process.env.GEMINI_API_KEY;
+  storedKeys = { anthropic: anthropicKey || null, openai: openaiKey || null, gemini: geminiKey || null };
 
   if (anthropicKey) {
     anthropicClient = new Anthropic({ apiKey: anthropicKey });
@@ -32,8 +37,15 @@ export function initAIProviders(config = {}) {
     console.log('OpenAI (GPT) client initialized');
   }
 
+  if (geminiKey) {
+    geminiClient = new GoogleGenerativeAI(geminiKey);
+    console.log('Google (Gemini) client initialized');
+  }
+
   // Set default provider
-  currentProvider = config.provider || process.env.AI_PROVIDER || 'claude';
+  let savedProvider = null;
+  try { savedProvider = getSetting('ai_provider', null); } catch (e) {}
+  currentProvider = savedProvider || config.provider || process.env.AI_PROVIDER || 'gemini';
   currentModel = getDefaultModel(currentProvider);
 
   return {
@@ -51,6 +63,7 @@ function getDefaultModel(provider) {
   if (provider === 'openai') {
     return process.env.GPT_MODEL || 'gpt-4o';
   }
+  if (provider === 'gemini') return process.env.GEMINI_MODEL || 'gemini-1.5-flash';
   return process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
 }
 

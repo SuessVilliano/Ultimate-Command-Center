@@ -43,6 +43,7 @@ import {
 import { useTheme } from '../context/ThemeContext';
 import { COMMANDER_AGENT, SPECIALIZED_AGENTS, AGENT_CATEGORIES, getAgentById } from '../data/agents';
 import aiService from '../services/aiService';
+import AISettings from './AISettings';
 
 function ChatWidget({ onNavigate }) {
   const { theme, toggleTheme } = useTheme();
@@ -144,6 +145,7 @@ function ChatWidget({ onNavigate }) {
   const [showSettings, setShowSettings] = useState(false);
   const [apiKey, setApiKey] = useState(aiService.getApiKey());
   const [showApiKeyInput, setShowApiKeyInput] = useState(false);
+  const [showAISettings, setShowAISettings] = useState(false);
 
   // Focus/Mission panel
   const [showFocusPanel, setShowFocusPanel] = useState(false);
@@ -664,41 +666,18 @@ function ChatWidget({ onNavigate }) {
                 <div className="pt-2 border-t border-gray-700">
                   <div className="flex items-center justify-between mb-2">
                     <span className={`text-xs font-medium ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                      AI: {aiService.hasApiKey() ? '✓ Connected' : '○ Not configured'}
+                      AI: {backendStatus.connected ? `${backendStatus.provider} ✓` : '○ Offline'}
                     </span>
                     <button
-                      onClick={() => setShowApiKeyInput(!showApiKeyInput)}
-                      className={`text-xs px-2 py-1 rounded ${isDark ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                      onClick={() => setShowAISettings(true)}
+                      className={`text-xs px-2 py-1 rounded ${isDark ? 'bg-purple-600 text-white hover:bg-purple-500' : 'bg-purple-600 text-white hover:bg-purple-500'}`}
                     >
-                      {showApiKeyInput ? 'Cancel' : 'Configure AI'}
+                      AI Settings
                     </button>
                   </div>
-                  {showApiKeyInput && (
-                    <div className="space-y-2">
-                      <input
-                        type="password"
-                        value={apiKey}
-                        onChange={e => setApiKey(e.target.value)}
-                        placeholder="Enter Gemini API key..."
-                        className={`w-full px-2 py-1.5 rounded text-sm ${isDark ? 'bg-gray-900 border-gray-700 text-white placeholder-gray-500' : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'} border`}
-                      />
-                      <div className="flex gap-2">
-                        <button
-                          onClick={handleSaveApiKey}
-                          disabled={!apiKey}
-                          className="flex-1 px-2 py-1 text-xs rounded bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50"
-                        >
-                          Save Key
-                        </button>
-                        <a
-                          href="https://aistudio.google.com/app/apikey"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={`px-2 py-1 text-xs rounded ${isDark ? 'bg-gray-700 text-gray-300' : 'bg-gray-200 text-gray-700'}`}
-                        >
-                          Get Key
-                        </a>
-                      </div>
+                  {backendStatus.connected && (
+                    <div className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                      Model: {backendStatus.model || 'default'}
                     </div>
                   )}
                 </div>
