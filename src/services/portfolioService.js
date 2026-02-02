@@ -2,7 +2,7 @@
  * Portfolio Service - Fetches live portfolio data from GitHub
  */
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3005';
+import { API_URL } from '../config';
 
 // Cache for portfolio data
 let portfolioCache = null;

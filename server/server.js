@@ -202,6 +202,11 @@ app.post('/api/ai/switch', (req, res) => {
 app.post('/api/ai/key', (req, res) => {
   try {
     const { provider, apiKey } = req.body;
+
+    if (!apiKey || apiKey.trim().length === 0) {
+      return res.status(400).json({ error: 'API key is required' });
+    }
+
     const success = ai.updateApiKey(provider, apiKey);
 
     if (success) {
@@ -210,11 +215,15 @@ app.post('/api/ai/key', (req, res) => {
         rag.initLangChain({ anthropicKey: apiKey });
       } else if (provider === 'openai' || provider === 'gpt') {
         rag.initLangChain({ openaiKey: apiKey });
+      } else if (provider === 'gemini' || provider === 'google') {
+        rag.initLangChain({ geminiKey: apiKey });
       }
+      console.log(`API key updated for provider: ${provider}`);
     }
 
-    res.json({ success });
+    res.json({ success, message: success ? `${provider} API key saved successfully` : 'Failed to save key' });
   } catch (error) {
+    console.error('Error updating API key:', error);
     res.status(400).json({ error: error.message });
   }
 });

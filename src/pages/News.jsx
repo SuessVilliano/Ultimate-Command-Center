@@ -24,9 +24,8 @@ import {
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 
-const AI_SERVER_URL = import.meta.env.VITE_API_URL
-  ? `https://${import.meta.env.VITE_API_URL}`
-  : 'http://localhost:3005';
+import { API_URL } from '../config';
+const AI_SERVER_URL = API_URL;
 
 // Error Boundary Component
 class ErrorBoundary extends React.Component {

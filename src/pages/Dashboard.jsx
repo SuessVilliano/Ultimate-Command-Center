@@ -57,9 +57,8 @@ const STORAGE_KEYS = {
 };
 
 // Default schedule template for a high-performer with ADHD
-const AI_SERVER_URL = import.meta.env.VITE_API_URL
-  ? `https://${import.meta.env.VITE_API_URL}`
-  : 'http://localhost:3005';
+import { API_URL } from '../config';
+const AI_SERVER_URL = API_URL;
 
 // AI Briefing Component
 function AIBriefingCard() {

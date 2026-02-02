@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, Check, X, Eye, EyeOff, RefreshCw } from 'lucide-react';
+import { API_URL } from '../config';
 
-const BACKEND_URL = import.meta.env.VITE_API_URL || 'http://localhost:3005';
+const BACKEND_URL = API_URL;
 
 const PROVIDERS = [
   { id: 'gemini', name: 'Gemini', icon: '🌟', color: 'blue' },

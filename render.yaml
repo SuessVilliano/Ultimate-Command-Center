@@ -15,18 +15,20 @@ services:
         value: "3005"
       - key: AI_PROVIDER
         value: gemini
+      # AI Provider API Keys - can be set in Render dashboard OR through the app's AI Settings page
       - key: GEMINI_API_KEY
         sync: false
-        value: gemini
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
       - key: SCHEDULE_ENABLED
         value: "false"
       - key: APP_URL
         value: https://commandcenter.liv8.co
       - key: FRONTEND_URL
         value: https://commandcenter.liv8.co
-      # Secrets - set in Render dashboard
-      - key: ANTHROPIC_API_KEY
-        sync: false
+      # Other Integration Secrets - set in Render dashboard
       - key: TASKADE_API_KEY
         sync: false
       - key: TASKMAGIC_WEBHOOK_URL

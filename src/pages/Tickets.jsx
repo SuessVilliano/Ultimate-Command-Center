@@ -43,10 +43,9 @@ const STORAGE_KEYS = {
   AI_SETTINGS: 'liv8_ai_settings'
 };
 
-// AI Server URL (local backend using Claude)
-const AI_SERVER_URL = import.meta.env.VITE_API_URL
-  ? `https://${import.meta.env.VITE_API_URL}`
-  : 'http://localhost:3005';
+// AI Server URL
+import { API_URL } from '../config';
+const AI_SERVER_URL = API_URL;
 
 // Schedule times for display
 const SCHEDULE_TIMES = ['8:00 AM', '12:00 PM', '4:00 PM', '12:00 AM'];

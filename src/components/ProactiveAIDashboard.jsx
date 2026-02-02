@@ -27,8 +27,7 @@ import {
   ExternalLink,
   Workflow
 } from 'lucide-react';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3005';
+import { API_URL } from '../config';
 
 export default function ProactiveAIDashboard({ isDark = true }) {
   const [proactiveState, setProactiveState] = useState(null);

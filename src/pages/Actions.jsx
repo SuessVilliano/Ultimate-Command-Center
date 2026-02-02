@@ -28,8 +28,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { actionItems as staticActionItems, aiAgents } from '../data/portfolio';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3005';
+import { API_URL } from '../config';
 
 function Actions() {
   const [filter, setFilter] = useState('all');

@@ -22,9 +22,24 @@ let currentModel = null;
  * Initialize AI providers with API keys
  */
 export function initAIProviders(config = {}) {
-  const anthropicKey = config.anthropicKey || process.env.ANTHROPIC_API_KEY;
-  const openaiKey = config.openaiKey || process.env.OPENAI_API_KEY;
-  const geminiKey = config.geminiKey || process.env.GEMINI_API_KEY;
+  // Try to load persisted keys from database first
+  let persistedAnthropicKey = null;
+  let persistedOpenaiKey = null;
+  let persistedGeminiKey = null;
+
+  try {
+    persistedAnthropicKey = getSetting('anthropic_api_key', null);
+    persistedOpenaiKey = getSetting('openai_api_key', null);
+    persistedGeminiKey = getSetting('gemini_api_key', null);
+  } catch (e) {
+    // Database might not be ready yet
+  }
+
+  // Priority: config > persisted > env var
+  const anthropicKey = config.anthropicKey || persistedAnthropicKey || process.env.ANTHROPIC_API_KEY;
+  const openaiKey = config.openaiKey || persistedOpenaiKey || process.env.OPENAI_API_KEY;
+  const geminiKey = config.geminiKey || persistedGeminiKey || process.env.GEMINI_API_KEY;
+
   storedKeys = { anthropic: anthropicKey || null, openai: openaiKey || null, gemini: geminiKey || null };
 
   if (anthropicKey) {
@@ -48,9 +63,12 @@ export function initAIProviders(config = {}) {
   currentProvider = savedProvider || config.provider || process.env.AI_PROVIDER || 'gemini';
   currentModel = getDefaultModel(currentProvider);
 
+  console.log(`AI Provider initialized: ${currentProvider} (Claude: ${!!anthropicClient}, OpenAI: ${!!openaiClient}, Gemini: ${!!geminiClient})`);
+
   return {
     claude: !!anthropicClient,
     openai: !!openaiClient,
+    gemini: !!geminiClient,
     currentProvider,
     currentModel
   };
@@ -77,6 +95,9 @@ export function switchProvider(provider, model = null) {
   if (provider === 'claude' && !anthropicClient) {
     throw new Error('Anthropic API key not configured');
   }
+  if (provider === 'gemini' && !geminiClient) {
+    throw new Error('Gemini API key not configured');
+  }
 
   currentProvider = provider;
   currentModel = model || getDefaultModel(provider);
@@ -101,7 +122,30 @@ export function getCurrentProvider() {
     model: currentModel,
     available: {
       claude: !!anthropicClient,
-      openai: !!openaiClient
+      openai: !!openaiClient,
+      gemini: !!geminiClient
+    },
+    hasKeys: {
+      claude: !!storedKeys.anthropic,
+      openai: !!storedKeys.openai,
+      gemini: !!storedKeys.gemini
+    },
+    models: {
+      gemini: [
+        { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', default: true },
+        { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
+        { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash' }
+      ],
+      claude: [
+        { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', default: true },
+        { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet' },
+        { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku' }
+      ],
+      openai: [
+        { id: 'gpt-4o', name: 'GPT-4o', default: true },
+        { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
+        { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' }
+      ]
     }
   };
 }
@@ -112,13 +156,40 @@ export function getCurrentProvider() {
 export function updateApiKey(provider, apiKey) {
   if (provider === 'claude' || provider === 'anthropic') {
     anthropicClient = new Anthropic({ apiKey });
+    storedKeys.anthropic = apiKey;
+    // Persist to database
+    try {
+      setSetting('anthropic_api_key', apiKey);
+    } catch (e) {
+      console.log('Could not persist Anthropic key to database');
+    }
     console.log('Anthropic API key updated');
     return true;
   }
 
   if (provider === 'openai' || provider === 'gpt') {
     openaiClient = new OpenAI({ apiKey });
+    storedKeys.openai = apiKey;
+    // Persist to database
+    try {
+      setSetting('openai_api_key', apiKey);
+    } catch (e) {
+      console.log('Could not persist OpenAI key to database');
+    }
     console.log('OpenAI API key updated');
+    return true;
+  }
+
+  if (provider === 'gemini' || provider === 'google') {
+    geminiClient = new GoogleGenerativeAI(apiKey);
+    storedKeys.gemini = apiKey;
+    // Persist to database
+    try {
+      setSetting('gemini_api_key', apiKey);
+    } catch (e) {
+      console.log('Could not persist Gemini key to database');
+    }
+    console.log('Gemini API key updated');
     return true;
   }
 
@@ -126,7 +197,7 @@ export function updateApiKey(provider, apiKey) {
 }
 
 /**
- * Main chat completion function - works with both providers
+ * Main chat completion function - works with all providers
  */
 export async function chat(messages, options = {}) {
   const provider = options.provider || currentProvider;
@@ -143,6 +214,9 @@ export async function chat(messages, options = {}) {
     if (provider === 'openai') {
       response = await chatWithOpenAI(messages, { model, maxTokens, temperature, systemPrompt });
       text = response.choices[0]?.message?.content || '';
+    } else if (provider === 'gemini') {
+      response = await chatWithGemini(messages, { model, maxTokens, temperature, systemPrompt });
+      text = response.text || '';
     } else {
       response = await chatWithClaude(messages, { model, maxTokens, temperature, systemPrompt });
       text = response.content[0]?.text || '';
@@ -235,6 +309,57 @@ async function chatWithOpenAI(messages, options) {
     max_tokens: options.maxTokens,
     temperature: options.temperature
   });
+}
+
+/**
+ * Chat with Gemini (Google)
+ */
+async function chatWithGemini(messages, options) {
+  if (!geminiClient) {
+    throw new Error('Gemini client not initialized. Add GEMINI_API_KEY to .env or settings');
+  }
+
+  const model = geminiClient.getGenerativeModel({
+    model: options.model || 'gemini-1.5-flash',
+    generationConfig: {
+      maxOutputTokens: options.maxTokens,
+      temperature: options.temperature
+    }
+  });
+
+  // Build conversation history
+  const history = [];
+  let systemInstruction = options.systemPrompt || '';
+
+  for (const m of messages.slice(0, -1)) {
+    history.push({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }]
+    });
+  }
+
+  // Get the last message as the current prompt
+  const lastMessage = messages[messages.length - 1];
+  let prompt = lastMessage?.content || '';
+
+  // Prepend system prompt to first user message if exists
+  if (systemInstruction && history.length === 0) {
+    prompt = `${systemInstruction}\n\n${prompt}`;
+  }
+
+  try {
+    const chat = model.startChat({ history });
+    const result = await chat.sendMessage(prompt);
+    const response = await result.response;
+
+    return {
+      text: response.text(),
+      usage: null
+    };
+  } catch (error) {
+    console.error('Gemini chat error:', error);
+    throw error;
+  }
 }
 
 /**
