@@ -2,7 +2,6 @@ services:
   - type: web
     name: liv8-command-center-api
     runtime: node
-    plan: free
     rootDir: server
     buildCommand: npm install
     startCommand: node server.js
@@ -88,7 +87,6 @@ services:
   - type: web
     name: liv8-command-center
     runtime: static
-    plan: free
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist
     autoDeploy: true
