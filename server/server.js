@@ -28,6 +28,8 @@ import * as memory from './lib/conversation-memory.js';
 import * as integrations from './lib/integrations.js';
 import * as agentKnowledge from './lib/agent-knowledge.js';
 import * as contentIngestion from './lib/content-ingestion.js';
+import * as dailyReport from './lib/daily-report.js';
+import * as emailService from './lib/email-service.js';
 import * as orchestrator from './lib/agent-orchestrator.js';
 import { registerNiftyRoutes } from './routes/nifty-routes.js';
 import { taskmagicMCP } from './lib/taskmagic-mcp.js';
@@ -589,6 +591,95 @@ app.post('/api/schedule/toggle', (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+// ============================================
+// DAILY REPORT ENDPOINTS
+// ============================================
+
+// Generate daily report (manual trigger)
+app.post('/api/reports/generate', async (req, res) => {
+  try {
+    const { email } = req.body;
+    const result = await scheduler.generateAndSendDailyReport(email);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get list of generated reports
+app.get('/api/reports', (req, res) => {
+  try {
+    const reports = dailyReport.getReportsList();
+    res.json({ reports });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Download a specific report
+app.get('/api/reports/download/:filename', (req, res) => {
+  try {
+    const { filename } = req.params;
+    const reports = dailyReport.getReportsList();
+    const report = reports.find(r => r.filename === filename);
+
+    if (!report) {
+      return res.status(404).json({ error: 'Report not found' });
+    }
+
+    res.download(report.filepath, report.filename);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get report data (JSON) without generating PDF
+app.get('/api/reports/data', async (req, res) => {
+  try {
+    const data = await dailyReport.generateReportData();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Test email configuration
+app.post('/api/email/test', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!emailService.isEmailEnabled()) {
+      return res.status(400).json({
+        error: 'Email not configured',
+        config: emailService.getEmailConfig()
+      });
+    }
+
+    const verification = await emailService.verifyConnection();
+    if (!verification.success) {
+      return res.status(400).json({
+        error: 'SMTP connection failed',
+        details: verification.error
+      });
+    }
+
+    await emailService.sendNotification(
+      'Test Email from LIV8 Command Center',
+      'This is a test email to verify your email configuration is working correctly.\n\nIf you receive this, your daily reports will be delivered successfully!',
+      email
+    );
+
+    res.json({ success: true, message: 'Test email sent' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get email configuration status
+app.get('/api/email/status', (req, res) => {
+  res.json(emailService.getEmailConfig());
 });
 
 // ============================================

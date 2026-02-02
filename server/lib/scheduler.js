@@ -1,12 +1,15 @@
 /**
  * LIV8 Command Center - Scheduler Module
- * Handles automated ticket polling and analysis at scheduled times
+ * Handles automated ticket polling, analysis, and daily report generation
  * Default schedule: 8 AM, 12 PM, 4 PM, 12 AM EST
+ * Daily Report: 6 AM EST
  */
 
 import cron from 'node-cron';
 import * as db from './database.js';
 import * as ai from './ai-provider.js';
+import * as dailyReport from './daily-report.js';
+import * as emailService from './email-service.js';
 
 // Active scheduled jobs
 const scheduledJobs = new Map();
@@ -342,6 +345,67 @@ function extractKeywords(text) {
 }
 
 /**
+ * Generate and send daily report
+ */
+export async function generateAndSendDailyReport(recipientEmail = null) {
+  console.log('\n📊 Starting daily report generation...');
+
+  try {
+    // Generate the PDF report
+    const { filepath, filename, reportData } = await dailyReport.generatePDFReport();
+    console.log(`PDF report generated: ${filename}`);
+
+    // Check for urgent tickets and send alerts
+    if (reportData.urgentTickets && reportData.urgentTickets.length > 0) {
+      try {
+        if (emailService.isEmailEnabled()) {
+          await emailService.sendUrgentAlert(reportData.urgentTickets, recipientEmail);
+          console.log(`Urgent alert sent for ${reportData.urgentTickets.length} tickets`);
+        }
+      } catch (e) {
+        console.log('Could not send urgent alert:', e.message);
+      }
+    }
+
+    // Send the daily report email
+    if (emailService.isEmailEnabled()) {
+      const emailResult = await emailService.sendDailyReport(filepath, reportData, recipientEmail);
+      console.log(`Daily report email sent to ${emailResult.recipient}`);
+
+      // Cleanup old reports (keep last 30)
+      const deleted = dailyReport.cleanupOldReports(30);
+      if (deleted > 0) {
+        console.log(`Cleaned up ${deleted} old report(s)`);
+      }
+
+      return {
+        success: true,
+        filepath,
+        filename,
+        emailSent: true,
+        recipient: emailResult.recipient,
+        summary: reportData.summary
+      };
+    } else {
+      console.log('Email not configured - report generated but not sent');
+      return {
+        success: true,
+        filepath,
+        filename,
+        emailSent: false,
+        summary: reportData.summary
+      };
+    }
+  } catch (error) {
+    console.error('Failed to generate/send daily report:', error.message);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
  * Schedule all automated jobs
  */
 export function startScheduledJobs(enabled = true) {
@@ -354,6 +418,17 @@ export function startScheduledJobs(enabled = true) {
 
   // Clear any existing jobs
   stopScheduledJobs();
+
+  // Initialize email service
+  emailService.initEmailService();
+
+  // 6 AM EST - Daily Report Generation & Email
+  const dailyReportCron = process.env.SCHEDULE_DAILY_REPORT || '0 6 * * *';
+  const dailyReportJob = cron.schedule(dailyReportCron, () => {
+    generateAndSendDailyReport();
+  }, { timezone });
+  scheduledJobs.set('daily_report', dailyReportJob);
+  console.log(`Scheduled: Daily Report at 6 AM EST (${dailyReportCron})`);
 
   // 8 AM EST - Morning brief
   const morningCron = process.env.SCHEDULE_MORNING || '0 8 * * *';
@@ -388,7 +463,7 @@ export function startScheduledJobs(enabled = true) {
   console.log(`Scheduled: Midnight analysis at 12 AM EST (${midnightCron})`);
 
   console.log(`\nAll scheduled jobs started (timezone: ${timezone})`);
-  console.log('Next runs will occur at: 8 AM, 12 PM, 4 PM, and 12 AM EST');
+  console.log('Daily Report: 6 AM | Analysis: 8 AM, 12 PM, 4 PM, 12 AM EST');
 
   return scheduledJobs;
 }
@@ -421,11 +496,13 @@ export function getScheduleStatus() {
     timezone: process.env.SCHEDULE_TIMEZONE || 'America/New_York',
     jobs,
     schedules: {
+      daily_report: process.env.SCHEDULE_DAILY_REPORT || '0 6 * * *',
       morning: process.env.SCHEDULE_MORNING || '0 8 * * *',
       noon: process.env.SCHEDULE_NOON || '0 12 * * *',
       afternoon: process.env.SCHEDULE_AFTERNOON || '0 16 * * *',
       midnight: process.env.SCHEDULE_MIDNIGHT || '0 0 * * *'
-    }
+    },
+    email: emailService.getEmailConfig()
   };
 }
 
@@ -442,5 +519,6 @@ export default {
   stopScheduledJobs,
   getScheduleStatus,
   runScheduledAnalysis,
-  runManualAnalysis
+  runManualAnalysis,
+  generateAndSendDailyReport
 };

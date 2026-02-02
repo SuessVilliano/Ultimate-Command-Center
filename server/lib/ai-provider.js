@@ -555,6 +555,170 @@ Respond with ONLY the JSON object, no markdown.`;
   };
 }
 
+/**
+ * Generate a response based on resolved ticket patterns (company standards)
+ * Cross-references similar resolved tickets to learn response patterns
+ */
+export async function generateSmartResponse(ticket, resolvedTickets = [], options = {}) {
+  const { agentName, companyStandards } = options;
+
+  // Build context from resolved tickets
+  let resolvedContext = '';
+  if (resolvedTickets && resolvedTickets.length > 0) {
+    resolvedContext = `
+LEARN FROM THESE SUCCESSFULLY RESOLVED SIMILAR TICKETS:
+${resolvedTickets.slice(0, 5).map((t, i) => `
+--- Resolved Ticket ${i + 1} ---
+Subject: ${t.subject}
+Issue: ${t.description?.substring(0, 200) || 'N/A'}
+Resolution/Response Used: ${t.resolution || t.response || 'Standard resolution applied'}
+Keywords: ${Array.isArray(t.keywords) ? t.keywords.join(', ') : (t.keywords || 'N/A')}
+`).join('\n')}
+
+IMPORTANT: Use the tone, structure, and solutions from these resolved tickets as a template.
+Match the company's established response patterns.`;
+  }
+
+  // Company standards prompt
+  const standardsPrompt = companyStandards || `
+COMPANY RESPONSE STANDARDS:
+1. Be concise - customers want quick answers, not essays
+2. Lead with the solution or next step
+3. Use simple, non-technical language when possible
+4. Always acknowledge the customer's frustration if expressed
+5. Include specific action items or next steps
+6. Never blame the customer or other teams
+7. End with a clear call-to-action or offer of further help
+8. Keep responses under 150 words when possible
+9. Use bullet points for multiple steps
+10. Always personalize with the customer's name`;
+
+  const prompt = `You are ${agentName || 'a senior support agent'} writing a response to a customer ticket.
+
+CRITICAL: Write a SHORT, DIRECT response following company standards. No fluff.
+
+${standardsPrompt}
+
+CURRENT TICKET TO RESPOND TO:
+Subject: ${ticket.subject}
+Description: ${ticket.description || ticket.description_text || 'No description'}
+Customer: ${ticket.requester?.name || ticket.requester_name || 'Customer'}
+Priority: ${ticket.priority || 'Normal'}
+${resolvedContext}
+
+FORMATTING RULES:
+- Plain text only, NO markdown
+- NO asterisks, hashtags, or backticks
+- Keep it under 150 words
+- Be direct and helpful
+
+Write your response now:`;
+
+  const result = await chat([{ role: 'user', content: prompt }], {
+    ...options,
+    maxTokens: 800,
+    temperature: 0.7,
+    agentId: options.agentId || 'smart-response-generator'
+  });
+
+  // Clean response
+  let response = result.text
+    .replace(/\*\*/g, '')
+    .replace(/\*/g, '')
+    .replace(/^#{1,6}\s/gm, '')
+    .replace(/`/g, '')
+    .trim();
+
+  return {
+    response,
+    basedOnTickets: resolvedTickets.length,
+    provider: result.provider,
+    model: result.model
+  };
+}
+
+/**
+ * Generate daily report summary with AI
+ */
+export async function generateDailyReportSummary(reportData, options = {}) {
+  const { tickets, urgentCount, typeBreakdown, recentPatterns } = reportData;
+
+  const prompt = `You are an AI assistant generating an executive summary for a daily support report.
+
+TODAY'S METRICS:
+- Total Open Tickets: ${tickets?.length || 0}
+- Urgent Items: ${urgentCount || 0}
+- Ticket Types: ${JSON.stringify(typeBreakdown || {})}
+
+RECENT PATTERNS:
+${recentPatterns?.join('\n') || 'No patterns detected'}
+
+Generate a brief (3-4 sentences) executive summary that:
+1. Highlights the most critical items needing attention
+2. Notes any concerning patterns or trends
+3. Provides 1-2 actionable recommendations
+
+Be direct and actionable. No fluff.`;
+
+  const result = await chat([{ role: 'user', content: prompt }], {
+    ...options,
+    maxTokens: 500,
+    agentId: 'report-summarizer'
+  });
+
+  return {
+    summary: result.text.trim(),
+    provider: result.provider
+  };
+}
+
+/**
+ * Learn from a resolved ticket (extract patterns for future use)
+ */
+export async function extractTicketPatterns(ticket, resolution, options = {}) {
+  const prompt = `Analyze this resolved support ticket and extract learnable patterns.
+
+TICKET:
+Subject: ${ticket.subject}
+Description: ${ticket.description || ticket.description_text || 'N/A'}
+Type: ${ticket.escalation_type || 'SUPPORT'}
+
+RESOLUTION PROVIDED:
+${resolution}
+
+Extract in JSON format:
+{
+  "keywords": ["key", "terms", "for", "matching"],
+  "category": "main category",
+  "problemPattern": "brief description of the problem type",
+  "solutionPattern": "brief description of the solution approach",
+  "responseTemplate": "a template response that could be reused",
+  "escalationNeeded": true/false,
+  "commonCauses": ["list", "of", "common", "causes"],
+  "preventionTips": ["tips", "to", "prevent", "this", "issue"]
+}
+
+Respond with ONLY the JSON object.`;
+
+  const result = await chat([{ role: 'user', content: prompt }], {
+    ...options,
+    maxTokens: 800,
+    agentId: 'pattern-extractor'
+  });
+
+  const jsonMatch = result.text.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    return JSON.parse(jsonMatch[0]);
+  }
+
+  return {
+    keywords: [],
+    category: 'general',
+    problemPattern: 'Unknown',
+    solutionPattern: 'Standard resolution'
+  };
+}
+
 export default {
   initAIProviders,
   switchProvider,
@@ -563,5 +727,8 @@ export default {
   chat,
   analyzeTicket,
   generateResponse,
-  proactiveAnalysis
+  generateSmartResponse,
+  proactiveAnalysis,
+  generateDailyReportSummary,
+  extractTicketPatterns
 };
