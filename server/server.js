@@ -3073,6 +3073,363 @@ Respond with JSON:
 // START SERVER
 // ============================================
 
+// ============================================
+// PROJECTS CRUD ENDPOINTS
+// ============================================
+
+// In-memory projects storage (will use DB in production)
+let projectsStore = [];
+
+// Initialize from DB or use default
+try {
+  const savedProjects = db.getSetting('projects');
+  if (savedProjects) {
+    projectsStore = JSON.parse(savedProjects);
+  }
+} catch (e) {
+  console.log('No saved projects, starting fresh');
+}
+
+// Get all projects
+app.get('/api/projects', (req, res) => {
+  res.json({ projects: projectsStore });
+});
+
+// Add new project
+app.post('/api/projects', (req, res) => {
+  try {
+    const project = {
+      id: Date.now(),
+      ...req.body,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    projectsStore.push(project);
+    db.setSetting('projects', JSON.stringify(projectsStore));
+    res.json(project);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update project
+app.put('/api/projects/:id', (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const index = projectsStore.findIndex(p => p.id === id);
+    if (index === -1) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    projectsStore[index] = {
+      ...projectsStore[index],
+      ...req.body,
+      updatedAt: new Date().toISOString()
+    };
+    db.setSetting('projects', JSON.stringify(projectsStore));
+    res.json(projectsStore[index]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete project
+app.delete('/api/projects/:id', (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    projectsStore = projectsStore.filter(p => p.id !== id);
+    db.setSetting('projects', JSON.stringify(projectsStore));
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// ACTION FEED / INBOX ENDPOINTS
+// ============================================
+
+// In-memory action feed
+let actionFeedStore = [];
+
+// Initialize from DB
+try {
+  const savedFeed = db.getSetting('action_feed');
+  if (savedFeed) {
+    actionFeedStore = JSON.parse(savedFeed);
+  }
+} catch (e) {
+  console.log('No saved action feed');
+}
+
+// Get action feed items
+app.get('/api/action-feed', async (req, res) => {
+  try {
+    // Aggregate from multiple sources
+    const tickets = db.getTicketsByStatus([2, 3]) || [];
+    const ticketItems = tickets.slice(0, 10).map(t => ({
+      id: `ticket-${t.id}`,
+      type: 'ticket',
+      source: 'freshdesk',
+      title: t.subject,
+      description: t.description_text?.substring(0, 100) || '',
+      priority: t.priority === 4 ? 'urgent' : t.priority === 3 ? 'high' : t.priority === 2 ? 'medium' : 'low',
+      status: 'unread',
+      timestamp: t.created_at,
+      metadata: { ticketId: t.id, requester: t.requester_email }
+    }));
+
+    // Combine with stored items
+    const allItems = [...ticketItems, ...actionFeedStore]
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+      .slice(0, 50);
+
+    res.json({ items: allItems });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add action feed item
+app.post('/api/action-feed', (req, res) => {
+  try {
+    const item = {
+      id: `custom-${Date.now()}`,
+      ...req.body,
+      timestamp: new Date().toISOString(),
+      status: 'unread'
+    };
+    actionFeedStore.unshift(item);
+    db.setSetting('action_feed', JSON.stringify(actionFeedStore.slice(0, 100)));
+    res.json(item);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update action feed item status
+app.patch('/api/action-feed/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const index = actionFeedStore.findIndex(item => item.id === id);
+    if (index !== -1) {
+      actionFeedStore[index] = { ...actionFeedStore[index], status };
+      db.setSetting('action_feed', JSON.stringify(actionFeedStore.slice(0, 100)));
+    }
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// ENHANCED COMMANDER ENDPOINT (Full Context)
+// ============================================
+
+app.post('/api/commander/full-context', async (req, res) => {
+  try {
+    const { message, userId = 'sv' } = req.body;
+
+    // Gather full context from the command center
+    const tickets = db.getTicketsByStatus([2, 3, 4, 5, 6, 7]) || [];
+    const analyses = db.getAllAnalysisMap() || {};
+    const conversations = memory.getConversations(userId, 10) || [];
+
+    // Build comprehensive context
+    const context = {
+      ticketSummary: {
+        total: tickets.length,
+        open: tickets.filter(t => t.status === 2).length,
+        pending: tickets.filter(t => t.status === 3).length,
+        urgent: tickets.filter(t => t.priority === 4).length,
+        high: tickets.filter(t => t.priority === 3).length,
+        recentTickets: tickets.slice(0, 10).map(t => ({
+          id: t.id,
+          subject: t.subject,
+          status: t.status,
+          priority: t.priority,
+          type: t.type
+        }))
+      },
+      projectSummary: {
+        total: projectsStore.length,
+        byStatus: projectsStore.reduce((acc, p) => {
+          acc[p.status] = (acc[p.status] || 0) + 1;
+          return acc;
+        }, {}),
+        totalValue: projectsStore.reduce((acc, p) => ({
+          min: acc.min + (p.valueMin || 0),
+          max: acc.max + (p.valueMax || 0)
+        }), { min: 0, max: 0 })
+      },
+      recentConversations: conversations.length,
+      timestamp: new Date().toISOString()
+    };
+
+    // Generate AI response with full context
+    const systemPrompt = `You are the LIV8 Command Center AI Assistant. You have access to the following context about the user's work:
+
+TICKETS: ${context.ticketSummary.total} total (${context.ticketSummary.open} open, ${context.ticketSummary.pending} pending, ${context.ticketSummary.urgent} urgent)
+PROJECTS: ${context.projectSummary.total} software projects worth $${context.projectSummary.totalValue.min.toLocaleString()}-$${context.projectSummary.totalValue.max.toLocaleString()}
+RECENT CONVERSATIONS: ${context.recentConversations}
+
+Recent Tickets:
+${context.ticketSummary.recentTickets.map(t => `- #${t.id}: ${t.subject} (Priority: ${t.priority}, Status: ${t.status})`).join('\n')}
+
+Based on this context, help the user with their request. Be specific, actionable, and reference actual data when relevant.`;
+
+    const response = await ai.chat([
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: message }
+    ]);
+
+    res.json({
+      response: response,
+      context: context
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// ACTION ITEMS ENDPOINTS
+// ============================================
+
+let actionItemsStore = [];
+
+try {
+  const saved = db.getSetting('action_items');
+  if (saved) actionItemsStore = JSON.parse(saved);
+} catch (e) {}
+
+app.get('/api/action-items', (req, res) => {
+  res.json({ items: actionItemsStore });
+});
+
+app.post('/api/action-items', (req, res) => {
+  try {
+    const item = {
+      id: Date.now(),
+      ...req.body,
+      createdAt: new Date().toISOString(),
+      status: 'pending'
+    };
+    actionItemsStore.push(item);
+    db.setSetting('action_items', JSON.stringify(actionItemsStore));
+    res.json(item);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.patch('/api/action-items/:id', (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const index = actionItemsStore.findIndex(item => item.id === id);
+    if (index !== -1) {
+      actionItemsStore[index] = { ...actionItemsStore[index], ...req.body };
+      db.setSetting('action_items', JSON.stringify(actionItemsStore));
+      res.json(actionItemsStore[index]);
+    } else {
+      res.status(404).json({ error: 'Not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/action-items/:id', (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    actionItemsStore = actionItemsStore.filter(item => item.id !== id);
+    db.setSetting('action_items', JSON.stringify(actionItemsStore));
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// CLOUDFLARE INTEGRATION ENDPOINTS
+// ============================================
+
+const CF_API_BASE = 'https://api.cloudflare.com/client/v4';
+
+// Get Cloudflare domains
+app.get('/api/cloudflare/domains', async (req, res) => {
+  try {
+    const apiKey = process.env.CLOUDFLARE_API_KEY;
+    const email = process.env.CLOUDFLARE_EMAIL;
+
+    if (!apiKey || !email) {
+      return res.json({ domains: [], configured: false });
+    }
+
+    const response = await fetch(`${CF_API_BASE}/zones`, {
+      headers: {
+        'X-Auth-Email': email,
+        'X-Auth-Key': apiKey,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    const data = await response.json();
+    if (data.success) {
+      res.json({
+        configured: true,
+        domains: data.result.map(z => ({
+          id: z.id,
+          name: z.name,
+          status: z.status,
+          nameServers: z.name_servers,
+          plan: z.plan?.name
+        }))
+      });
+    } else {
+      res.json({ domains: [], configured: true, error: data.errors });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get Cloudflare Workers
+app.get('/api/cloudflare/workers', async (req, res) => {
+  try {
+    const apiKey = process.env.CLOUDFLARE_API_KEY;
+    const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+
+    if (!apiKey || !accountId) {
+      return res.json({ workers: [], configured: false });
+    }
+
+    const response = await fetch(`${CF_API_BASE}/accounts/${accountId}/workers/scripts`, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    const data = await response.json();
+    if (data.success) {
+      res.json({
+        configured: true,
+        workers: data.result.map(w => ({
+          id: w.id,
+          name: w.id,
+          modified: w.modified_on,
+          created: w.created_on
+        }))
+      });
+    } else {
+      res.json({ workers: [], configured: true, error: data.errors });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Register Nifty routes
 registerNiftyRoutes(app);
 
