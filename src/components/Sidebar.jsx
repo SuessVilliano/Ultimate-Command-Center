@@ -32,7 +32,7 @@ const menuItems = [
   { id: 'news', label: 'News & Markets', icon: TrendingUp },
   { id: 'inbox', label: 'Team Inbox', icon: MessageSquare },
   { id: 'action-feed', label: 'Action Feed', icon: Inbox },
-  { id: 'tickets', label: 'Support Tickets', icon: Ticket },
+  { id: 'tickets', label: 'GHL', icon: Ticket },
   { id: 'projects', label: 'Projects', icon: FolderKanban },
   { id: 'agents', label: 'Agents Config', icon: Zap },
   { id: 'actions', label: 'Action Items', icon: CheckSquare },
