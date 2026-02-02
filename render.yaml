@@ -49,6 +49,11 @@ services:
         sync: false
       - key: GHL_LOCATION_ID
         sync: false
+      # REQUIRED: Supabase for data persistence (free tier works great)
+      # 1. Create account at https://supabase.com
+      # 2. Create new project
+      # 3. Run the SQL from server/scripts/supabase-schema.sql in SQL Editor
+      # 4. Copy URL and anon key from Settings > API
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY
