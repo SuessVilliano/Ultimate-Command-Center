@@ -96,7 +96,7 @@ async function chatWithGemini(messages, options) {
   }
 
   const model = geminiClient.getGenerativeModel({
-    model: options.model || 'gemini-1.5-flash',
+    model: options.model || 'gemini-2.0-flash',
     generationConfig: {
       maxOutputTokens: options.maxTokens,
       temperature: options.temperature

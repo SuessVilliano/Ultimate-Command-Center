@@ -15,7 +15,7 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
   const [saving, setSaving] = useState(false);
   const [providerStatus, setProviderStatus] = useState({
     provider: 'gemini',
-    model: 'gemini-1.5-flash',
+    model: 'gemini-2.0-flash',
     available: { claude: false, openai: false, gemini: false },
     hasKeys: { claude: false, openai: false, gemini: false },
     models: {}

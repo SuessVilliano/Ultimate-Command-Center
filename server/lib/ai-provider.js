@@ -81,7 +81,7 @@ function getDefaultModel(provider) {
   if (provider === 'openai') {
     return process.env.GPT_MODEL || 'gpt-4o';
   }
-  if (provider === 'gemini') return process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+  if (provider === 'gemini') return process.env.GEMINI_MODEL || 'gemini-2.0-flash';
   return process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
 }
 
@@ -132,9 +132,9 @@ export function getCurrentProvider() {
     },
     models: {
       gemini: [
-        { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', default: true },
+        { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', default: true },
         { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
-        { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash' }
+        { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (Experimental)' }
       ],
       claude: [
         { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', default: true },
@@ -320,7 +320,7 @@ async function chatWithGemini(messages, options) {
   }
 
   const model = geminiClient.getGenerativeModel({
-    model: options.model || 'gemini-1.5-flash',
+    model: options.model || 'gemini-2.0-flash',
     generationConfig: {
       maxOutputTokens: options.maxTokens,
       temperature: options.temperature

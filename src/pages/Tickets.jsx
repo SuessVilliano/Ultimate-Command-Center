@@ -210,7 +210,7 @@ function Tickets() {
         setAiServerStatus('online');
         // Set AI provider info
         setAiProvider(data.ai?.provider || 'gemini');
-        setAiModel(data.ai?.model || 'gemini-1.5-flash');
+        setAiModel(data.ai?.model || 'gemini-2.0-flash');
         // Set schedule status
         if (data.schedule) {
           setScheduleStatus(data.schedule);

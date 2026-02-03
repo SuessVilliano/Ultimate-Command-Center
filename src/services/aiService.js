@@ -7,7 +7,7 @@ import { getAgentKnowledge } from '../data/knowledgebase/index';
 import { API_URL } from '../config';
 
 const BACKEND_URL = API_URL;
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
 // Storage keys
 const STORAGE_KEYS = {
@@ -657,7 +657,7 @@ Respond as their trusted Commander. Be helpful, proactive, and focused on helpin
         response: aiResponse,
         speakText: this.extractSpeakText(aiResponse),
         provider: 'gemini',
-        model: 'gemini-1.5-flash'
+        model: 'gemini-2.0-flash'
       };
 
     } catch (error) {
