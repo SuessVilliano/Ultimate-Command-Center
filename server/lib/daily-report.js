@@ -570,9 +570,175 @@ export function cleanupOldReports(keepCount = 30) {
   return deleted;
 }
 
+/**
+ * Send daily report to Personal Assistant via Telegram
+ */
+export async function sendReportToTelegram(reportData = null) {
+  const TELEGRAM_CONFIG = {
+    botToken: process.env.TELEGRAM_BOT_TOKEN || '8301866763:AAG_449bdRcxGSlH-YiN-feMCBfmRYXu5Kw',
+    chatId: process.env.TELEGRAM_CHAT_ID || '364565164'
+  };
+
+  try {
+    // Generate report data if not provided
+    const data = reportData || await generateReportData();
+    const timestamp = new Date().toLocaleString('en-US', {
+      timeZone: 'America/New_York',
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+
+    // Build comprehensive Telegram message
+    let message = `📊 <b>COMMAND CENTER DAILY BRIEFING</b>\n`;
+    message += `📅 ${timestamp}\n\n`;
+
+    // Ticket Summary
+    message += `<b>🎫 TICKET OVERVIEW</b>\n`;
+    message += `├ Total Open: ${data.summary.totalOpen}\n`;
+    message += `├ 🚨 Urgent: ${data.summary.urgentCount}\n`;
+    message += `└ 📋 Needs Work: ${data.summary.needsWorkCount}\n\n`;
+
+    // By Status
+    if (data.summary.byStatus.length > 0) {
+      message += `<b>📊 By Status:</b>\n`;
+      data.summary.byStatus.forEach(s => {
+        message += `  • ${s.status}: ${s.count}\n`;
+      });
+      message += '\n';
+    }
+
+    // By Type (Escalation)
+    if (data.summary.byType.length > 0) {
+      message += `<b>🏷️ By Type:</b>\n`;
+      data.summary.byType.forEach(t => {
+        const emoji = t.type === 'DEV' ? '💻' : t.type === 'TWILIO' ? '📞' : t.type === 'BUG' ? '🐛' : t.type === 'BILLING' ? '💰' : '📝';
+        message += `  ${emoji} ${t.type}: ${t.count}\n`;
+      });
+      message += '\n';
+    }
+
+    // AI Analysis Summary
+    if (data.aiAnalysis) {
+      message += `<b>🤖 AI ANALYSIS</b>\n`;
+      if (data.aiAnalysis.priorities && data.aiAnalysis.priorities.length > 0) {
+        message += `Top Priorities:\n`;
+        data.aiAnalysis.priorities.slice(0, 3).forEach((p, i) => {
+          message += `  ${i + 1}. ${p}\n`;
+        });
+      }
+      if (data.aiAnalysis.suggestions && data.aiAnalysis.suggestions.length > 0) {
+        message += `\nSuggestions:\n`;
+        data.aiAnalysis.suggestions.slice(0, 3).forEach(s => {
+          message += `  💡 ${s}\n`;
+        });
+      }
+      message += '\n';
+    }
+
+    // Urgent Tickets
+    if (data.urgentTickets && data.urgentTickets.length > 0) {
+      message += `<b>🚨 URGENT TICKETS</b>\n`;
+      data.urgentTickets.slice(0, 5).forEach(t => {
+        message += `• <b>${t.subject?.substring(0, 40)}${t.subject?.length > 40 ? '...' : ''}</b>\n`;
+        message += `  Priority: ${t.priority} | Type: ${t.escalationType}\n`;
+      });
+      message += '\n';
+    }
+
+    // Today's Action Items
+    message += `<b>✅ SUGGESTED ACTIONS</b>\n`;
+    if (data.ticketSolutions && data.ticketSolutions.length > 0) {
+      message += `• ${data.ticketSolutions.length} tickets have AI-generated responses ready\n`;
+    }
+    message += `• Review ${data.summary.urgentCount} urgent tickets first\n`;
+    message += `• Check ${data.summary.needsWorkCount} tickets needing attention\n\n`;
+
+    // Knowledge Base Stats
+    if (data.knowledgeBase) {
+      message += `<b>📚 Knowledge Base:</b> ${data.knowledgeBase.total || 0} articles indexed\n`;
+    }
+
+    message += `\n💪 Have a productive day!`;
+
+    // Send to Telegram
+    const url = `https://api.telegram.org/bot${TELEGRAM_CONFIG.botToken}/sendMessage`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CONFIG.chatId,
+        text: message,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true
+      })
+    });
+
+    const result = await response.json();
+    if (!result.ok) {
+      throw new Error(result.description || 'Failed to send Telegram message');
+    }
+
+    console.log('Daily report sent to Telegram successfully');
+    return { success: true, messageId: result.result.message_id };
+  } catch (error) {
+    console.error('Failed to send daily report to Telegram:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Send quick Command Center status update to PA
+ */
+export async function sendQuickStatusToTelegram() {
+  const TELEGRAM_CONFIG = {
+    botToken: process.env.TELEGRAM_BOT_TOKEN || '8301866763:AAG_449bdRcxGSlH-YiN-feMCBfmRYXu5Kw',
+    chatId: process.env.TELEGRAM_CHAT_ID || '364565164'
+  };
+
+  try {
+    const tickets = getAllTicketsWithAnalysis([2, 3, 6, 7]) || [];
+    const urgentCount = tickets.filter(t =>
+      t.priority === 4 || (t.urgency_score && t.urgency_score >= 7)
+    ).length;
+
+    const timestamp = new Date().toLocaleString('en-US', {
+      timeZone: 'America/New_York',
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+
+    const message = `⚡ <b>Quick Status</b> (${timestamp})\n\n` +
+      `🎫 Open Tickets: ${tickets.length}\n` +
+      `🚨 Urgent: ${urgentCount}\n` +
+      `📋 Ready to work: ${tickets.filter(t => t.status === 2).length}\n\n` +
+      `Need details? Ask your Command Center AI!`;
+
+    const url = `https://api.telegram.org/bot${TELEGRAM_CONFIG.botToken}/sendMessage`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CONFIG.chatId,
+        text: message,
+        parse_mode: 'HTML'
+      })
+    });
+
+    const result = await response.json();
+    return { success: result.ok, messageId: result.result?.message_id };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
 export default {
   generateReportData,
   generatePDFReport,
   getReportsList,
-  cleanupOldReports
+  cleanupOldReports,
+  sendReportToTelegram,
+  sendQuickStatusToTelegram
 };

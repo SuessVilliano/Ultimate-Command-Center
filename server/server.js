@@ -3430,6 +3430,267 @@ app.get('/api/cloudflare/workers', async (req, res) => {
   }
 });
 
+// ============================================
+// TELEGRAM PERSONAL ASSISTANT ENDPOINTS
+// ============================================
+
+const TELEGRAM_CONFIG = {
+  botToken: process.env.TELEGRAM_BOT_TOKEN || '8301866763:AAG_449bdRcxGSlH-YiN-feMCBfmRYXu5Kw',
+  chatId: process.env.TELEGRAM_CHAT_ID || '364565164'
+};
+
+// Send message to personal assistant via Telegram
+async function sendToTelegram(message, parseMode = 'HTML') {
+  try {
+    const url = `https://api.telegram.org/bot${TELEGRAM_CONFIG.botToken}/sendMessage`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CONFIG.chatId,
+        text: message,
+        parse_mode: parseMode,
+        disable_web_page_preview: true
+      })
+    });
+    const data = await response.json();
+    if (!data.ok) {
+      throw new Error(data.description || 'Failed to send Telegram message');
+    }
+    return { success: true, messageId: data.result.message_id };
+  } catch (error) {
+    console.error('Telegram send error:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Generic send to PA endpoint
+app.post('/api/telegram/send', async (req, res) => {
+  try {
+    const { message, type, data } = req.body;
+
+    let formattedMessage = '';
+    const timestamp = new Date().toLocaleString('en-US', {
+      timeZone: 'America/New_York',
+      dateStyle: 'short',
+      timeStyle: 'short'
+    });
+
+    switch (type) {
+      case 'ticket':
+        // Format ticket for Telegram
+        const t = data;
+        formattedMessage = `🎫 <b>TICKET ALERT</b>\n\n` +
+          `<b>${t.subject || 'No Subject'}</b>\n\n` +
+          `📊 Status: ${t.status || 'Unknown'}\n` +
+          `⚡ Priority: ${t.priority || 'Normal'}\n` +
+          `👤 Requester: ${t.requester || 'Unknown'}\n` +
+          (t.company ? `🏢 Company: ${t.company}\n` : '') +
+          `\n📝 <b>Summary:</b>\n${t.summary || t.description || 'No description'}\n` +
+          (t.aiAnalysis ? `\n🤖 <b>AI Analysis:</b>\n${t.aiAnalysis}\n` : '') +
+          (t.suggestedAction ? `\n💡 <b>Suggested Action:</b>\n${t.suggestedAction}\n` : '') +
+          (t.url ? `\n🔗 ${t.url}\n` : '') +
+          `\n⏰ Sent: ${timestamp}`;
+        break;
+
+      case 'task':
+        // Format task for Telegram
+        const task = data;
+        formattedMessage = `✅ <b>TASK REMINDER</b>\n\n` +
+          `<b>${task.title || task.name}</b>\n\n` +
+          (task.description ? `📝 ${task.description}\n\n` : '') +
+          (task.priority ? `⚡ Priority: ${task.priority}\n` : '') +
+          (task.dueDate ? `📅 Due: ${task.dueDate}\n` : '') +
+          (task.assignedTo ? `👤 Assigned: ${task.assignedTo}\n` : '') +
+          (task.project ? `📁 Project: ${task.project}\n` : '') +
+          `\n⏰ Sent: ${timestamp}`;
+        break;
+
+      case 'reminder':
+        // Simple reminder
+        formattedMessage = `⏰ <b>REMINDER</b>\n\n${message}\n\n📅 ${timestamp}`;
+        break;
+
+      case 'note':
+        // Quick note to self
+        formattedMessage = `📝 <b>NOTE TO SELF</b>\n\n${message}\n\n⏰ ${timestamp}`;
+        break;
+
+      case 'ai_summary':
+        // AI-generated summary
+        formattedMessage = `🤖 <b>AI SUMMARY</b>\n\n${message}\n\n⏰ ${timestamp}`;
+        break;
+
+      case 'action_item':
+        // Action item from meeting/discussion
+        const action = data || {};
+        formattedMessage = `🎯 <b>ACTION ITEM</b>\n\n` +
+          `<b>${action.title || message}</b>\n\n` +
+          (action.context ? `📋 Context: ${action.context}\n` : '') +
+          (action.deadline ? `⏳ Deadline: ${action.deadline}\n` : '') +
+          (action.steps ? `\n📌 Steps:\n${action.steps}\n` : '') +
+          `\n⏰ ${timestamp}`;
+        break;
+
+      default:
+        // Raw message
+        formattedMessage = message || 'Empty message';
+    }
+
+    const result = await sendToTelegram(formattedMessage);
+
+    if (result.success) {
+      // Log to action feed
+      try {
+        const actionFeed = db.prepare('SELECT actions FROM settings WHERE key = ?').get('action_feed');
+        const actions = actionFeed?.actions ? JSON.parse(actionFeed.actions) : [];
+        actions.unshift({
+          id: Date.now().toString(),
+          type: 'telegram_sent',
+          title: `Sent to PA: ${type || 'message'}`,
+          description: (message || data?.subject || data?.title || '').substring(0, 100),
+          timestamp: new Date().toISOString(),
+          source: 'telegram'
+        });
+        db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('action_feed', JSON.stringify(actions.slice(0, 100)));
+      } catch (e) { /* ignore logging errors */ }
+    }
+
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Quick send endpoints for convenience
+app.post('/api/telegram/ticket', async (req, res) => {
+  req.body.type = 'ticket';
+  req.body.data = req.body.ticket || req.body.data;
+  return app._router.handle({ ...req, url: '/api/telegram/send', method: 'POST' }, res, () => {});
+});
+
+app.post('/api/telegram/reminder', async (req, res) => {
+  const { message } = req.body;
+  const result = await sendToTelegram(`⏰ <b>REMINDER</b>\n\n${message}\n\n📅 ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })}`);
+  res.json(result);
+});
+
+app.post('/api/telegram/note', async (req, res) => {
+  const { message } = req.body;
+  const result = await sendToTelegram(`📝 <b>NOTE</b>\n\n${message}\n\n⏰ ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })}`);
+  res.json(result);
+});
+
+// Get telegram config status
+app.get('/api/telegram/status', (req, res) => {
+  res.json({
+    configured: !!TELEGRAM_CONFIG.botToken && !!TELEGRAM_CONFIG.chatId,
+    chatId: TELEGRAM_CONFIG.chatId ? '***' + TELEGRAM_CONFIG.chatId.slice(-4) : null
+  });
+});
+
+// Send daily report to PA via Telegram
+app.post('/api/telegram/daily-report', async (req, res) => {
+  try {
+    const result = await dailyReport.sendReportToTelegram();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Send quick status update to PA
+app.post('/api/telegram/quick-status', async (req, res) => {
+  try {
+    const result = await dailyReport.sendQuickStatusToTelegram();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Send any Command Center context to PA
+app.post('/api/telegram/command-center', async (req, res) => {
+  try {
+    const { section, data, message } = req.body;
+    const timestamp = new Date().toLocaleString('en-US', {
+      timeZone: 'America/New_York',
+      dateStyle: 'short',
+      timeStyle: 'short'
+    });
+
+    let formattedMessage = '';
+
+    switch (section) {
+      case 'project':
+        const p = data;
+        formattedMessage = `📁 <b>PROJECT UPDATE</b>\n\n` +
+          `<b>${p.name}</b>\n` +
+          (p.status ? `Status: ${p.status}\n` : '') +
+          (p.description ? `\n${p.description}\n` : '') +
+          (p.nextSteps ? `\n📋 Next Steps:\n${p.nextSteps}\n` : '') +
+          `\n⏰ ${timestamp}`;
+        break;
+
+      case 'action_item':
+        const a = data;
+        formattedMessage = `🎯 <b>ACTION ITEM</b>\n\n` +
+          `<b>${a.title || a.name}</b>\n\n` +
+          (a.description ? `${a.description}\n\n` : '') +
+          (a.priority ? `⚡ Priority: ${a.priority}\n` : '') +
+          (a.dueDate ? `📅 Due: ${a.dueDate}\n` : '') +
+          (a.assignedTo ? `👤 Assigned: ${a.assignedTo}\n` : '') +
+          `\n⏰ ${timestamp}`;
+        break;
+
+      case 'domain':
+        const d = data;
+        formattedMessage = `🌐 <b>DOMAIN UPDATE</b>\n\n` +
+          `<b>${d.name}</b>\n` +
+          (d.status ? `Status: ${d.status}\n` : '') +
+          (d.value ? `💰 Value: $${d.value}\n` : '') +
+          (d.notes ? `\n📝 ${d.notes}\n` : '') +
+          `\n⏰ ${timestamp}`;
+        break;
+
+      case 'agent':
+        const ag = data;
+        formattedMessage = `🤖 <b>AGENT UPDATE</b>\n\n` +
+          `<b>${ag.name}</b>\n` +
+          (ag.role ? `Role: ${ag.role}\n` : '') +
+          (ag.status ? `Status: ${ag.status}\n` : '') +
+          (ag.lastTask ? `\nLast Task: ${ag.lastTask}\n` : '') +
+          `\n⏰ ${timestamp}`;
+        break;
+
+      case 'github':
+        const g = data;
+        formattedMessage = `📦 <b>GITHUB UPDATE</b>\n\n` +
+          `<b>${g.repo || g.name}</b>\n` +
+          (g.action ? `Action: ${g.action}\n` : '') +
+          (g.branch ? `Branch: ${g.branch}\n` : '') +
+          (g.description ? `\n${g.description}\n` : '') +
+          (g.url ? `\n🔗 ${g.url}\n` : '') +
+          `\n⏰ ${timestamp}`;
+        break;
+
+      case 'summary':
+        formattedMessage = `📊 <b>COMMAND CENTER SUMMARY</b>\n\n` +
+          `${message || 'No summary provided'}\n\n` +
+          `⏰ ${timestamp}`;
+        break;
+
+      default:
+        formattedMessage = message || (data ? JSON.stringify(data, null, 2) : 'Empty message');
+    }
+
+    const result = await sendToTelegram(formattedMessage);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Register Nifty routes
 registerNiftyRoutes(app);
 

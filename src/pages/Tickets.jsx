@@ -88,6 +88,13 @@ const GHL_QUICK_LINKS = [
     description: 'Google Calendar'
   },
   {
+    id: 'senior-zoom',
+    label: 'Senior Zoom',
+    url: 'https://us02web.zoom.us/j/3297827881',
+    icon: '🎥',
+    description: 'Senior Team Zoom Meeting'
+  },
+  {
     id: 'bamboohr',
     label: 'BambooHR',
     url: 'https://gohighlevel.bamboohr.com/home',
@@ -198,6 +205,8 @@ function Tickets() {
   const [settingsTab, setSettingsTab] = useState('freshdesk'); // freshdesk, ai, schedule
   const [cachedResponses, setCachedResponses] = useState({}); // Store generated responses
   const [searchQuery, setSearchQuery] = useState(''); // Search for tickets
+  const [sendingToPA, setSendingToPA] = useState(false); // Sending to Personal Assistant
+  const [sentToPA, setSentToPA] = useState({}); // Track which tickets were sent
 
   // Check AI server status and load persisted data
   const checkAiServer = async () => {
@@ -697,6 +706,57 @@ function Tickets() {
     }).catch(err => {
       console.error('Failed to copy:', err);
     });
+  };
+
+  // Send ticket to Personal Assistant via Telegram
+  const sendToPA = async (ticket, includeAnalysis = true) => {
+    if (!ticket) return;
+
+    setSendingToPA(true);
+    try {
+      const analysis = aiAnalysis[ticket.id];
+      const ticketUrl = freshdeskDomain ? `https://${freshdeskDomain}.freshdesk.com/a/tickets/${ticket.id}` : null;
+
+      const payload = {
+        type: 'ticket',
+        data: {
+          subject: ticket.subject,
+          status: STATUS_MAP[ticket.status]?.label || 'Unknown',
+          priority: PRIORITY_MAP[ticket.priority]?.label || 'Normal',
+          requester: ticket.requester?.name || 'Unknown',
+          company: ticket.requester?.company?.name,
+          description: ticket.description_text || ticket.description || 'No description',
+          summary: analysis?.SUMMARY,
+          aiAnalysis: includeAnalysis && analysis ?
+            `${analysis.ESCALATION_TYPE}: ${analysis.QUICK_ASSESSMENT}` : null,
+          suggestedAction: analysis?.SUGGESTED_ACTION,
+          url: ticketUrl
+        }
+      };
+
+      const response = await fetch(`${AI_SERVER_URL}/api/telegram/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setSentToPA(prev => ({ ...prev, [ticket.id]: true }));
+        // Reset the sent status after 3 seconds
+        setTimeout(() => {
+          setSentToPA(prev => ({ ...prev, [ticket.id]: false }));
+        }, 3000);
+      } else {
+        throw new Error(result.error || 'Failed to send');
+      }
+    } catch (err) {
+      console.error('Failed to send to PA:', err);
+      setError(`Failed to send to PA: ${err.message}`);
+    } finally {
+      setSendingToPA(false);
+    }
   };
 
   // Analyze all open tickets AND generate responses
@@ -1985,6 +2045,37 @@ function Tickets() {
                       title="Open in Freshdesk (Work Profile)"
                     >
                       <ExternalLink className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => sendToPA(selectedTicket)}
+                      disabled={sendingToPA}
+                      className={`px-4 py-2 rounded-lg flex items-center gap-2 ${
+                        sentToPA[selectedTicket.id]
+                          ? 'bg-green-600 text-white'
+                          : sendingToPA
+                          ? 'bg-gray-500 cursor-wait'
+                          : isDark
+                          ? 'bg-cyan-600 hover:bg-cyan-700 text-white'
+                          : 'bg-cyan-500 hover:bg-cyan-600 text-white'
+                      }`}
+                      title="Send to Personal Assistant (Telegram)"
+                    >
+                      {sentToPA[selectedTicket.id] ? (
+                        <>
+                          <Check className="w-4 h-4" />
+                          Sent!
+                        </>
+                      ) : sendingToPA ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          Sending...
+                        </>
+                      ) : (
+                        <>
+                          <Send className="w-4 h-4" />
+                          Send to PA
+                        </>
+                      )}
                     </button>
                   </div>
 

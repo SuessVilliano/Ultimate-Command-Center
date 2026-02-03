@@ -3,6 +3,7 @@ import { ThemeProvider, useTheme } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Sidebar, { MobileMenuButton } from './components/Sidebar';
 import ChatWidget from './components/ChatWidget';
+import SendToPA from './components/SendToPA';
 import VaultLogin from './components/VaultLogin';
 import Dashboard from './pages/Dashboard';
 import Projects from './pages/Projects';
@@ -115,6 +116,9 @@ function AppContent() {
 
       {/* Chat Widget */}
       <ChatWidget onNavigate={handleNavigate} />
+
+      {/* Global Send to PA Button */}
+      <SendToPA />
     </div>
   );
 }

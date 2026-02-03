@@ -368,34 +368,44 @@ export async function generateAndSendDailyReport(recipientEmail = null) {
     }
 
     // Send the daily report email
+    let emailSent = false;
+    let emailRecipient = null;
     if (emailService.isEmailEnabled()) {
       const emailResult = await emailService.sendDailyReport(filepath, reportData, recipientEmail);
       console.log(`Daily report email sent to ${emailResult.recipient}`);
-
-      // Cleanup old reports (keep last 30)
-      const deleted = dailyReport.cleanupOldReports(30);
-      if (deleted > 0) {
-        console.log(`Cleaned up ${deleted} old report(s)`);
-      }
-
-      return {
-        success: true,
-        filepath,
-        filename,
-        emailSent: true,
-        recipient: emailResult.recipient,
-        summary: reportData.summary
-      };
+      emailSent = true;
+      emailRecipient = emailResult.recipient;
     } else {
-      console.log('Email not configured - report generated but not sent');
-      return {
-        success: true,
-        filepath,
-        filename,
-        emailSent: false,
-        summary: reportData.summary
-      };
+      console.log('Email not configured - report generated but not sent via email');
     }
+
+    // Always send to Telegram PA for planning
+    let telegramSent = false;
+    try {
+      const telegramResult = await dailyReport.sendReportToTelegram(reportData);
+      if (telegramResult.success) {
+        console.log('Daily report sent to Personal Assistant via Telegram');
+        telegramSent = true;
+      }
+    } catch (e) {
+      console.log('Could not send to Telegram PA:', e.message);
+    }
+
+    // Cleanup old reports (keep last 30)
+    const deleted = dailyReport.cleanupOldReports(30);
+    if (deleted > 0) {
+      console.log(`Cleaned up ${deleted} old report(s)`);
+    }
+
+    return {
+      success: true,
+      filepath,
+      filename,
+      emailSent,
+      telegramSent,
+      recipient: emailRecipient,
+      summary: reportData.summary
+    };
   } catch (error) {
     console.error('Failed to generate/send daily report:', error.message);
     return {
