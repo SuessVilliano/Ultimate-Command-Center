@@ -28,6 +28,8 @@ import * as memory from './lib/conversation-memory.js';
 import * as integrations from './lib/integrations.js';
 import * as agentKnowledge from './lib/agent-knowledge.js';
 import * as contentIngestion from './lib/content-ingestion.js';
+import * as dailyReport from './lib/daily-report.js';
+import * as emailService from './lib/email-service.js';
 import * as orchestrator from './lib/agent-orchestrator.js';
 import { registerNiftyRoutes } from './routes/nifty-routes.js';
 import { taskmagicMCP } from './lib/taskmagic-mcp.js';
@@ -202,6 +204,11 @@ app.post('/api/ai/switch', (req, res) => {
 app.post('/api/ai/key', (req, res) => {
   try {
     const { provider, apiKey } = req.body;
+
+    if (!apiKey || apiKey.trim().length === 0) {
+      return res.status(400).json({ error: 'API key is required' });
+    }
+
     const success = ai.updateApiKey(provider, apiKey);
 
     if (success) {
@@ -210,11 +217,15 @@ app.post('/api/ai/key', (req, res) => {
         rag.initLangChain({ anthropicKey: apiKey });
       } else if (provider === 'openai' || provider === 'gpt') {
         rag.initLangChain({ openaiKey: apiKey });
+      } else if (provider === 'gemini' || provider === 'google') {
+        rag.initLangChain({ geminiKey: apiKey });
       }
+      console.log(`API key updated for provider: ${provider}`);
     }
 
-    res.json({ success });
+    res.json({ success, message: success ? `${provider} API key saved successfully` : 'Failed to save key' });
   } catch (error) {
+    console.error('Error updating API key:', error);
     res.status(400).json({ error: error.message });
   }
 });
@@ -580,6 +591,95 @@ app.post('/api/schedule/toggle', (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+// ============================================
+// DAILY REPORT ENDPOINTS
+// ============================================
+
+// Generate daily report (manual trigger)
+app.post('/api/reports/generate', async (req, res) => {
+  try {
+    const { email } = req.body;
+    const result = await scheduler.generateAndSendDailyReport(email);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get list of generated reports
+app.get('/api/reports', (req, res) => {
+  try {
+    const reports = dailyReport.getReportsList();
+    res.json({ reports });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Download a specific report
+app.get('/api/reports/download/:filename', (req, res) => {
+  try {
+    const { filename } = req.params;
+    const reports = dailyReport.getReportsList();
+    const report = reports.find(r => r.filename === filename);
+
+    if (!report) {
+      return res.status(404).json({ error: 'Report not found' });
+    }
+
+    res.download(report.filepath, report.filename);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get report data (JSON) without generating PDF
+app.get('/api/reports/data', async (req, res) => {
+  try {
+    const data = await dailyReport.generateReportData();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Test email configuration
+app.post('/api/email/test', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!emailService.isEmailEnabled()) {
+      return res.status(400).json({
+        error: 'Email not configured',
+        config: emailService.getEmailConfig()
+      });
+    }
+
+    const verification = await emailService.verifyConnection();
+    if (!verification.success) {
+      return res.status(400).json({
+        error: 'SMTP connection failed',
+        details: verification.error
+      });
+    }
+
+    await emailService.sendNotification(
+      'Test Email from LIV8 Command Center',
+      'This is a test email to verify your email configuration is working correctly.\n\nIf you receive this, your daily reports will be delivered successfully!',
+      email
+    );
+
+    res.json({ success: true, message: 'Test email sent' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get email configuration status
+app.get('/api/email/status', (req, res) => {
+  res.json(emailService.getEmailConfig());
 });
 
 // ============================================
@@ -2972,6 +3072,624 @@ Respond with JSON:
 // ============================================
 // START SERVER
 // ============================================
+
+// ============================================
+// PROJECTS CRUD ENDPOINTS
+// ============================================
+
+// In-memory projects storage (will use DB in production)
+let projectsStore = [];
+
+// Initialize from DB or use default
+try {
+  const savedProjects = db.getSetting('projects');
+  if (savedProjects) {
+    projectsStore = JSON.parse(savedProjects);
+  }
+} catch (e) {
+  console.log('No saved projects, starting fresh');
+}
+
+// Get all projects
+app.get('/api/projects', (req, res) => {
+  res.json({ projects: projectsStore });
+});
+
+// Add new project
+app.post('/api/projects', (req, res) => {
+  try {
+    const project = {
+      id: Date.now(),
+      ...req.body,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    projectsStore.push(project);
+    db.setSetting('projects', JSON.stringify(projectsStore));
+    res.json(project);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update project
+app.put('/api/projects/:id', (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const index = projectsStore.findIndex(p => p.id === id);
+    if (index === -1) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    projectsStore[index] = {
+      ...projectsStore[index],
+      ...req.body,
+      updatedAt: new Date().toISOString()
+    };
+    db.setSetting('projects', JSON.stringify(projectsStore));
+    res.json(projectsStore[index]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete project
+app.delete('/api/projects/:id', (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    projectsStore = projectsStore.filter(p => p.id !== id);
+    db.setSetting('projects', JSON.stringify(projectsStore));
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// ACTION FEED / INBOX ENDPOINTS
+// ============================================
+
+// In-memory action feed
+let actionFeedStore = [];
+
+// Initialize from DB
+try {
+  const savedFeed = db.getSetting('action_feed');
+  if (savedFeed) {
+    actionFeedStore = JSON.parse(savedFeed);
+  }
+} catch (e) {
+  console.log('No saved action feed');
+}
+
+// Get action feed items
+app.get('/api/action-feed', async (req, res) => {
+  try {
+    // Aggregate from multiple sources
+    const tickets = db.getTicketsByStatus([2, 3]) || [];
+    const ticketItems = tickets.slice(0, 10).map(t => ({
+      id: `ticket-${t.id}`,
+      type: 'ticket',
+      source: 'freshdesk',
+      title: t.subject,
+      description: t.description_text?.substring(0, 100) || '',
+      priority: t.priority === 4 ? 'urgent' : t.priority === 3 ? 'high' : t.priority === 2 ? 'medium' : 'low',
+      status: 'unread',
+      timestamp: t.created_at,
+      metadata: { ticketId: t.id, requester: t.requester_email }
+    }));
+
+    // Combine with stored items
+    const allItems = [...ticketItems, ...actionFeedStore]
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+      .slice(0, 50);
+
+    res.json({ items: allItems });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add action feed item
+app.post('/api/action-feed', (req, res) => {
+  try {
+    const item = {
+      id: `custom-${Date.now()}`,
+      ...req.body,
+      timestamp: new Date().toISOString(),
+      status: 'unread'
+    };
+    actionFeedStore.unshift(item);
+    db.setSetting('action_feed', JSON.stringify(actionFeedStore.slice(0, 100)));
+    res.json(item);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update action feed item status
+app.patch('/api/action-feed/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const index = actionFeedStore.findIndex(item => item.id === id);
+    if (index !== -1) {
+      actionFeedStore[index] = { ...actionFeedStore[index], status };
+      db.setSetting('action_feed', JSON.stringify(actionFeedStore.slice(0, 100)));
+    }
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// ENHANCED COMMANDER ENDPOINT (Full Context)
+// ============================================
+
+app.post('/api/commander/full-context', async (req, res) => {
+  try {
+    const { message, userId = 'sv' } = req.body;
+
+    // Gather full context from the command center
+    const tickets = db.getTicketsByStatus([2, 3, 4, 5, 6, 7]) || [];
+    const analyses = db.getAllAnalysisMap() || {};
+    const conversations = memory.getConversations(userId, 10) || [];
+
+    // Build comprehensive context
+    const context = {
+      ticketSummary: {
+        total: tickets.length,
+        open: tickets.filter(t => t.status === 2).length,
+        pending: tickets.filter(t => t.status === 3).length,
+        urgent: tickets.filter(t => t.priority === 4).length,
+        high: tickets.filter(t => t.priority === 3).length,
+        recentTickets: tickets.slice(0, 10).map(t => ({
+          id: t.id,
+          subject: t.subject,
+          status: t.status,
+          priority: t.priority,
+          type: t.type
+        }))
+      },
+      projectSummary: {
+        total: projectsStore.length,
+        byStatus: projectsStore.reduce((acc, p) => {
+          acc[p.status] = (acc[p.status] || 0) + 1;
+          return acc;
+        }, {}),
+        totalValue: projectsStore.reduce((acc, p) => ({
+          min: acc.min + (p.valueMin || 0),
+          max: acc.max + (p.valueMax || 0)
+        }), { min: 0, max: 0 })
+      },
+      recentConversations: conversations.length,
+      timestamp: new Date().toISOString()
+    };
+
+    // Generate AI response with full context
+    const systemPrompt = `You are the LIV8 Command Center AI Assistant. You have access to the following context about the user's work:
+
+TICKETS: ${context.ticketSummary.total} total (${context.ticketSummary.open} open, ${context.ticketSummary.pending} pending, ${context.ticketSummary.urgent} urgent)
+PROJECTS: ${context.projectSummary.total} software projects worth $${context.projectSummary.totalValue.min.toLocaleString()}-$${context.projectSummary.totalValue.max.toLocaleString()}
+RECENT CONVERSATIONS: ${context.recentConversations}
+
+Recent Tickets:
+${context.ticketSummary.recentTickets.map(t => `- #${t.id}: ${t.subject} (Priority: ${t.priority}, Status: ${t.status})`).join('\n')}
+
+Based on this context, help the user with their request. Be specific, actionable, and reference actual data when relevant.`;
+
+    const response = await ai.chat([
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: message }
+    ]);
+
+    res.json({
+      response: response,
+      context: context
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// ACTION ITEMS ENDPOINTS
+// ============================================
+
+let actionItemsStore = [];
+
+try {
+  const saved = db.getSetting('action_items');
+  if (saved) actionItemsStore = JSON.parse(saved);
+} catch (e) {}
+
+app.get('/api/action-items', (req, res) => {
+  res.json({ items: actionItemsStore });
+});
+
+app.post('/api/action-items', (req, res) => {
+  try {
+    const item = {
+      id: Date.now(),
+      ...req.body,
+      createdAt: new Date().toISOString(),
+      status: 'pending'
+    };
+    actionItemsStore.push(item);
+    db.setSetting('action_items', JSON.stringify(actionItemsStore));
+    res.json(item);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.patch('/api/action-items/:id', (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const index = actionItemsStore.findIndex(item => item.id === id);
+    if (index !== -1) {
+      actionItemsStore[index] = { ...actionItemsStore[index], ...req.body };
+      db.setSetting('action_items', JSON.stringify(actionItemsStore));
+      res.json(actionItemsStore[index]);
+    } else {
+      res.status(404).json({ error: 'Not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/action-items/:id', (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    actionItemsStore = actionItemsStore.filter(item => item.id !== id);
+    db.setSetting('action_items', JSON.stringify(actionItemsStore));
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// CLOUDFLARE INTEGRATION ENDPOINTS
+// ============================================
+
+const CF_API_BASE = 'https://api.cloudflare.com/client/v4';
+
+// Get Cloudflare domains
+app.get('/api/cloudflare/domains', async (req, res) => {
+  try {
+    const apiKey = process.env.CLOUDFLARE_API_KEY;
+    const email = process.env.CLOUDFLARE_EMAIL;
+
+    if (!apiKey || !email) {
+      return res.json({ domains: [], configured: false });
+    }
+
+    const response = await fetch(`${CF_API_BASE}/zones`, {
+      headers: {
+        'X-Auth-Email': email,
+        'X-Auth-Key': apiKey,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    const data = await response.json();
+    if (data.success) {
+      res.json({
+        configured: true,
+        domains: data.result.map(z => ({
+          id: z.id,
+          name: z.name,
+          status: z.status,
+          nameServers: z.name_servers,
+          plan: z.plan?.name
+        }))
+      });
+    } else {
+      res.json({ domains: [], configured: true, error: data.errors });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get Cloudflare Workers
+app.get('/api/cloudflare/workers', async (req, res) => {
+  try {
+    const apiKey = process.env.CLOUDFLARE_API_KEY;
+    const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+
+    if (!apiKey || !accountId) {
+      return res.json({ workers: [], configured: false });
+    }
+
+    const response = await fetch(`${CF_API_BASE}/accounts/${accountId}/workers/scripts`, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    const data = await response.json();
+    if (data.success) {
+      res.json({
+        configured: true,
+        workers: data.result.map(w => ({
+          id: w.id,
+          name: w.id,
+          modified: w.modified_on,
+          created: w.created_on
+        }))
+      });
+    } else {
+      res.json({ workers: [], configured: true, error: data.errors });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// TELEGRAM PERSONAL ASSISTANT ENDPOINTS
+// ============================================
+
+const TELEGRAM_CONFIG = {
+  botToken: process.env.TELEGRAM_BOT_TOKEN || '8301866763:AAG_449bdRcxGSlH-YiN-feMCBfmRYXu5Kw',
+  chatId: process.env.TELEGRAM_CHAT_ID || '364565164'
+};
+
+// Send message to personal assistant via Telegram
+async function sendToTelegram(message, parseMode = 'HTML') {
+  try {
+    const url = `https://api.telegram.org/bot${TELEGRAM_CONFIG.botToken}/sendMessage`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CONFIG.chatId,
+        text: message,
+        parse_mode: parseMode,
+        disable_web_page_preview: true
+      })
+    });
+    const data = await response.json();
+    if (!data.ok) {
+      throw new Error(data.description || 'Failed to send Telegram message');
+    }
+    return { success: true, messageId: data.result.message_id };
+  } catch (error) {
+    console.error('Telegram send error:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Generic send to PA endpoint
+app.post('/api/telegram/send', async (req, res) => {
+  try {
+    const { message, type, data } = req.body;
+
+    let formattedMessage = '';
+    const timestamp = new Date().toLocaleString('en-US', {
+      timeZone: 'America/New_York',
+      dateStyle: 'short',
+      timeStyle: 'short'
+    });
+
+    switch (type) {
+      case 'ticket':
+        // Format ticket for Telegram
+        const t = data;
+        formattedMessage = `🎫 <b>TICKET ALERT</b>\n\n` +
+          `<b>${t.subject || 'No Subject'}</b>\n\n` +
+          `📊 Status: ${t.status || 'Unknown'}\n` +
+          `⚡ Priority: ${t.priority || 'Normal'}\n` +
+          `👤 Requester: ${t.requester || 'Unknown'}\n` +
+          (t.company ? `🏢 Company: ${t.company}\n` : '') +
+          `\n📝 <b>Summary:</b>\n${t.summary || t.description || 'No description'}\n` +
+          (t.aiAnalysis ? `\n🤖 <b>AI Analysis:</b>\n${t.aiAnalysis}\n` : '') +
+          (t.suggestedAction ? `\n💡 <b>Suggested Action:</b>\n${t.suggestedAction}\n` : '') +
+          (t.url ? `\n🔗 ${t.url}\n` : '') +
+          `\n⏰ Sent: ${timestamp}`;
+        break;
+
+      case 'task':
+        // Format task for Telegram
+        const task = data;
+        formattedMessage = `✅ <b>TASK REMINDER</b>\n\n` +
+          `<b>${task.title || task.name}</b>\n\n` +
+          (task.description ? `📝 ${task.description}\n\n` : '') +
+          (task.priority ? `⚡ Priority: ${task.priority}\n` : '') +
+          (task.dueDate ? `📅 Due: ${task.dueDate}\n` : '') +
+          (task.assignedTo ? `👤 Assigned: ${task.assignedTo}\n` : '') +
+          (task.project ? `📁 Project: ${task.project}\n` : '') +
+          `\n⏰ Sent: ${timestamp}`;
+        break;
+
+      case 'reminder':
+        // Simple reminder
+        formattedMessage = `⏰ <b>REMINDER</b>\n\n${message}\n\n📅 ${timestamp}`;
+        break;
+
+      case 'note':
+        // Quick note to self
+        formattedMessage = `📝 <b>NOTE TO SELF</b>\n\n${message}\n\n⏰ ${timestamp}`;
+        break;
+
+      case 'ai_summary':
+        // AI-generated summary
+        formattedMessage = `🤖 <b>AI SUMMARY</b>\n\n${message}\n\n⏰ ${timestamp}`;
+        break;
+
+      case 'action_item':
+        // Action item from meeting/discussion
+        const action = data || {};
+        formattedMessage = `🎯 <b>ACTION ITEM</b>\n\n` +
+          `<b>${action.title || message}</b>\n\n` +
+          (action.context ? `📋 Context: ${action.context}\n` : '') +
+          (action.deadline ? `⏳ Deadline: ${action.deadline}\n` : '') +
+          (action.steps ? `\n📌 Steps:\n${action.steps}\n` : '') +
+          `\n⏰ ${timestamp}`;
+        break;
+
+      default:
+        // Raw message
+        formattedMessage = message || 'Empty message';
+    }
+
+    const result = await sendToTelegram(formattedMessage);
+
+    if (result.success) {
+      // Log to action feed
+      try {
+        const actionFeed = db.prepare('SELECT actions FROM settings WHERE key = ?').get('action_feed');
+        const actions = actionFeed?.actions ? JSON.parse(actionFeed.actions) : [];
+        actions.unshift({
+          id: Date.now().toString(),
+          type: 'telegram_sent',
+          title: `Sent to PA: ${type || 'message'}`,
+          description: (message || data?.subject || data?.title || '').substring(0, 100),
+          timestamp: new Date().toISOString(),
+          source: 'telegram'
+        });
+        db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('action_feed', JSON.stringify(actions.slice(0, 100)));
+      } catch (e) { /* ignore logging errors */ }
+    }
+
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Quick send endpoints for convenience
+app.post('/api/telegram/ticket', async (req, res) => {
+  req.body.type = 'ticket';
+  req.body.data = req.body.ticket || req.body.data;
+  return app._router.handle({ ...req, url: '/api/telegram/send', method: 'POST' }, res, () => {});
+});
+
+app.post('/api/telegram/reminder', async (req, res) => {
+  const { message } = req.body;
+  const result = await sendToTelegram(`⏰ <b>REMINDER</b>\n\n${message}\n\n📅 ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })}`);
+  res.json(result);
+});
+
+app.post('/api/telegram/note', async (req, res) => {
+  const { message } = req.body;
+  const result = await sendToTelegram(`📝 <b>NOTE</b>\n\n${message}\n\n⏰ ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })}`);
+  res.json(result);
+});
+
+// Get telegram config status
+app.get('/api/telegram/status', (req, res) => {
+  res.json({
+    configured: !!TELEGRAM_CONFIG.botToken && !!TELEGRAM_CONFIG.chatId,
+    chatId: TELEGRAM_CONFIG.chatId ? '***' + TELEGRAM_CONFIG.chatId.slice(-4) : null
+  });
+});
+
+// Send daily report to PA via Telegram
+app.post('/api/telegram/daily-report', async (req, res) => {
+  try {
+    const result = await dailyReport.sendReportToTelegram();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Send quick status update to PA
+app.post('/api/telegram/quick-status', async (req, res) => {
+  try {
+    const result = await dailyReport.sendQuickStatusToTelegram();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Send any Command Center context to PA
+app.post('/api/telegram/command-center', async (req, res) => {
+  try {
+    const { section, data, message } = req.body;
+    const timestamp = new Date().toLocaleString('en-US', {
+      timeZone: 'America/New_York',
+      dateStyle: 'short',
+      timeStyle: 'short'
+    });
+
+    let formattedMessage = '';
+
+    switch (section) {
+      case 'project':
+        const p = data;
+        formattedMessage = `📁 <b>PROJECT UPDATE</b>\n\n` +
+          `<b>${p.name}</b>\n` +
+          (p.status ? `Status: ${p.status}\n` : '') +
+          (p.description ? `\n${p.description}\n` : '') +
+          (p.nextSteps ? `\n📋 Next Steps:\n${p.nextSteps}\n` : '') +
+          `\n⏰ ${timestamp}`;
+        break;
+
+      case 'action_item':
+        const a = data;
+        formattedMessage = `🎯 <b>ACTION ITEM</b>\n\n` +
+          `<b>${a.title || a.name}</b>\n\n` +
+          (a.description ? `${a.description}\n\n` : '') +
+          (a.priority ? `⚡ Priority: ${a.priority}\n` : '') +
+          (a.dueDate ? `📅 Due: ${a.dueDate}\n` : '') +
+          (a.assignedTo ? `👤 Assigned: ${a.assignedTo}\n` : '') +
+          `\n⏰ ${timestamp}`;
+        break;
+
+      case 'domain':
+        const d = data;
+        formattedMessage = `🌐 <b>DOMAIN UPDATE</b>\n\n` +
+          `<b>${d.name}</b>\n` +
+          (d.status ? `Status: ${d.status}\n` : '') +
+          (d.value ? `💰 Value: $${d.value}\n` : '') +
+          (d.notes ? `\n📝 ${d.notes}\n` : '') +
+          `\n⏰ ${timestamp}`;
+        break;
+
+      case 'agent':
+        const ag = data;
+        formattedMessage = `🤖 <b>AGENT UPDATE</b>\n\n` +
+          `<b>${ag.name}</b>\n` +
+          (ag.role ? `Role: ${ag.role}\n` : '') +
+          (ag.status ? `Status: ${ag.status}\n` : '') +
+          (ag.lastTask ? `\nLast Task: ${ag.lastTask}\n` : '') +
+          `\n⏰ ${timestamp}`;
+        break;
+
+      case 'github':
+        const g = data;
+        formattedMessage = `📦 <b>GITHUB UPDATE</b>\n\n` +
+          `<b>${g.repo || g.name}</b>\n` +
+          (g.action ? `Action: ${g.action}\n` : '') +
+          (g.branch ? `Branch: ${g.branch}\n` : '') +
+          (g.description ? `\n${g.description}\n` : '') +
+          (g.url ? `\n🔗 ${g.url}\n` : '') +
+          `\n⏰ ${timestamp}`;
+        break;
+
+      case 'summary':
+        formattedMessage = `📊 <b>COMMAND CENTER SUMMARY</b>\n\n` +
+          `${message || 'No summary provided'}\n\n` +
+          `⏰ ${timestamp}`;
+        break;
+
+      default:
+        formattedMessage = message || (data ? JSON.stringify(data, null, 2) : 'Empty message');
+    }
+
+    const result = await sendToTelegram(formattedMessage);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 // Register Nifty routes
 registerNiftyRoutes(app);

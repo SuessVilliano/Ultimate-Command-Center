@@ -22,9 +22,24 @@ let currentModel = null;
  * Initialize AI providers with API keys
  */
 export function initAIProviders(config = {}) {
-  const anthropicKey = config.anthropicKey || process.env.ANTHROPIC_API_KEY;
-  const openaiKey = config.openaiKey || process.env.OPENAI_API_KEY;
-  const geminiKey = config.geminiKey || process.env.GEMINI_API_KEY;
+  // Try to load persisted keys from database first
+  let persistedAnthropicKey = null;
+  let persistedOpenaiKey = null;
+  let persistedGeminiKey = null;
+
+  try {
+    persistedAnthropicKey = getSetting('anthropic_api_key', null);
+    persistedOpenaiKey = getSetting('openai_api_key', null);
+    persistedGeminiKey = getSetting('gemini_api_key', null);
+  } catch (e) {
+    // Database might not be ready yet
+  }
+
+  // Priority: config > persisted > env var
+  const anthropicKey = config.anthropicKey || persistedAnthropicKey || process.env.ANTHROPIC_API_KEY;
+  const openaiKey = config.openaiKey || persistedOpenaiKey || process.env.OPENAI_API_KEY;
+  const geminiKey = config.geminiKey || persistedGeminiKey || process.env.GEMINI_API_KEY;
+
   storedKeys = { anthropic: anthropicKey || null, openai: openaiKey || null, gemini: geminiKey || null };
 
   if (anthropicKey) {
@@ -48,9 +63,12 @@ export function initAIProviders(config = {}) {
   currentProvider = savedProvider || config.provider || process.env.AI_PROVIDER || 'gemini';
   currentModel = getDefaultModel(currentProvider);
 
+  console.log(`AI Provider initialized: ${currentProvider} (Claude: ${!!anthropicClient}, OpenAI: ${!!openaiClient}, Gemini: ${!!geminiClient})`);
+
   return {
     claude: !!anthropicClient,
     openai: !!openaiClient,
+    gemini: !!geminiClient,
     currentProvider,
     currentModel
   };
@@ -63,7 +81,7 @@ function getDefaultModel(provider) {
   if (provider === 'openai') {
     return process.env.GPT_MODEL || 'gpt-4o';
   }
-  if (provider === 'gemini') return process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+  if (provider === 'gemini') return process.env.GEMINI_MODEL || 'gemini-2.0-flash';
   return process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
 }
 
@@ -76,6 +94,9 @@ export function switchProvider(provider, model = null) {
   }
   if (provider === 'claude' && !anthropicClient) {
     throw new Error('Anthropic API key not configured');
+  }
+  if (provider === 'gemini' && !geminiClient) {
+    throw new Error('Gemini API key not configured');
   }
 
   currentProvider = provider;
@@ -101,7 +122,30 @@ export function getCurrentProvider() {
     model: currentModel,
     available: {
       claude: !!anthropicClient,
-      openai: !!openaiClient
+      openai: !!openaiClient,
+      gemini: !!geminiClient
+    },
+    hasKeys: {
+      claude: !!storedKeys.anthropic,
+      openai: !!storedKeys.openai,
+      gemini: !!storedKeys.gemini
+    },
+    models: {
+      gemini: [
+        { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', default: true },
+        { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
+        { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (Experimental)' }
+      ],
+      claude: [
+        { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', default: true },
+        { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet' },
+        { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku' }
+      ],
+      openai: [
+        { id: 'gpt-4o', name: 'GPT-4o', default: true },
+        { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
+        { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' }
+      ]
     }
   };
 }
@@ -112,13 +156,40 @@ export function getCurrentProvider() {
 export function updateApiKey(provider, apiKey) {
   if (provider === 'claude' || provider === 'anthropic') {
     anthropicClient = new Anthropic({ apiKey });
+    storedKeys.anthropic = apiKey;
+    // Persist to database
+    try {
+      setSetting('anthropic_api_key', apiKey);
+    } catch (e) {
+      console.log('Could not persist Anthropic key to database');
+    }
     console.log('Anthropic API key updated');
     return true;
   }
 
   if (provider === 'openai' || provider === 'gpt') {
     openaiClient = new OpenAI({ apiKey });
+    storedKeys.openai = apiKey;
+    // Persist to database
+    try {
+      setSetting('openai_api_key', apiKey);
+    } catch (e) {
+      console.log('Could not persist OpenAI key to database');
+    }
     console.log('OpenAI API key updated');
+    return true;
+  }
+
+  if (provider === 'gemini' || provider === 'google') {
+    geminiClient = new GoogleGenerativeAI(apiKey);
+    storedKeys.gemini = apiKey;
+    // Persist to database
+    try {
+      setSetting('gemini_api_key', apiKey);
+    } catch (e) {
+      console.log('Could not persist Gemini key to database');
+    }
+    console.log('Gemini API key updated');
     return true;
   }
 
@@ -126,7 +197,7 @@ export function updateApiKey(provider, apiKey) {
 }
 
 /**
- * Main chat completion function - works with both providers
+ * Main chat completion function - works with all providers
  */
 export async function chat(messages, options = {}) {
   const provider = options.provider || currentProvider;
@@ -143,6 +214,9 @@ export async function chat(messages, options = {}) {
     if (provider === 'openai') {
       response = await chatWithOpenAI(messages, { model, maxTokens, temperature, systemPrompt });
       text = response.choices[0]?.message?.content || '';
+    } else if (provider === 'gemini') {
+      response = await chatWithGemini(messages, { model, maxTokens, temperature, systemPrompt });
+      text = response.text || '';
     } else {
       response = await chatWithClaude(messages, { model, maxTokens, temperature, systemPrompt });
       text = response.content[0]?.text || '';
@@ -235,6 +309,57 @@ async function chatWithOpenAI(messages, options) {
     max_tokens: options.maxTokens,
     temperature: options.temperature
   });
+}
+
+/**
+ * Chat with Gemini (Google)
+ */
+async function chatWithGemini(messages, options) {
+  if (!geminiClient) {
+    throw new Error('Gemini client not initialized. Add GEMINI_API_KEY to .env or settings');
+  }
+
+  const model = geminiClient.getGenerativeModel({
+    model: options.model || 'gemini-2.0-flash',
+    generationConfig: {
+      maxOutputTokens: options.maxTokens,
+      temperature: options.temperature
+    }
+  });
+
+  // Build conversation history
+  const history = [];
+  let systemInstruction = options.systemPrompt || '';
+
+  for (const m of messages.slice(0, -1)) {
+    history.push({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }]
+    });
+  }
+
+  // Get the last message as the current prompt
+  const lastMessage = messages[messages.length - 1];
+  let prompt = lastMessage?.content || '';
+
+  // Prepend system prompt to first user message if exists
+  if (systemInstruction && history.length === 0) {
+    prompt = `${systemInstruction}\n\n${prompt}`;
+  }
+
+  try {
+    const chat = model.startChat({ history });
+    const result = await chat.sendMessage(prompt);
+    const response = await result.response;
+
+    return {
+      text: response.text(),
+      usage: null
+    };
+  } catch (error) {
+    console.error('Gemini chat error:', error);
+    throw error;
+  }
 }
 
 /**
@@ -430,6 +555,170 @@ Respond with ONLY the JSON object, no markdown.`;
   };
 }
 
+/**
+ * Generate a response based on resolved ticket patterns (company standards)
+ * Cross-references similar resolved tickets to learn response patterns
+ */
+export async function generateSmartResponse(ticket, resolvedTickets = [], options = {}) {
+  const { agentName, companyStandards } = options;
+
+  // Build context from resolved tickets
+  let resolvedContext = '';
+  if (resolvedTickets && resolvedTickets.length > 0) {
+    resolvedContext = `
+LEARN FROM THESE SUCCESSFULLY RESOLVED SIMILAR TICKETS:
+${resolvedTickets.slice(0, 5).map((t, i) => `
+--- Resolved Ticket ${i + 1} ---
+Subject: ${t.subject}
+Issue: ${t.description?.substring(0, 200) || 'N/A'}
+Resolution/Response Used: ${t.resolution || t.response || 'Standard resolution applied'}
+Keywords: ${Array.isArray(t.keywords) ? t.keywords.join(', ') : (t.keywords || 'N/A')}
+`).join('\n')}
+
+IMPORTANT: Use the tone, structure, and solutions from these resolved tickets as a template.
+Match the company's established response patterns.`;
+  }
+
+  // Company standards prompt
+  const standardsPrompt = companyStandards || `
+COMPANY RESPONSE STANDARDS:
+1. Be concise - customers want quick answers, not essays
+2. Lead with the solution or next step
+3. Use simple, non-technical language when possible
+4. Always acknowledge the customer's frustration if expressed
+5. Include specific action items or next steps
+6. Never blame the customer or other teams
+7. End with a clear call-to-action or offer of further help
+8. Keep responses under 150 words when possible
+9. Use bullet points for multiple steps
+10. Always personalize with the customer's name`;
+
+  const prompt = `You are ${agentName || 'a senior support agent'} writing a response to a customer ticket.
+
+CRITICAL: Write a SHORT, DIRECT response following company standards. No fluff.
+
+${standardsPrompt}
+
+CURRENT TICKET TO RESPOND TO:
+Subject: ${ticket.subject}
+Description: ${ticket.description || ticket.description_text || 'No description'}
+Customer: ${ticket.requester?.name || ticket.requester_name || 'Customer'}
+Priority: ${ticket.priority || 'Normal'}
+${resolvedContext}
+
+FORMATTING RULES:
+- Plain text only, NO markdown
+- NO asterisks, hashtags, or backticks
+- Keep it under 150 words
+- Be direct and helpful
+
+Write your response now:`;
+
+  const result = await chat([{ role: 'user', content: prompt }], {
+    ...options,
+    maxTokens: 800,
+    temperature: 0.7,
+    agentId: options.agentId || 'smart-response-generator'
+  });
+
+  // Clean response
+  let response = result.text
+    .replace(/\*\*/g, '')
+    .replace(/\*/g, '')
+    .replace(/^#{1,6}\s/gm, '')
+    .replace(/`/g, '')
+    .trim();
+
+  return {
+    response,
+    basedOnTickets: resolvedTickets.length,
+    provider: result.provider,
+    model: result.model
+  };
+}
+
+/**
+ * Generate daily report summary with AI
+ */
+export async function generateDailyReportSummary(reportData, options = {}) {
+  const { tickets, urgentCount, typeBreakdown, recentPatterns } = reportData;
+
+  const prompt = `You are an AI assistant generating an executive summary for a daily support report.
+
+TODAY'S METRICS:
+- Total Open Tickets: ${tickets?.length || 0}
+- Urgent Items: ${urgentCount || 0}
+- Ticket Types: ${JSON.stringify(typeBreakdown || {})}
+
+RECENT PATTERNS:
+${recentPatterns?.join('\n') || 'No patterns detected'}
+
+Generate a brief (3-4 sentences) executive summary that:
+1. Highlights the most critical items needing attention
+2. Notes any concerning patterns or trends
+3. Provides 1-2 actionable recommendations
+
+Be direct and actionable. No fluff.`;
+
+  const result = await chat([{ role: 'user', content: prompt }], {
+    ...options,
+    maxTokens: 500,
+    agentId: 'report-summarizer'
+  });
+
+  return {
+    summary: result.text.trim(),
+    provider: result.provider
+  };
+}
+
+/**
+ * Learn from a resolved ticket (extract patterns for future use)
+ */
+export async function extractTicketPatterns(ticket, resolution, options = {}) {
+  const prompt = `Analyze this resolved support ticket and extract learnable patterns.
+
+TICKET:
+Subject: ${ticket.subject}
+Description: ${ticket.description || ticket.description_text || 'N/A'}
+Type: ${ticket.escalation_type || 'SUPPORT'}
+
+RESOLUTION PROVIDED:
+${resolution}
+
+Extract in JSON format:
+{
+  "keywords": ["key", "terms", "for", "matching"],
+  "category": "main category",
+  "problemPattern": "brief description of the problem type",
+  "solutionPattern": "brief description of the solution approach",
+  "responseTemplate": "a template response that could be reused",
+  "escalationNeeded": true/false,
+  "commonCauses": ["list", "of", "common", "causes"],
+  "preventionTips": ["tips", "to", "prevent", "this", "issue"]
+}
+
+Respond with ONLY the JSON object.`;
+
+  const result = await chat([{ role: 'user', content: prompt }], {
+    ...options,
+    maxTokens: 800,
+    agentId: 'pattern-extractor'
+  });
+
+  const jsonMatch = result.text.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    return JSON.parse(jsonMatch[0]);
+  }
+
+  return {
+    keywords: [],
+    category: 'general',
+    problemPattern: 'Unknown',
+    solutionPattern: 'Standard resolution'
+  };
+}
+
 export default {
   initAIProviders,
   switchProvider,
@@ -438,5 +727,8 @@ export default {
   chat,
   analyzeTicket,
   generateResponse,
-  proactiveAnalysis
+  generateSmartResponse,
+  proactiveAnalysis,
+  generateDailyReportSummary,
+  extractTicketPatterns
 };

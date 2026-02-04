@@ -20,9 +20,8 @@ import {
   Target
 } from 'lucide-react';
 
-const AI_SERVER_URL = import.meta.env.VITE_API_URL
-  ? `https://${import.meta.env.VITE_API_URL}`
-  : 'http://localhost:3005';
+import { API_URL } from '../config';
+const AI_SERVER_URL = API_URL;
 
 // Type icons and colors mapping
 const typeConfig = {

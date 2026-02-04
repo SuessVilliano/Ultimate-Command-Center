@@ -1,23 +1,35 @@
 /**
- * LIV8 Command Center - SQLite Database Module
+ * LIV8 Command Center - Database Module
  * Handles all persistent storage for tickets, analysis, and knowledge base
+ * Supports both SQLite (local) and Supabase (cloud)
  */
 
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import * as supabaseDb from './supabase-db.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Database singleton
 let db = null;
+let useSupabase = false;
 
 /**
  * Initialize the database connection and create tables
+ * Will use Supabase for cloud persistence if configured, SQLite for local
  */
 export function initDatabase(dbPath = null) {
+  // Try to initialize Supabase first (for cloud deployments)
+  const supabaseClient = supabaseDb.initSupabase();
+  if (supabaseClient) {
+    useSupabase = true;
+    console.log('Using Supabase for cloud persistence');
+  }
+
+  // Always initialize SQLite for local fallback and complex queries
   const dataDir = path.join(__dirname, '..', 'data');
 
   // Ensure data directory exists
@@ -27,14 +39,29 @@ export function initDatabase(dbPath = null) {
 
   const finalPath = dbPath || path.join(dataDir, 'liv8.db');
 
-  db = new Database(finalPath);
-  db.pragma('journal_mode = WAL'); // Better performance for concurrent reads
+  try {
+    db = new Database(finalPath);
+    db.pragma('journal_mode = WAL'); // Better performance for concurrent reads
 
-  // Create tables
-  createTables();
+    // Create tables
+    createTables();
 
-  console.log(`Database initialized at: ${finalPath}`);
+    console.log(`SQLite database initialized at: ${finalPath}`);
+  } catch (error) {
+    console.log('SQLite not available (expected in serverless):', error.message);
+    if (!useSupabase) {
+      console.warn('WARNING: No database backend available!');
+    }
+  }
+
   return db;
+}
+
+/**
+ * Check if Supabase is being used
+ */
+export function isUsingSupabase() {
+  return useSupabase;
 }
 
 /**
@@ -550,44 +577,153 @@ export function getRecentRuns(limit = 10) {
 }
 
 // ============================================
-// SETTINGS
+// SETTINGS (with Supabase support)
 // ============================================
 
 /**
- * Get a setting
+ * Get a setting - uses Supabase if available, falls back to SQLite
  */
 export function getSetting(key, defaultValue = null) {
-  const stmt = db.prepare('SELECT value FROM settings WHERE key = ?');
-  const result = stmt.get(key);
-  return result ? result.value : defaultValue;
+  // For cloud deployments, use Supabase
+  if (useSupabase) {
+    // Note: This is async in Supabase but sync in SQLite
+    // For initialization, we need sync behavior, so we also check SQLite
+    try {
+      if (db) {
+        const stmt = db.prepare('SELECT value FROM settings WHERE key = ?');
+        const result = stmt.get(key);
+        if (result) return result.value;
+      }
+    } catch (e) {
+      // SQLite not available
+    }
+    return defaultValue;
+  }
+
+  // SQLite local
+  if (!db) return defaultValue;
+  try {
+    const stmt = db.prepare('SELECT value FROM settings WHERE key = ?');
+    const result = stmt.get(key);
+    return result ? result.value : defaultValue;
+  } catch (e) {
+    return defaultValue;
+  }
 }
 
 /**
- * Set a setting
+ * Get a setting asynchronously (use this when possible)
+ */
+export async function getSettingAsync(key, defaultValue = null) {
+  // Try Supabase first
+  if (useSupabase) {
+    const value = await supabaseDb.getSetting(key, null);
+    if (value !== null) return value;
+  }
+
+  // Fall back to SQLite
+  if (db) {
+    try {
+      const stmt = db.prepare('SELECT value FROM settings WHERE key = ?');
+      const result = stmt.get(key);
+      if (result) return result.value;
+    } catch (e) {}
+  }
+
+  return defaultValue;
+}
+
+/**
+ * Set a setting - saves to both Supabase and SQLite for redundancy
  */
 export function setSetting(key, value) {
-  const stmt = db.prepare(`
-    INSERT INTO settings (key, value, updated_at)
-    VALUES (?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(key) DO UPDATE SET
-      value = excluded.value,
-      updated_at = CURRENT_TIMESTAMP
-  `);
+  let sqliteSuccess = false;
+  let supabaseSuccess = false;
 
-  return stmt.run(key, value);
+  // Save to SQLite if available
+  if (db) {
+    try {
+      const stmt = db.prepare(`
+        INSERT INTO settings (key, value, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(key) DO UPDATE SET
+          value = excluded.value,
+          updated_at = CURRENT_TIMESTAMP
+      `);
+      stmt.run(key, value);
+      sqliteSuccess = true;
+    } catch (e) {
+      console.log('SQLite setSetting failed:', e.message);
+    }
+  }
+
+  // Save to Supabase if available (async, fire and forget for sync API)
+  if (useSupabase) {
+    supabaseDb.setSetting(key, value)
+      .then(success => {
+        if (success) console.log(`Setting '${key}' saved to Supabase`);
+      })
+      .catch(e => console.log('Supabase setSetting failed:', e.message));
+    supabaseSuccess = true; // Optimistic
+  }
+
+  return sqliteSuccess || supabaseSuccess;
+}
+
+/**
+ * Set a setting asynchronously (preferred method)
+ */
+export async function setSettingAsync(key, value) {
+  const results = { sqlite: false, supabase: false };
+
+  // Save to SQLite if available
+  if (db) {
+    try {
+      const stmt = db.prepare(`
+        INSERT INTO settings (key, value, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(key) DO UPDATE SET
+          value = excluded.value,
+          updated_at = CURRENT_TIMESTAMP
+      `);
+      stmt.run(key, value);
+      results.sqlite = true;
+    } catch (e) {
+      console.log('SQLite setSetting failed:', e.message);
+    }
+  }
+
+  // Save to Supabase if available
+  if (useSupabase) {
+    results.supabase = await supabaseDb.setSetting(key, value);
+  }
+
+  return results.sqlite || results.supabase;
 }
 
 /**
  * Get all settings
  */
-export function getAllSettings() {
-  const stmt = db.prepare('SELECT key, value FROM settings');
-  const results = stmt.all();
-
+export async function getAllSettings() {
   const settings = {};
-  for (const row of results) {
-    settings[row.key] = row.value;
+
+  // Get from SQLite first
+  if (db) {
+    try {
+      const stmt = db.prepare('SELECT key, value FROM settings');
+      const results = stmt.all();
+      for (const row of results) {
+        settings[row.key] = row.value;
+      }
+    } catch (e) {}
   }
+
+  // Merge with Supabase settings (Supabase takes precedence)
+  if (useSupabase) {
+    const supabaseSettings = await supabaseDb.getAllSettings();
+    Object.assign(settings, supabaseSettings);
+  }
+
   return settings;
 }
 
@@ -675,6 +811,7 @@ export function getEmbeddingsBySource(sourceType, sourceId = null) {
 
 export default {
   initDatabase,
+  isUsingSupabase,
   getDb,
   upsertTicket,
   upsertTickets,
@@ -693,7 +830,9 @@ export default {
   completeScheduledRun,
   getRecentRuns,
   getSetting,
+  getSettingAsync,
   setSetting,
+  setSettingAsync,
   getAllSettings,
   logAgentInteraction,
   getAgentHistory,

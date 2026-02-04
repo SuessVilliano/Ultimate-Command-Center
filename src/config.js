@@ -5,9 +5,8 @@
  */
 
 // API Server URL
-export const API_URL = import.meta.env.VITE_API_URL
-  ? `https://${import.meta.env.VITE_API_URL}`
-  : 'http://localhost:3005';
+// VITE_API_URL should be a full URL (e.g., https://api.example.com)
+export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3005';
 
 // Feature flags
 export const FEATURES = {

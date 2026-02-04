@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import { ThemeProvider } from './context/ThemeContext';
+import React, { useState, useEffect } from 'react';
+import { ThemeProvider, useTheme } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import Sidebar from './components/Sidebar';
+import Sidebar, { MobileMenuButton } from './components/Sidebar';
 import ChatWidget from './components/ChatWidget';
 import VaultLogin from './components/VaultLogin';
 import Dashboard from './pages/Dashboard';
@@ -21,10 +21,29 @@ import ActionFeed from './pages/ActionFeed';
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
+  const { theme } = useTheme();
   const [activePage, setActivePage] = useState('dashboard');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const isDark = theme === 'dark';
+
+  // Handle resize to close sidebar on large screens
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth >= 1024) {
+        setSidebarOpen(false);
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const handleNavigate = (page) => {
     setActivePage(page);
+  };
+
+  const toggleSidebar = () => {
+    setSidebarOpen(!sidebarOpen);
   };
 
   // Show loading state
@@ -78,10 +97,23 @@ function AppContent() {
 
   return (
     <div className="flex min-h-screen bg-theme transition-colors duration-300">
-      <Sidebar activePage={activePage} setActivePage={setActivePage} />
-      <main className="flex-1 ml-64 p-8">
+      {/* Mobile menu button */}
+      <MobileMenuButton onClick={toggleSidebar} isDark={isDark} />
+
+      {/* Sidebar */}
+      <Sidebar
+        activePage={activePage}
+        setActivePage={setActivePage}
+        isOpen={sidebarOpen}
+        onToggle={toggleSidebar}
+      />
+
+      {/* Main content - responsive margin */}
+      <main className="flex-1 lg:ml-64 p-4 sm:p-6 lg:p-8 pt-20 lg:pt-8 min-h-screen">
         {renderPage()}
       </main>
+
+      {/* Chat Widget - AI Assistant with Agents and Send to PA */}
       <ChatWidget onNavigate={handleNavigate} />
     </div>
   );

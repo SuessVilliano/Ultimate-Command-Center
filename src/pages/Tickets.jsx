@@ -43,10 +43,104 @@ const STORAGE_KEYS = {
   AI_SETTINGS: 'liv8_ai_settings'
 };
 
-// AI Server URL (local backend using Claude)
-const AI_SERVER_URL = import.meta.env.VITE_API_URL
-  ? `https://${import.meta.env.VITE_API_URL}`
-  : 'http://localhost:3005';
+// GHL Quick Links - Work Tools
+const GHL_QUICK_LINKS = [
+  {
+    id: 'hq',
+    label: 'HQ',
+    url: 'https://support.leadconnectorhq.com/login',
+    icon: '🏢',
+    description: 'LeadConnector Support HQ'
+  },
+  {
+    id: 'twilio',
+    label: 'Twilio',
+    url: 'https://www.twilio.com/login?g=%2Fconsole-zen%2Fhttps%3A%2F%2Fconsole.twilio.com%2F&t=2d94b9e4c79e07a34a2fac4a2be87b4517b42f35aa88738462dfee82b084af25',
+    icon: '📞',
+    description: 'Twilio Console'
+  },
+  {
+    id: 'gemini',
+    label: 'Gemini',
+    url: 'https://gemini.google.com/gem/a3f972a495f7',
+    icon: '🌟',
+    description: 'Google Gemini AI'
+  },
+  {
+    id: 'freshdesk',
+    label: 'Freshdesk',
+    url: 'https://gohighlevelassist.freshdesk.com/a/dashboard/default',
+    icon: '🎫',
+    description: 'Freshdesk Dashboard'
+  },
+  {
+    id: 'support-dashboard',
+    label: 'Support Dashboard',
+    url: 'https://docs.google.com/spreadsheets/d/1oD_dS_A4b3lNW7cWEdv6QYeb3zJakV_PoKweyhFgaNs/edit?pli=1&gid=1182538947#gid=1182538947',
+    icon: '📊',
+    description: 'Google Sheets Dashboard'
+  },
+  {
+    id: 'calendar',
+    label: 'Calendar',
+    url: 'https://calendar.google.com/calendar/u/0/r?cid=jamaur.johnson@gohighlevel.com&pli=1',
+    icon: '📅',
+    description: 'Google Calendar'
+  },
+  {
+    id: 'senior-zoom',
+    label: 'Senior Zoom',
+    url: 'https://us02web.zoom.us/j/3297827881',
+    icon: '🎥',
+    description: 'Senior Team Zoom Meeting'
+  },
+  {
+    id: 'bamboohr',
+    label: 'BambooHR',
+    url: 'https://gohighlevel.bamboohr.com/home',
+    icon: '🎋',
+    description: 'HR Portal'
+  },
+  {
+    id: 'slack',
+    label: 'Slack',
+    url: 'https://app.slack.com/client/E098GV8SRC2/GMBP6HAPM',
+    icon: '💬',
+    description: 'GHL Slack Workspace'
+  },
+  {
+    id: 'knowledgebase',
+    label: 'Knowledgebase',
+    url: 'https://help.gohighlevel.com/support/home',
+    icon: '📚',
+    description: 'GHL Help Center'
+  },
+  {
+    id: 'clickup',
+    label: 'ClickUp',
+    url: 'https://app.clickup.com',
+    icon: '✅',
+    description: 'ClickUp Project Management'
+  },
+  {
+    id: 'adp',
+    label: 'ADP',
+    url: 'https://workforcenow.adp.com/theme/index.html#/home',
+    icon: '💰',
+    description: 'ADP Workforce'
+  },
+  {
+    id: 'darwinbox',
+    label: 'Darwinbox',
+    url: 'https://gohighlevel.darwinbox.com/',
+    icon: '📦',
+    description: 'Darwinbox HR'
+  }
+];
+
+// AI Server URL
+import { API_URL } from '../config';
+const AI_SERVER_URL = API_URL;
 
 // Schedule times for display
 const SCHEDULE_TIMES = ['8:00 AM', '12:00 PM', '4:00 PM', '12:00 AM'];
@@ -111,17 +205,22 @@ function Tickets() {
   const [settingsTab, setSettingsTab] = useState('freshdesk'); // freshdesk, ai, schedule
   const [cachedResponses, setCachedResponses] = useState({}); // Store generated responses
   const [searchQuery, setSearchQuery] = useState(''); // Search for tickets
+  const [sendingToPA, setSendingToPA] = useState(false); // Sending to Personal Assistant
+  const [sentToPA, setSentToPA] = useState({}); // Track which tickets were sent
+  const [quickLinksCollapsed, setQuickLinksCollapsed] = useState(false); // Collapsible quick links
 
   // Check AI server status and load persisted data
   const checkAiServer = async () => {
     try {
       const response = await fetch(`${AI_SERVER_URL}/health`);
       const data = await response.json();
-      if (data.status === 'ok' && data.ai?.available?.claude) {
+      // Check if any AI provider is available (gemini, claude, or openai)
+      const hasAnyProvider = data.ai?.available?.gemini || data.ai?.available?.claude || data.ai?.available?.openai;
+      if (data.status === 'ok' && hasAnyProvider) {
         setAiServerStatus('online');
         // Set AI provider info
-        setAiProvider(data.ai?.provider || 'claude');
-        setAiModel(data.ai?.model || '');
+        setAiProvider(data.ai?.provider || 'gemini');
+        setAiModel(data.ai?.model || 'gemini-2.0-flash');
         // Set schedule status
         if (data.schedule) {
           setScheduleStatus(data.schedule);
@@ -357,36 +456,55 @@ function Tickets() {
       // Get agent ID from integrations config
       const integrations = aiService.getIntegrations();
       const agentId = integrations?.freshdesk?.agentId || '155014160586';
+      const authHeader = 'Basic ' + btoa(apiKey + ':X');
+
+      // Helper function to fetch all pages for a status
+      const fetchAllPages = async (status) => {
+        let allResults = [];
+        let page = 1;
+        const maxPages = 5; // Safety limit
+
+        while (page <= maxPages) {
+          try {
+            const response = await fetch(
+              `https://${domain}.freshdesk.com/api/v2/search/tickets?query="agent_id:${agentId} AND status:${status}"&page=${page}`,
+              { headers: { 'Authorization': authHeader, 'Content-Type': 'application/json' } }
+            );
+
+            if (!response.ok) break;
+
+            const data = await response.json();
+            const results = data.results || [];
+            allResults = [...allResults, ...results];
+
+            // If less than 30 results, we've reached the end
+            if (results.length < 30) break;
+            page++;
+          } catch (e) {
+            console.error(`Error fetching page ${page} for status ${status}:`, e);
+            break;
+          }
+        }
+
+        return allResults;
+      };
 
       // Fetch tickets in parallel: Open, Pending, On Hold, Waiting on Customer, Resolved
-      const authHeader = 'Basic ' + btoa(apiKey + ':X');
-      const fetchStatus = (status) => fetch(
-        `https://${domain}.freshdesk.com/api/v2/search/tickets?query="agent_id:${agentId} AND status:${status}"`,
-        { headers: { 'Authorization': authHeader, 'Content-Type': 'application/json' } }
-      );
-
-      const [openResponse, pendingResponse, waitingCustomerResponse, waitingThirdPartyResponse, resolvedResponse] = await Promise.all([
-        fetchStatus(2), // Open
-        fetchStatus(3), // Pending
-        fetchStatus(6), // Waiting on Customer
-        fetchStatus(7), // Waiting on Third Party (On Hold)
-        fetchStatus(4)  // Resolved (for knowledge base)
+      const [openTickets, pendingTickets, waitingCustomerTickets, waitingThirdPartyTickets, resolvedTicketsList] = await Promise.all([
+        fetchAllPages(2), // Open
+        fetchAllPages(3), // Pending
+        fetchAllPages(6), // Waiting on Customer
+        fetchAllPages(7), // Waiting on Third Party (On Hold)
+        fetchAllPages(4)  // Resolved (for knowledge base)
       ]);
 
-      // Parse all responses
-      const openData = openResponse.ok ? await openResponse.json() : { results: [] };
-      const pendingData = pendingResponse.ok ? await pendingResponse.json() : { results: [] };
-      const waitingCustomerData = waitingCustomerResponse.ok ? await waitingCustomerResponse.json() : { results: [] };
-      const waitingThirdPartyData = waitingThirdPartyResponse.ok ? await waitingThirdPartyResponse.json() : { results: [] };
-      const resolvedData = resolvedResponse.ok ? await resolvedResponse.json() : { results: [] };
-
-      // Combine all tickets (search endpoint returns { results: [...] })
+      // Combine all tickets
       const allTickets = [
-        ...(openData.results || []),
-        ...(pendingData.results || []),
-        ...(waitingCustomerData.results || []),
-        ...(waitingThirdPartyData.results || []),
-        ...(resolvedData.results || [])
+        ...openTickets,
+        ...pendingTickets,
+        ...waitingCustomerTickets,
+        ...waitingThirdPartyTickets,
+        ...resolvedTicketsList
       ];
 
       // Remove duplicates by ticket ID
@@ -610,6 +728,59 @@ function Tickets() {
     });
   };
 
+  // Send ticket to Personal Assistant via Telegram (opens chat with bot)
+  const sendToPA = (ticket, includeAnalysis = true) => {
+    if (!ticket) return;
+
+    setSendingToPA(true);
+
+    const analysis = aiAnalysis[ticket.id];
+    const ticketUrl = freshdeskDomain ? `https://${freshdeskDomain}.freshdesk.com/a/tickets/${ticket.id}` : '';
+    const timestamp = new Date().toLocaleString('en-US', {
+      timeZone: 'America/New_York',
+      dateStyle: 'short',
+      timeStyle: 'short'
+    });
+
+    // Format ticket message for Telegram
+    let message = `🎫 TICKET ALERT\n\n`;
+    message += `${ticket.subject}\n\n`;
+    message += `📊 Status: ${STATUS_MAP[ticket.status]?.label || 'Unknown'}\n`;
+    message += `⚡ Priority: ${PRIORITY_MAP[ticket.priority]?.label || 'Normal'}\n`;
+    message += `👤 Requester: ${ticket.requester?.name || 'Unknown'}\n`;
+    if (ticket.requester?.company?.name) {
+      message += `🏢 Company: ${ticket.requester.company.name}\n`;
+    }
+
+    if (includeAnalysis && analysis) {
+      message += `\n🤖 AI Analysis:\n`;
+      message += `Type: ${analysis.ESCALATION_TYPE || 'SUPPORT'}\n`;
+      if (analysis.SUMMARY) message += `Summary: ${analysis.SUMMARY}\n`;
+      if (analysis.SUGGESTED_ACTION) message += `💡 Suggested: ${analysis.SUGGESTED_ACTION}\n`;
+    }
+
+    if (ticketUrl) {
+      message += `\n🔗 ${ticketUrl}\n`;
+    }
+    message += `\n⏰ ${timestamp}`;
+
+    // Copy to clipboard
+    navigator.clipboard.writeText(message).catch(() => {});
+
+    // Open Telegram chat with bot
+    const encodedMsg = encodeURIComponent(message);
+    const telegramUrl = `tg://resolve?domain=LIV8AiBot&text=${encodedMsg}`;
+    window.open(telegramUrl, '_blank');
+
+    // Mark as sent
+    setSentToPA(prev => ({ ...prev, [ticket.id]: true }));
+    setTimeout(() => {
+      setSentToPA(prev => ({ ...prev, [ticket.id]: false }));
+    }, 3000);
+
+    setSendingToPA(false);
+  };
+
   // Analyze all open tickets AND generate responses
   const [analyzingAll, setAnalyzingAll] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState({ current: 0, total: 0, phase: '' });
@@ -829,16 +1000,23 @@ function Tickets() {
     return 'text-green-500';
   };
 
+  // Open link in work profile (jamaur.johnson@gohighlevel.com)
+  const openInWorkProfile = (url) => {
+    // Using chrome profile selector URL format
+    // The URL will open and user can select their work profile
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-            My Support Tickets
+            GHL Command Center
           </h1>
           <p className={`mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-            Your assigned tickets with AI-powered analysis (Agent ID: {aiService.getIntegration('freshdesk')?.agentId || '155014160586'})
+            GoHighLevel Support Hub - Tickets, Tools & Resources
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -924,6 +1102,52 @@ function Tickets() {
             <Settings className="w-5 h-5" />
           </button>
         </div>
+      </div>
+
+      {/* GHL Quick Links - Collapsible */}
+      <div className={`rounded-xl border transition-all ${
+        isDark ? 'border-purple-900/30 bg-gradient-to-r from-purple-900/10 to-cyan-900/10' : 'border-gray-200 bg-gradient-to-r from-purple-50 to-cyan-50'
+      }`}>
+        <button
+          onClick={() => setQuickLinksCollapsed(!quickLinksCollapsed)}
+          className={`w-full p-3 flex items-center justify-between ${quickLinksCollapsed ? '' : 'border-b border-purple-900/20'}`}
+        >
+          <div className="flex items-center gap-3">
+            <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              Quick Links
+            </h3>
+            <span className={`text-xs px-2 py-0.5 rounded-full ${isDark ? 'bg-purple-600/30 text-purple-300' : 'bg-purple-100 text-purple-600'}`}>
+              {GHL_QUICK_LINKS.length}
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+              jamaur.johnson@gohighlevel.com
+            </span>
+            <ChevronRight className={`w-5 h-5 transition-transform ${quickLinksCollapsed ? '' : 'rotate-90'} ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />
+          </div>
+        </button>
+        {!quickLinksCollapsed && (
+          <div className="p-3 grid grid-cols-7 gap-2">
+            {GHL_QUICK_LINKS.map((link) => (
+              <button
+                key={link.id}
+                onClick={() => openInWorkProfile(link.url)}
+                className={`p-2 rounded-lg text-center transition-all hover:scale-105 ${
+                  isDark
+                    ? 'bg-white/5 hover:bg-white/10 border border-purple-500/20 hover:border-purple-500/40'
+                    : 'bg-white hover:bg-gray-50 border border-gray-200 hover:border-purple-300'
+                }`}
+                title={link.description}
+              >
+                <span className="text-xl block mb-0.5">{link.icon}</span>
+                <span className={`text-[10px] font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                  {link.label}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Settings Modal - Updated v2.0 with tabs */}
@@ -1038,7 +1262,21 @@ function Tickets() {
                     <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
                       AI Provider
                     </label>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-3 gap-3">
+                      <button
+                        onClick={() => switchAiProvider('gemini')}
+                        className={`p-4 rounded-lg border text-left transition-colors ${
+                          aiProvider === 'gemini'
+                            ? 'border-blue-500 bg-blue-500/20'
+                            : isDark ? 'border-purple-900/30 hover:bg-white/5' : 'border-gray-200 hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className="text-xl mb-1">🌟</div>
+                        <div className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Gemini</div>
+                        <p className={`text-xs mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                          1.5-flash - Default
+                        </p>
+                      </button>
                       <button
                         onClick={() => switchAiProvider('claude')}
                         className={`p-4 rounded-lg border text-left transition-colors ${
@@ -1047,9 +1285,10 @@ function Tickets() {
                             : isDark ? 'border-purple-900/30 hover:bg-white/5' : 'border-gray-200 hover:bg-gray-50'
                         }`}
                       >
-                        <div className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Claude (Anthropic)</div>
+                        <div className="text-xl mb-1">🤖</div>
+                        <div className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Claude</div>
                         <p className={`text-xs mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                          claude-sonnet-4 - Recommended
+                          Sonnet 4
                         </p>
                       </button>
                       <button
@@ -1060,42 +1299,111 @@ function Tickets() {
                             : isDark ? 'border-purple-900/30 hover:bg-white/5' : 'border-gray-200 hover:bg-gray-50'
                         }`}
                       >
-                        <div className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>GPT (OpenAI)</div>
+                        <div className="text-xl mb-1">🧠</div>
+                        <div className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>GPT</div>
                         <p className={`text-xs mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                          gpt-4o - Alternative
+                          gpt-4o
                         </p>
                       </button>
                     </div>
                   </div>
 
-                  {/* OpenAI API Key (if OpenAI selected) */}
-                  <div>
-                    <label className={`block text-sm font-medium mb-1 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                      OpenAI API Key (optional)
+                  {/* API Keys Section */}
+                  <div className="space-y-3">
+                    <label className={`block text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                      API Keys
                     </label>
-                    <div className="flex gap-2">
-                      <input
-                        type="password"
-                        value={openaiKey}
-                        onChange={(e) => setOpenaiKey(e.target.value)}
-                        placeholder="sk-..."
-                        className={`flex-1 p-3 rounded-lg border ${
-                          isDark ? 'bg-white/5 border-purple-900/30 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
-                        }`}
-                      />
-                      <button
-                        onClick={() => updateApiKey('openai', openaiKey)}
-                        disabled={!openaiKey}
-                        className={`px-4 py-2 rounded-lg ${
-                          openaiKey ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-gray-600 text-gray-400'
-                        }`}
-                      >
-                        Save
-                      </button>
+
+                    {/* Gemini Key */}
+                    <div className={`p-3 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                          🌟 Gemini
+                        </span>
+                        <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer"
+                          className="text-xs text-blue-400 hover:text-blue-300">Get Key</a>
+                      </div>
+                      <div className="flex gap-2">
+                        <input
+                          type="password"
+                          id="gemini-key-input"
+                          placeholder="Enter Gemini API key..."
+                          className={`flex-1 p-2 rounded-lg border text-sm ${
+                            isDark ? 'bg-white/5 border-purple-900/30 text-white' : 'bg-white border-gray-200 text-gray-900'
+                          }`}
+                        />
+                        <button
+                          onClick={() => {
+                            const key = document.getElementById('gemini-key-input').value;
+                            if (key) updateApiKey('gemini', key);
+                          }}
+                          className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm"
+                        >
+                          Save
+                        </button>
+                      </div>
                     </div>
-                    <p className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                      Add to enable GPT. Get from platform.openai.com
-                    </p>
+
+                    {/* Claude Key */}
+                    <div className={`p-3 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                          🤖 Claude
+                        </span>
+                        <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer"
+                          className="text-xs text-purple-400 hover:text-purple-300">Get Key</a>
+                      </div>
+                      <div className="flex gap-2">
+                        <input
+                          type="password"
+                          id="claude-key-input"
+                          placeholder="Enter Claude API key..."
+                          className={`flex-1 p-2 rounded-lg border text-sm ${
+                            isDark ? 'bg-white/5 border-purple-900/30 text-white' : 'bg-white border-gray-200 text-gray-900'
+                          }`}
+                        />
+                        <button
+                          onClick={() => {
+                            const key = document.getElementById('claude-key-input').value;
+                            if (key) updateApiKey('claude', key);
+                          }}
+                          className="px-3 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* OpenAI Key */}
+                    <div className={`p-3 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                          🧠 OpenAI
+                        </span>
+                        <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer"
+                          className="text-xs text-green-400 hover:text-green-300">Get Key</a>
+                      </div>
+                      <div className="flex gap-2">
+                        <input
+                          type="password"
+                          value={openaiKey}
+                          onChange={(e) => setOpenaiKey(e.target.value)}
+                          placeholder="Enter OpenAI API key..."
+                          className={`flex-1 p-2 rounded-lg border text-sm ${
+                            isDark ? 'bg-white/5 border-purple-900/30 text-white' : 'bg-white border-gray-200 text-gray-900'
+                          }`}
+                        />
+                        <button
+                          onClick={() => updateApiKey('openai', openaiKey)}
+                          disabled={!openaiKey}
+                          className={`px-3 py-2 rounded-lg text-sm ${
+                            openaiKey ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-gray-600 text-gray-400'
+                          }`}
+                        >
+                          Save
+                        </button>
+                      </div>
+                    </div>
                   </div>
 
                   {/* Knowledge Base Stats */}
@@ -1683,14 +1991,12 @@ function Tickets() {
                             {i + 1}
                           </span>
                           <div className="flex-1 min-w-0">
-                            <a
-                              href={`https://${freshdeskDomain}.freshdesk.com/a/tickets/${st.id}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className={`font-medium hover:underline ${isDark ? 'text-cyan-300' : 'text-cyan-700'}`}
+                            <button
+                              onClick={() => openInWorkProfile(`https://${freshdeskDomain}.freshdesk.com/a/tickets/${st.id}`)}
+                              className={`font-medium hover:underline text-left ${isDark ? 'text-cyan-300' : 'text-cyan-700'}`}
                             >
                               #{st.id}: {st.subject}
-                            </a>
+                            </button>
                             <div className="flex flex-wrap gap-1 mt-1">
                               {st.keywords?.slice(0, 4).map((kw, j) => (
                                 <span key={j} className={`text-xs px-1.5 py-0.5 rounded ${
@@ -1766,16 +2072,46 @@ function Tickets() {
                       )}
                       Generate Response
                     </button>
-                    <a
-                      href={`https://${freshdeskDomain}.freshdesk.com/a/tickets/${selectedTicket.id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <button
+                      onClick={() => openInWorkProfile(`https://${freshdeskDomain}.freshdesk.com/a/tickets/${selectedTicket.id}`)}
                       className={`px-4 py-2 rounded-lg flex items-center gap-2 ${
                         isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
                       }`}
+                      title="Open in Freshdesk (Work Profile)"
                     >
                       <ExternalLink className="w-4 h-4" />
-                    </a>
+                    </button>
+                    <button
+                      onClick={() => sendToPA(selectedTicket)}
+                      disabled={sendingToPA}
+                      className={`px-4 py-2 rounded-lg flex items-center gap-2 ${
+                        sentToPA[selectedTicket.id]
+                          ? 'bg-green-600 text-white'
+                          : sendingToPA
+                          ? 'bg-gray-500 cursor-wait'
+                          : isDark
+                          ? 'bg-cyan-600 hover:bg-cyan-700 text-white'
+                          : 'bg-cyan-500 hover:bg-cyan-600 text-white'
+                      }`}
+                      title="Send to Personal Assistant (Telegram)"
+                    >
+                      {sentToPA[selectedTicket.id] ? (
+                        <>
+                          <Check className="w-4 h-4" />
+                          Sent!
+                        </>
+                      ) : sendingToPA ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          Sending...
+                        </>
+                      ) : (
+                        <>
+                          <Send className="w-4 h-4" />
+                          Send to PA
+                        </>
+                      )}
+                    </button>
                   </div>
 
                   {/* Escalation Actions */}

@@ -2,7 +2,6 @@ services:
   - type: web
     name: liv8-command-center-api
     runtime: node
-    plan: free
     rootDir: server
     buildCommand: npm install
     startCommand: node server.js
@@ -15,18 +14,18 @@ services:
         value: "3005"
       - key: AI_PROVIDER
         value: gemini
+      # AI Provider API Keys - can be set in Render dashboard OR through the app's AI Settings page
       - key: GEMINI_API_KEY
         sync: false
-        value: gemini
-      - key: SCHEDULE_ENABLED
-        value: "false"
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
       - key: APP_URL
         value: https://commandcenter.liv8.co
       - key: FRONTEND_URL
         value: https://commandcenter.liv8.co
-      # Secrets - set in Render dashboard
-      - key: ANTHROPIC_API_KEY
-        sync: false
+      # Other Integration Secrets - set in Render dashboard
       - key: TASKADE_API_KEY
         sync: false
       - key: TASKMAGIC_WEBHOOK_URL
@@ -47,21 +46,47 @@ services:
         sync: false
       - key: GHL_LOCATION_ID
         sync: false
+      # REQUIRED: Supabase for data persistence (free tier works great)
+      # 1. Create account at https://supabase.com
+      # 2. Create new project
+      # 3. Run the SQL from server/scripts/supabase-schema.sql in SQL Editor
+      # 4. Copy URL and anon key from Settings > API
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY
         sync: false
+      # Freshdesk Integration (for ticket sync)
       - key: FRESHDESK_DOMAIN
         sync: false
       - key: FRESHDESK_API_KEY
         sync: false
       - key: FRESHDESK_AGENT_ID
         sync: false
+      # Email/SMTP Configuration (for daily reports)
+      # Supports Gmail, Outlook, or any SMTP server
+      # Gmail: smtp.gmail.com:587, use App Password
+      # Outlook: smtp.office365.com:587
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: REPORT_EMAIL
+        sync: false
+      # Scheduler Configuration
+      - key: SCHEDULE_ENABLED
+        value: "true"
+      - key: SCHEDULE_TIMEZONE
+        value: America/New_York
 
   - type: web
     name: liv8-command-center
     runtime: static
-    plan: free
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist
     autoDeploy: true

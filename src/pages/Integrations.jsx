@@ -22,8 +22,7 @@ import {
   Send
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3005';
+import { API_URL } from '../config';
 
 function Integrations() {
   const { theme } = useTheme();
