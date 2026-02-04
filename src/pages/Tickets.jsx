@@ -728,18 +728,21 @@ function Tickets() {
     });
   };
 
-  // Send ticket to Personal Assistant via Telegram Bot API
-  const sendToPA = async (ticket, includeAnalysis = true) => {
+  // Send ticket to Personal Assistant - opens Telegram with pre-filled message
+  const sendToPA = (ticket, includeAnalysis = true) => {
     if (!ticket) return;
-
-    setSendingToPA(true);
 
     const analysis = aiAnalysis[ticket.id];
     const ticketUrl = freshdeskDomain ? `https://${freshdeskDomain}.freshdesk.com/a/tickets/${ticket.id}` : '';
+    const timestamp = new Date().toLocaleString('en-US', {
+      timeZone: 'America/New_York',
+      dateStyle: 'short',
+      timeStyle: 'short'
+    });
 
-    // Format ticket message for Telegram
-    let message = `🎫 <b>TICKET ALERT</b>\n\n`;
-    message += `<b>${ticket.subject}</b>\n\n`;
+    // Format ticket message for Telegram (plain text, no HTML for t.me links)
+    let message = `🎫 TICKET ALERT\n\n`;
+    message += `${ticket.subject}\n\n`;
     message += `📊 Status: ${STATUS_MAP[ticket.status]?.label || 'Unknown'}\n`;
     message += `⚡ Priority: ${PRIORITY_MAP[ticket.priority]?.label || 'Normal'}\n`;
     message += `👤 Requester: ${ticket.requester?.name || 'Unknown'}\n`;
@@ -748,7 +751,7 @@ function Tickets() {
     }
 
     if (includeAnalysis && analysis) {
-      message += `\n🤖 <b>AI Analysis:</b>\n`;
+      message += `\n🤖 AI Analysis:\n`;
       message += `Type: ${analysis.ESCALATION_TYPE || 'SUPPORT'}\n`;
       if (analysis.SUMMARY) message += `Summary: ${analysis.SUMMARY}\n`;
       if (analysis.SUGGESTED_ACTION) message += `💡 Suggested: ${analysis.SUGGESTED_ACTION}\n`;
@@ -757,34 +760,21 @@ function Tickets() {
     if (ticketUrl) {
       message += `\n🔗 ${ticketUrl}`;
     }
+    message += `\n\n⏰ ${timestamp}`;
 
-    try {
-      // Send via backend API which uses Telegram Bot API
-      const response = await fetch(`${AI_SERVER_URL}/api/telegram/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: message,
-          type: 'ticket'
-        })
-      });
+    // Copy to clipboard
+    navigator.clipboard.writeText(message).catch(() => {});
 
-      const result = await response.json();
+    // Open Telegram with pre-filled message TO the bot
+    const encodedMsg = encodeURIComponent(message);
+    const telegramUrl = `https://t.me/LIV8AiBot?text=${encodedMsg}`;
+    window.open(telegramUrl, '_blank');
 
-      if (result.success) {
-        setSentToPA(prev => ({ ...prev, [ticket.id]: true }));
-        setTimeout(() => {
-          setSentToPA(prev => ({ ...prev, [ticket.id]: false }));
-        }, 3000);
-      } else {
-        throw new Error(result.error || 'Failed to send');
-      }
-    } catch (err) {
-      console.error('Failed to send to PA:', err);
-      setError(`Failed to send to PA: ${err.message}`);
-    } finally {
-      setSendingToPA(false);
-    }
+    // Mark as sent (visual feedback)
+    setSentToPA(prev => ({ ...prev, [ticket.id]: true }));
+    setTimeout(() => {
+      setSentToPA(prev => ({ ...prev, [ticket.id]: false }));
+    }, 3000);
   };
 
   // Analyze all open tickets AND generate responses

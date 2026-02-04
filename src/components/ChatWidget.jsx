@@ -164,48 +164,55 @@ function ChatWidget({ onNavigate }) {
   const [showPAPanel, setShowPAPanel] = useState(false);
   const [paMessage, setPAMessage] = useState('');
   const [paType, setPAType] = useState('note');
-  const [paSending, setPASending] = useState(false);
-  const [paSent, setPASent] = useState(false);
 
-  // Send to PA via Telegram Bot API (bot sends message to your chat)
-  const sendToPA = async (message, type = 'note') => {
+  // Send to PA - Opens Telegram with pre-filled message TO the bot
+  // Bot can then read and respond to the message
+  const sendToPA = (message, type = 'note') => {
     if (!message?.trim()) return;
 
-    setPASending(true);
-    setPASent(false);
+    const timestamp = new Date().toLocaleString('en-US', {
+      timeZone: 'America/New_York',
+      dateStyle: 'short',
+      timeStyle: 'short'
+    });
 
-    try {
-      // Send via backend API which uses Telegram Bot API
-      const response = await fetch(`${API_URL}/api/telegram/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: message,
-          type: type
-        })
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        setPASent(true);
-        addMessage('commander', `✅ Sent to your PA via Telegram!\n\n"${message.substring(0, 80)}${message.length > 80 ? '...' : ''}"`, 'liv8-commander');
-        setPAMessage('');
-
-        // Reset sent status after 2 seconds
-        setTimeout(() => {
-          setPASent(false);
-          setShowPAPanel(false);
-        }, 2000);
-      } else {
-        throw new Error(result.error || 'Failed to send');
-      }
-    } catch (err) {
-      console.error('Failed to send to PA:', err);
-      addMessage('commander', `❌ Failed to send to PA: ${err.message}`, 'liv8-commander');
-    } finally {
-      setPASending(false);
+    // Format message based on type
+    let formattedMsg = '';
+    switch (type) {
+      case 'ticket':
+        formattedMsg = `🎫 TICKET\n\n${message}\n\n⏰ ${timestamp}`;
+        break;
+      case 'task':
+        formattedMsg = `✅ TASK\n\n${message}\n\n⏰ ${timestamp}`;
+        break;
+      case 'reminder':
+        formattedMsg = `⏰ REMINDER\n\n${message}\n\n📅 ${timestamp}`;
+        break;
+      case 'action':
+        formattedMsg = `🎯 ACTION ITEM\n\n${message}\n\n⏰ ${timestamp}`;
+        break;
+      case 'summary':
+        formattedMsg = `📊 SUMMARY\n\n${message}\n\n⏰ ${timestamp}`;
+        break;
+      default:
+        formattedMsg = `📝 NOTE\n\n${message}\n\n⏰ ${timestamp}`;
     }
+
+    // Copy to clipboard
+    navigator.clipboard.writeText(formattedMsg).catch(() => {});
+
+    // Open Telegram with pre-filled message TO the bot (https works in browsers)
+    // User just needs to tap send, then bot receives and can respond
+    const encodedMsg = encodeURIComponent(formattedMsg);
+    const telegramUrl = `https://t.me/LIV8AiBot?text=${encodedMsg}`;
+    window.open(telegramUrl, '_blank');
+
+    // Show confirmation
+    addMessage('commander', `📤 Opening Telegram - tap send to message your PA!\n\nMessage copied to clipboard as backup.`, 'liv8-commander');
+
+    // Reset
+    setPAMessage('');
+    setShowPAPanel(false);
   };
 
   // Quick send current conversation summary to PA
@@ -1017,101 +1024,86 @@ function ChatWidget({ onNavigate }) {
           {showPAPanel && (
             <div className={`p-3 border-b ${isDark ? 'border-gray-800 bg-gradient-to-r from-cyan-900/30 to-purple-900/30' : 'border-gray-200 bg-gradient-to-r from-cyan-50 to-purple-50'}`}>
               <h4 className={`text-xs font-semibold mb-2 flex items-center gap-2 ${isDark ? 'text-cyan-400' : 'text-cyan-600'}`}>
-                <Send className="w-3 h-3" /> SEND TO PERSONAL ASSISTANT (Telegram)
-                {paSent && <CheckCircle className="w-3 h-3 text-green-500" />}
+                <Send className="w-3 h-3" /> SEND TO PA (Opens Telegram)
               </h4>
-              {paSent ? (
-                <div className="text-center py-4">
-                  <CheckCircle className="w-8 h-8 text-green-500 mx-auto mb-2" />
-                  <p className={`text-sm font-medium ${isDark ? 'text-green-400' : 'text-green-600'}`}>
-                    Sent to your Telegram!
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <div className="flex gap-1 mb-2 flex-wrap">
-                    {[
-                      { id: 'note', label: '📝 Note', color: 'gray' },
-                      { id: 'task', label: '✅ Task', color: 'green' },
-                      { id: 'reminder', label: '⏰ Reminder', color: 'yellow' },
-                      { id: 'action', label: '🎯 Action', color: 'purple' },
-                      { id: 'ticket', label: '🎫 Ticket', color: 'red' }
-                    ].map(type => (
-                      <button
-                        key={type.id}
-                        onClick={() => setPAType(type.id)}
-                        disabled={paSending}
-                        className={`px-2 py-1 text-xs rounded-full transition-all ${
-                          paType === type.id
-                            ? 'bg-cyan-600 text-white'
-                            : isDark
-                            ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                        }`}
-                      >
-                        {type.label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={paMessage}
-                      onChange={(e) => setPAMessage(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && !paSending && sendToPA(paMessage, paType)}
-                      placeholder="Type message for your PA..."
-                      disabled={paSending}
-                      className={`flex-1 px-3 py-2 rounded-lg text-sm ${
-                        isDark
-                          ? 'bg-gray-900 border-gray-700 text-white placeholder-gray-500'
-                          : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'
-                      } border focus:outline-none focus:ring-2 focus:ring-cyan-500 disabled:opacity-50`}
-                    />
-                    <button
-                      onClick={() => sendToPA(paMessage, paType)}
-                      disabled={!paMessage.trim() || paSending}
-                      className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                        paSending
-                          ? 'bg-cyan-700 text-white cursor-wait'
-                          : paMessage.trim()
-                          ? 'bg-cyan-600 hover:bg-cyan-700 text-white'
-                          : isDark
-                          ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                          : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                      }`}
-                    >
-                      {paSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                    </button>
-                  </div>
-                  <div className="flex gap-2 mt-2">
-                    <button
-                      onClick={sendConversationToPA}
-                      disabled={paSending}
-                      className={`flex-1 px-3 py-1.5 text-xs rounded-lg ${
-                        isDark
-                          ? 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                          : 'bg-white text-gray-600 hover:bg-gray-100 border'
-                      } disabled:opacity-50`}
-                    >
-                      📤 Send Chat Summary
-                    </button>
-                    <button
-                      onClick={() => {
-                        const dailyBrief = `Today's Focus:\n${userGoals.map(g => `• ${g}`).join('\n') || 'No goals set'}`;
-                        sendToPA(dailyBrief, 'summary');
-                      }}
-                      disabled={paSending}
-                      className={`flex-1 px-3 py-1.5 text-xs rounded-lg ${
-                        isDark
-                          ? 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                          : 'bg-white text-gray-600 hover:bg-gray-100 border'
-                      } disabled:opacity-50`}
-                    >
-                      📊 Send Daily Brief
-                    </button>
-                  </div>
-                </>
-              )}
+              <p className={`text-[10px] mb-2 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                Opens Telegram with your message → tap send → bot reads & responds
+              </p>
+              <div className="flex gap-1 mb-2 flex-wrap">
+                {[
+                  { id: 'note', label: '📝 Note' },
+                  { id: 'task', label: '✅ Task' },
+                  { id: 'reminder', label: '⏰ Reminder' },
+                  { id: 'action', label: '🎯 Action' },
+                  { id: 'ticket', label: '🎫 Ticket' }
+                ].map(type => (
+                  <button
+                    key={type.id}
+                    onClick={() => setPAType(type.id)}
+                    className={`px-2 py-1 text-xs rounded-full transition-all ${
+                      paType === type.id
+                        ? 'bg-cyan-600 text-white'
+                        : isDark
+                        ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                  >
+                    {type.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={paMessage}
+                  onChange={(e) => setPAMessage(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && sendToPA(paMessage, paType)}
+                  placeholder="Type message for your PA..."
+                  className={`flex-1 px-3 py-2 rounded-lg text-sm ${
+                    isDark
+                      ? 'bg-gray-900 border-gray-700 text-white placeholder-gray-500'
+                      : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'
+                  } border focus:outline-none focus:ring-2 focus:ring-cyan-500`}
+                />
+                <button
+                  onClick={() => sendToPA(paMessage, paType)}
+                  disabled={!paMessage.trim()}
+                  className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                    paMessage.trim()
+                      ? 'bg-cyan-600 hover:bg-cyan-700 text-white'
+                      : isDark
+                      ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                      : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                  }`}
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={sendConversationToPA}
+                  className={`flex-1 px-3 py-1.5 text-xs rounded-lg ${
+                    isDark
+                      ? 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                      : 'bg-white text-gray-600 hover:bg-gray-100 border'
+                  }`}
+                >
+                  📤 Send Chat Summary
+                </button>
+                <button
+                  onClick={() => {
+                    const dailyBrief = `Today's Focus:\n${userGoals.map(g => `• ${g}`).join('\n') || 'No goals set'}`;
+                    sendToPA(dailyBrief, 'summary');
+                  }}
+                  className={`flex-1 px-3 py-1.5 text-xs rounded-lg ${
+                    isDark
+                      ? 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                      : 'bg-white text-gray-600 hover:bg-gray-100 border'
+                  }`}
+                >
+                  📊 Send Daily Brief
+                </button>
+              </div>
             </div>
           )}
 
