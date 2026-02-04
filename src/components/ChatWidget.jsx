@@ -44,6 +44,7 @@ import { useTheme } from '../context/ThemeContext';
 import { COMMANDER_AGENT, SPECIALIZED_AGENTS, AGENT_CATEGORIES, getAgentById } from '../data/agents';
 import aiService from '../services/aiService';
 import AISettings from './AISettings';
+import { API_URL } from '../config';
 
 function ChatWidget({ onNavigate }) {
   const { theme, toggleTheme } = useTheme();
@@ -164,7 +165,8 @@ function ChatWidget({ onNavigate }) {
   const [paMessage, setPAMessage] = useState('');
   const [paType, setPAType] = useState('note');
 
-  // Send to PA via Telegram URL (opens chat with bot)
+  // Send to PA - Opens Telegram with pre-filled message TO the bot
+  // Bot can then read and respond to the message
   const sendToPA = (message, type = 'note') => {
     if (!message?.trim()) return;
 
@@ -196,18 +198,17 @@ function ChatWidget({ onNavigate }) {
         formattedMsg = `📝 NOTE\n\n${message}\n\n⏰ ${timestamp}`;
     }
 
-    // Encode message for URL
-    const encodedMsg = encodeURIComponent(formattedMsg);
-
-    // Open Telegram chat with bot - user can paste/send
-    const telegramUrl = `tg://resolve?domain=LIV8AiBot&text=${encodedMsg}`;
-    window.open(telegramUrl, '_blank');
-
-    // Also copy to clipboard as backup
+    // Copy to clipboard
     navigator.clipboard.writeText(formattedMsg).catch(() => {});
 
-    // Show confirmation in chat
-    addMessage('commander', `📤 Opening Telegram to send to your PA:\n\n"${message.substring(0, 100)}${message.length > 100 ? '...' : ''}"`, 'liv8-commander');
+    // Open Telegram with pre-filled message TO the bot (https works in browsers)
+    // User just needs to tap send, then bot receives and can respond
+    const encodedMsg = encodeURIComponent(formattedMsg);
+    const telegramUrl = `https://t.me/LIV8AiBot?text=${encodedMsg}`;
+    window.open(telegramUrl, '_blank');
+
+    // Show confirmation
+    addMessage('commander', `📤 Opening Telegram - tap send to message your PA!\n\nMessage copied to clipboard as backup.`, 'liv8-commander');
 
     // Reset
     setPAMessage('');
@@ -1023,15 +1024,18 @@ function ChatWidget({ onNavigate }) {
           {showPAPanel && (
             <div className={`p-3 border-b ${isDark ? 'border-gray-800 bg-gradient-to-r from-cyan-900/30 to-purple-900/30' : 'border-gray-200 bg-gradient-to-r from-cyan-50 to-purple-50'}`}>
               <h4 className={`text-xs font-semibold mb-2 flex items-center gap-2 ${isDark ? 'text-cyan-400' : 'text-cyan-600'}`}>
-                <Send className="w-3 h-3" /> SEND TO PERSONAL ASSISTANT
+                <Send className="w-3 h-3" /> SEND TO PA (Opens Telegram)
               </h4>
+              <p className={`text-[10px] mb-2 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                Opens Telegram with your message → tap send → bot reads & responds
+              </p>
               <div className="flex gap-1 mb-2 flex-wrap">
                 {[
-                  { id: 'note', label: '📝 Note', color: 'gray' },
-                  { id: 'task', label: '✅ Task', color: 'green' },
-                  { id: 'reminder', label: '⏰ Reminder', color: 'yellow' },
-                  { id: 'action', label: '🎯 Action', color: 'purple' },
-                  { id: 'ticket', label: '🎫 Ticket', color: 'red' }
+                  { id: 'note', label: '📝 Note' },
+                  { id: 'task', label: '✅ Task' },
+                  { id: 'reminder', label: '⏰ Reminder' },
+                  { id: 'action', label: '🎯 Action' },
+                  { id: 'ticket', label: '🎫 Ticket' }
                 ].map(type => (
                   <button
                     key={type.id}

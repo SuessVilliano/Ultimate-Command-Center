@@ -728,11 +728,9 @@ function Tickets() {
     });
   };
 
-  // Send ticket to Personal Assistant via Telegram (opens chat with bot)
+  // Send ticket to Personal Assistant - opens Telegram with pre-filled message
   const sendToPA = (ticket, includeAnalysis = true) => {
     if (!ticket) return;
-
-    setSendingToPA(true);
 
     const analysis = aiAnalysis[ticket.id];
     const ticketUrl = freshdeskDomain ? `https://${freshdeskDomain}.freshdesk.com/a/tickets/${ticket.id}` : '';
@@ -742,7 +740,7 @@ function Tickets() {
       timeStyle: 'short'
     });
 
-    // Format ticket message for Telegram
+    // Format ticket message for Telegram (plain text, no HTML for t.me links)
     let message = `🎫 TICKET ALERT\n\n`;
     message += `${ticket.subject}\n\n`;
     message += `📊 Status: ${STATUS_MAP[ticket.status]?.label || 'Unknown'}\n`;
@@ -760,25 +758,23 @@ function Tickets() {
     }
 
     if (ticketUrl) {
-      message += `\n🔗 ${ticketUrl}\n`;
+      message += `\n🔗 ${ticketUrl}`;
     }
-    message += `\n⏰ ${timestamp}`;
+    message += `\n\n⏰ ${timestamp}`;
 
     // Copy to clipboard
     navigator.clipboard.writeText(message).catch(() => {});
 
-    // Open Telegram chat with bot
+    // Open Telegram with pre-filled message TO the bot
     const encodedMsg = encodeURIComponent(message);
-    const telegramUrl = `tg://resolve?domain=LIV8AiBot&text=${encodedMsg}`;
+    const telegramUrl = `https://t.me/LIV8AiBot?text=${encodedMsg}`;
     window.open(telegramUrl, '_blank');
 
-    // Mark as sent
+    // Mark as sent (visual feedback)
     setSentToPA(prev => ({ ...prev, [ticket.id]: true }));
     setTimeout(() => {
       setSentToPA(prev => ({ ...prev, [ticket.id]: false }));
     }, 3000);
-
-    setSendingToPA(false);
   };
 
   // Analyze all open tickets AND generate responses
