@@ -207,6 +207,7 @@ function Tickets() {
   const [searchQuery, setSearchQuery] = useState(''); // Search for tickets
   const [sendingToPA, setSendingToPA] = useState(false); // Sending to Personal Assistant
   const [sentToPA, setSentToPA] = useState({}); // Track which tickets were sent
+  const [quickLinksCollapsed, setQuickLinksCollapsed] = useState(false); // Collapsible quick links
 
   // Check AI server status and load persisted data
   const checkAiServer = async () => {
@@ -455,36 +456,55 @@ function Tickets() {
       // Get agent ID from integrations config
       const integrations = aiService.getIntegrations();
       const agentId = integrations?.freshdesk?.agentId || '155014160586';
+      const authHeader = 'Basic ' + btoa(apiKey + ':X');
+
+      // Helper function to fetch all pages for a status
+      const fetchAllPages = async (status) => {
+        let allResults = [];
+        let page = 1;
+        const maxPages = 5; // Safety limit
+
+        while (page <= maxPages) {
+          try {
+            const response = await fetch(
+              `https://${domain}.freshdesk.com/api/v2/search/tickets?query="agent_id:${agentId} AND status:${status}"&page=${page}`,
+              { headers: { 'Authorization': authHeader, 'Content-Type': 'application/json' } }
+            );
+
+            if (!response.ok) break;
+
+            const data = await response.json();
+            const results = data.results || [];
+            allResults = [...allResults, ...results];
+
+            // If less than 30 results, we've reached the end
+            if (results.length < 30) break;
+            page++;
+          } catch (e) {
+            console.error(`Error fetching page ${page} for status ${status}:`, e);
+            break;
+          }
+        }
+
+        return allResults;
+      };
 
       // Fetch tickets in parallel: Open, Pending, On Hold, Waiting on Customer, Resolved
-      const authHeader = 'Basic ' + btoa(apiKey + ':X');
-      const fetchStatus = (status) => fetch(
-        `https://${domain}.freshdesk.com/api/v2/search/tickets?query="agent_id:${agentId} AND status:${status}"`,
-        { headers: { 'Authorization': authHeader, 'Content-Type': 'application/json' } }
-      );
-
-      const [openResponse, pendingResponse, waitingCustomerResponse, waitingThirdPartyResponse, resolvedResponse] = await Promise.all([
-        fetchStatus(2), // Open
-        fetchStatus(3), // Pending
-        fetchStatus(6), // Waiting on Customer
-        fetchStatus(7), // Waiting on Third Party (On Hold)
-        fetchStatus(4)  // Resolved (for knowledge base)
+      const [openTickets, pendingTickets, waitingCustomerTickets, waitingThirdPartyTickets, resolvedTicketsList] = await Promise.all([
+        fetchAllPages(2), // Open
+        fetchAllPages(3), // Pending
+        fetchAllPages(6), // Waiting on Customer
+        fetchAllPages(7), // Waiting on Third Party (On Hold)
+        fetchAllPages(4)  // Resolved (for knowledge base)
       ]);
 
-      // Parse all responses
-      const openData = openResponse.ok ? await openResponse.json() : { results: [] };
-      const pendingData = pendingResponse.ok ? await pendingResponse.json() : { results: [] };
-      const waitingCustomerData = waitingCustomerResponse.ok ? await waitingCustomerResponse.json() : { results: [] };
-      const waitingThirdPartyData = waitingThirdPartyResponse.ok ? await waitingThirdPartyResponse.json() : { results: [] };
-      const resolvedData = resolvedResponse.ok ? await resolvedResponse.json() : { results: [] };
-
-      // Combine all tickets (search endpoint returns { results: [...] })
+      // Combine all tickets
       const allTickets = [
-        ...(openData.results || []),
-        ...(pendingData.results || []),
-        ...(waitingCustomerData.results || []),
-        ...(waitingThirdPartyData.results || []),
-        ...(resolvedData.results || [])
+        ...openTickets,
+        ...pendingTickets,
+        ...waitingCustomerTickets,
+        ...waitingThirdPartyTickets,
+        ...resolvedTicketsList
       ];
 
       // Remove duplicates by ticket ID
@@ -708,55 +728,57 @@ function Tickets() {
     });
   };
 
-  // Send ticket to Personal Assistant via Telegram
-  const sendToPA = async (ticket, includeAnalysis = true) => {
+  // Send ticket to Personal Assistant via Telegram (opens chat with bot)
+  const sendToPA = (ticket, includeAnalysis = true) => {
     if (!ticket) return;
 
     setSendingToPA(true);
-    try {
-      const analysis = aiAnalysis[ticket.id];
-      const ticketUrl = freshdeskDomain ? `https://${freshdeskDomain}.freshdesk.com/a/tickets/${ticket.id}` : null;
 
-      const payload = {
-        type: 'ticket',
-        data: {
-          subject: ticket.subject,
-          status: STATUS_MAP[ticket.status]?.label || 'Unknown',
-          priority: PRIORITY_MAP[ticket.priority]?.label || 'Normal',
-          requester: ticket.requester?.name || 'Unknown',
-          company: ticket.requester?.company?.name,
-          description: ticket.description_text || ticket.description || 'No description',
-          summary: analysis?.SUMMARY,
-          aiAnalysis: includeAnalysis && analysis ?
-            `${analysis.ESCALATION_TYPE}: ${analysis.QUICK_ASSESSMENT}` : null,
-          suggestedAction: analysis?.SUGGESTED_ACTION,
-          url: ticketUrl
-        }
-      };
+    const analysis = aiAnalysis[ticket.id];
+    const ticketUrl = freshdeskDomain ? `https://${freshdeskDomain}.freshdesk.com/a/tickets/${ticket.id}` : '';
+    const timestamp = new Date().toLocaleString('en-US', {
+      timeZone: 'America/New_York',
+      dateStyle: 'short',
+      timeStyle: 'short'
+    });
 
-      const response = await fetch(`${AI_SERVER_URL}/api/telegram/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        setSentToPA(prev => ({ ...prev, [ticket.id]: true }));
-        // Reset the sent status after 3 seconds
-        setTimeout(() => {
-          setSentToPA(prev => ({ ...prev, [ticket.id]: false }));
-        }, 3000);
-      } else {
-        throw new Error(result.error || 'Failed to send');
-      }
-    } catch (err) {
-      console.error('Failed to send to PA:', err);
-      setError(`Failed to send to PA: ${err.message}`);
-    } finally {
-      setSendingToPA(false);
+    // Format ticket message for Telegram
+    let message = `🎫 TICKET ALERT\n\n`;
+    message += `${ticket.subject}\n\n`;
+    message += `📊 Status: ${STATUS_MAP[ticket.status]?.label || 'Unknown'}\n`;
+    message += `⚡ Priority: ${PRIORITY_MAP[ticket.priority]?.label || 'Normal'}\n`;
+    message += `👤 Requester: ${ticket.requester?.name || 'Unknown'}\n`;
+    if (ticket.requester?.company?.name) {
+      message += `🏢 Company: ${ticket.requester.company.name}\n`;
     }
+
+    if (includeAnalysis && analysis) {
+      message += `\n🤖 AI Analysis:\n`;
+      message += `Type: ${analysis.ESCALATION_TYPE || 'SUPPORT'}\n`;
+      if (analysis.SUMMARY) message += `Summary: ${analysis.SUMMARY}\n`;
+      if (analysis.SUGGESTED_ACTION) message += `💡 Suggested: ${analysis.SUGGESTED_ACTION}\n`;
+    }
+
+    if (ticketUrl) {
+      message += `\n🔗 ${ticketUrl}\n`;
+    }
+    message += `\n⏰ ${timestamp}`;
+
+    // Copy to clipboard
+    navigator.clipboard.writeText(message).catch(() => {});
+
+    // Open Telegram chat with bot
+    const encodedMsg = encodeURIComponent(message);
+    const telegramUrl = `tg://resolve?domain=LIV8AiBot&text=${encodedMsg}`;
+    window.open(telegramUrl, '_blank');
+
+    // Mark as sent
+    setSentToPA(prev => ({ ...prev, [ticket.id]: true }));
+    setTimeout(() => {
+      setSentToPA(prev => ({ ...prev, [ticket.id]: false }));
+    }, 3000);
+
+    setSendingToPA(false);
   };
 
   // Analyze all open tickets AND generate responses
@@ -1082,37 +1104,50 @@ function Tickets() {
         </div>
       </div>
 
-      {/* GHL Quick Links */}
-      <div className={`p-4 rounded-xl border ${
+      {/* GHL Quick Links - Collapsible */}
+      <div className={`rounded-xl border transition-all ${
         isDark ? 'border-purple-900/30 bg-gradient-to-r from-purple-900/10 to-cyan-900/10' : 'border-gray-200 bg-gradient-to-r from-purple-50 to-cyan-50'
       }`}>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-            Quick Links
-          </h3>
-          <span className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-            Work Profile: jamaur.johnson@gohighlevel.com
-          </span>
-        </div>
-        <div className="grid grid-cols-6 gap-2">
-          {GHL_QUICK_LINKS.map((link) => (
-            <button
-              key={link.id}
-              onClick={() => openInWorkProfile(link.url)}
-              className={`p-3 rounded-lg text-center transition-all hover:scale-105 ${
-                isDark
-                  ? 'bg-white/5 hover:bg-white/10 border border-purple-500/20 hover:border-purple-500/40'
-                  : 'bg-white hover:bg-gray-50 border border-gray-200 hover:border-purple-300'
-              }`}
-              title={link.description}
-            >
-              <span className="text-2xl block mb-1">{link.icon}</span>
-              <span className={`text-xs font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                {link.label}
-              </span>
-            </button>
-          ))}
-        </div>
+        <button
+          onClick={() => setQuickLinksCollapsed(!quickLinksCollapsed)}
+          className={`w-full p-3 flex items-center justify-between ${quickLinksCollapsed ? '' : 'border-b border-purple-900/20'}`}
+        >
+          <div className="flex items-center gap-3">
+            <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              Quick Links
+            </h3>
+            <span className={`text-xs px-2 py-0.5 rounded-full ${isDark ? 'bg-purple-600/30 text-purple-300' : 'bg-purple-100 text-purple-600'}`}>
+              {GHL_QUICK_LINKS.length}
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+              jamaur.johnson@gohighlevel.com
+            </span>
+            <ChevronRight className={`w-5 h-5 transition-transform ${quickLinksCollapsed ? '' : 'rotate-90'} ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />
+          </div>
+        </button>
+        {!quickLinksCollapsed && (
+          <div className="p-3 grid grid-cols-7 gap-2">
+            {GHL_QUICK_LINKS.map((link) => (
+              <button
+                key={link.id}
+                onClick={() => openInWorkProfile(link.url)}
+                className={`p-2 rounded-lg text-center transition-all hover:scale-105 ${
+                  isDark
+                    ? 'bg-white/5 hover:bg-white/10 border border-purple-500/20 hover:border-purple-500/40'
+                    : 'bg-white hover:bg-gray-50 border border-gray-200 hover:border-purple-300'
+                }`}
+                title={link.description}
+              >
+                <span className="text-xl block mb-0.5">{link.icon}</span>
+                <span className={`text-[10px] font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                  {link.label}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Settings Modal - Updated v2.0 with tabs */}
