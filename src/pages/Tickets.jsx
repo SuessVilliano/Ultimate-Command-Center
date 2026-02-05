@@ -1258,7 +1258,7 @@ function Tickets() {
                     <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
                       AI Provider
                     </label>
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                       <button
                         onClick={() => switchAiProvider('gemini')}
                         className={`p-4 rounded-lg border text-left transition-colors ${
@@ -1270,7 +1270,7 @@ function Tickets() {
                         <div className="text-xl mb-1">🌟</div>
                         <div className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Gemini</div>
                         <p className={`text-xs mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                          1.5-flash - Default
+                          2.0 Flash
                         </p>
                       </button>
                       <button
@@ -1299,6 +1299,20 @@ function Tickets() {
                         <div className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>GPT</div>
                         <p className={`text-xs mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
                           gpt-4o
+                        </p>
+                      </button>
+                      <button
+                        onClick={() => switchAiProvider('kimi')}
+                        className={`p-4 rounded-lg border text-left transition-colors ${
+                          aiProvider === 'kimi'
+                            ? 'border-orange-500 bg-orange-500/20'
+                            : isDark ? 'border-purple-900/30 hover:bg-white/5' : 'border-gray-200 hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className="text-xl mb-1">🚀</div>
+                        <div className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Kimi</div>
+                        <p className={`text-xs mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                          Nemotron 70B
                         </p>
                       </button>
                     </div>
@@ -1395,6 +1409,36 @@ function Tickets() {
                           className={`px-3 py-2 rounded-lg text-sm ${
                             openaiKey ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-gray-600 text-gray-400'
                           }`}
+                        >
+                          Save
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Kimi / NVIDIA Key */}
+                    <div className={`p-3 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                          🚀 Kimi (NVIDIA)
+                        </span>
+                        <a href="https://build.nvidia.com/explore/discover" target="_blank" rel="noopener noreferrer"
+                          className="text-xs text-orange-400 hover:text-orange-300">Get Key</a>
+                      </div>
+                      <div className="flex gap-2">
+                        <input
+                          type="password"
+                          id="kimi-key-input"
+                          placeholder="Enter NVIDIA API key (nvapi-...)..."
+                          className={`flex-1 p-2 rounded-lg border text-sm ${
+                            isDark ? 'bg-white/5 border-purple-900/30 text-white' : 'bg-white border-gray-200 text-gray-900'
+                          }`}
+                        />
+                        <button
+                          onClick={() => {
+                            const key = document.getElementById('kimi-key-input').value;
+                            if (key) updateApiKey('kimi', key);
+                          }}
+                          className="px-3 py-2 rounded-lg bg-orange-600 hover:bg-orange-700 text-white text-sm"
                         >
                           Save
                         </button>

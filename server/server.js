@@ -32,6 +32,8 @@ import * as dailyReport from './lib/daily-report.js';
 import * as emailService from './lib/email-service.js';
 import * as orchestrator from './lib/agent-orchestrator.js';
 import { registerNiftyRoutes } from './routes/nifty-routes.js';
+import { registerScraperRoutes } from './routes/scraper-routes.js';
+import * as scrapers from './lib/scrapers.js';
 import { taskmagicMCP } from './lib/taskmagic-mcp.js';
 import { unifiedTasks } from './lib/unified-tasks.js';
 import * as githubPortfolio from './lib/github-portfolio.js';
@@ -94,9 +96,17 @@ const aiStatus = ai.initAIProviders({
   anthropicKey: process.env.ANTHROPIC_API_KEY,
   openaiKey: process.env.OPENAI_API_KEY,
   geminiKey: process.env.GEMINI_API_KEY,
+  kimiKey: process.env.KIMI_API_KEY || process.env.NVIDIA_API_KEY,
   provider: process.env.AI_PROVIDER || 'gemini'
 });
 console.log('AI Providers:', aiStatus);
+
+// Initialize Scrapers (RapidAPI + Apify)
+const scraperStatus = scrapers.initScrapers({
+  rapidApiKey: process.env.RAPIDAPI_KEY,
+  apifyApiKey: process.env.APIFY_API_KEY
+});
+console.log('Scrapers:', scraperStatus);
 
 // Initialize LangChain
 const langchainStatus = rag.initLangChain({
@@ -3693,6 +3703,9 @@ app.post('/api/telegram/command-center', async (req, res) => {
 
 // Register Nifty routes
 registerNiftyRoutes(app);
+
+// Register Scraper routes (RapidAPI + Apify)
+registerScraperRoutes(app);
 
 app.listen(PORT, () => {
   const providerInfo = ai.getCurrentProvider();
