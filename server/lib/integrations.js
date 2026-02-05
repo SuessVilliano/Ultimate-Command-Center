@@ -58,9 +58,19 @@ export const taskade = {
     return taskadeRequest(`/projects/${projectId}`);
   },
 
+  // Get project blocks
+  async getProjectBlocks(projectId) {
+    return taskadeRequest(`/projects/${projectId}/blocks`);
+  },
+
   // Get tasks in project
   async getTasks(projectId) {
     return taskadeRequest(`/projects/${projectId}/tasks`);
+  },
+
+  // Get single task
+  async getTask(projectId, taskId) {
+    return taskadeRequest(`/projects/${projectId}/tasks/${taskId}`);
   },
 
   // Create task
@@ -96,15 +106,43 @@ export const taskade = {
     });
   },
 
-  // Add note to task
-  async addNote(projectId, taskId, note) {
-    return taskadeRequest(`/projects/${projectId}/tasks/${taskId}/note`, {
-      method: 'PUT',
+  // Move task within project
+  async moveTask(projectId, taskId, targetTaskId, placement = 'afterend') {
+    return taskadeRequest(`/projects/${projectId}/tasks/${taskId}/move`, {
+      method: 'POST',
       body: JSON.stringify({
-        value: note,
-        type: 'text/markdown'
+        taskId: targetTaskId,
+        placement
       })
     });
+  },
+
+  // Get task assignees
+  async getTaskAssignees(projectId, taskId) {
+    return taskadeRequest(`/projects/${projectId}/tasks/${taskId}/assignees`);
+  },
+
+  // Set task assignees
+  async setTaskAssignees(projectId, taskId, handles) {
+    return taskadeRequest(`/projects/${projectId}/tasks/${taskId}/assignees`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        handles: Array.isArray(handles) ? handles : [handles]
+      })
+    });
+  },
+
+  // Remove task assignee
+  async removeTaskAssignee(projectId, taskId, handle) {
+    return taskadeRequest(`/projects/${projectId}/tasks/${taskId}/assignees`, {
+      method: 'DELETE',
+      body: JSON.stringify({ handle })
+    });
+  },
+
+  // Get task date
+  async getTaskDate(projectId, taskId) {
+    return taskadeRequest(`/projects/${projectId}/tasks/${taskId}/date`);
   },
 
   // Set task due date
@@ -118,7 +156,25 @@ export const taskade = {
     });
   },
 
-  // Create project
+  // Delete task date
+  async deleteTaskDate(projectId, taskId) {
+    return taskadeRequest(`/projects/${projectId}/tasks/${taskId}/date`, {
+      method: 'DELETE'
+    });
+  },
+
+  // Add note to task
+  async addNote(projectId, taskId, note) {
+    return taskadeRequest(`/projects/${projectId}/tasks/${taskId}/note`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        value: note,
+        type: 'text/markdown'
+      })
+    });
+  },
+
+  // Create project in folder
   async createProject(folderId, content) {
     return taskadeRequest('/projects', {
       method: 'POST',
@@ -128,6 +184,30 @@ export const taskade = {
         contentType: 'text/markdown'
       })
     });
+  },
+
+  // Create project in workspace (home folder)
+  async createProjectInWorkspace(workspaceId, content) {
+    return taskadeRequest(`/workspaces/${workspaceId}/projects`, {
+      method: 'POST',
+      body: JSON.stringify({
+        content,
+        contentType: 'text/markdown'
+      })
+    });
+  },
+
+  // Copy project to folder
+  async copyProject(projectId, folderId) {
+    return taskadeRequest(`/projects/${projectId}/copy`, {
+      method: 'POST',
+      body: JSON.stringify({ folderId })
+    });
+  },
+
+  // Check if configured
+  isConfigured() {
+    return !!process.env.TASKADE_API_KEY;
   }
 };
 

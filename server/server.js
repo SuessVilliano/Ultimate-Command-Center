@@ -1439,6 +1439,163 @@ app.put('/api/taskade/projects/:projectId/tasks/:taskId', async (req, res) => {
   }
 });
 
+// Get Taskade project blocks
+app.get('/api/taskade/projects/:projectId/blocks', async (req, res) => {
+  try {
+    const result = await integrations.taskade.getProjectBlocks(req.params.projectId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get single Taskade task
+app.get('/api/taskade/projects/:projectId/tasks/:taskId', async (req, res) => {
+  try {
+    const result = await integrations.taskade.getTask(req.params.projectId, req.params.taskId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Move Taskade task
+app.post('/api/taskade/projects/:projectId/tasks/:taskId/move', async (req, res) => {
+  try {
+    const { targetTaskId, placement } = req.body;
+    const result = await integrations.taskade.moveTask(req.params.projectId, req.params.taskId, targetTaskId, placement);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get task assignees
+app.get('/api/taskade/projects/:projectId/tasks/:taskId/assignees', async (req, res) => {
+  try {
+    const result = await integrations.taskade.getTaskAssignees(req.params.projectId, req.params.taskId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Set task assignees
+app.put('/api/taskade/projects/:projectId/tasks/:taskId/assignees', async (req, res) => {
+  try {
+    const { handles } = req.body;
+    const result = await integrations.taskade.setTaskAssignees(req.params.projectId, req.params.taskId, handles);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Remove task assignee
+app.delete('/api/taskade/projects/:projectId/tasks/:taskId/assignees', async (req, res) => {
+  try {
+    const { handle } = req.body;
+    const result = await integrations.taskade.removeTaskAssignee(req.params.projectId, req.params.taskId, handle);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get task date
+app.get('/api/taskade/projects/:projectId/tasks/:taskId/date', async (req, res) => {
+  try {
+    const result = await integrations.taskade.getTaskDate(req.params.projectId, req.params.taskId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Set task due date
+app.put('/api/taskade/projects/:projectId/tasks/:taskId/date', async (req, res) => {
+  try {
+    const { startDate, endDate } = req.body;
+    const result = await integrations.taskade.setDueDate(req.params.projectId, req.params.taskId, startDate, endDate);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete task date
+app.delete('/api/taskade/projects/:projectId/tasks/:taskId/date', async (req, res) => {
+  try {
+    const result = await integrations.taskade.deleteTaskDate(req.params.projectId, req.params.taskId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add note to task
+app.put('/api/taskade/projects/:projectId/tasks/:taskId/note', async (req, res) => {
+  try {
+    const { note } = req.body;
+    const result = await integrations.taskade.addNote(req.params.projectId, req.params.taskId, note);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create project in folder
+app.post('/api/taskade/folders/:folderId/projects', async (req, res) => {
+  try {
+    const { content } = req.body;
+    const result = await integrations.taskade.createProject(req.params.folderId, content);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create project in workspace
+app.post('/api/taskade/workspaces/:workspaceId/projects', async (req, res) => {
+  try {
+    const { content } = req.body;
+    const result = await integrations.taskade.createProjectInWorkspace(req.params.workspaceId, content);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Copy project
+app.post('/api/taskade/projects/:projectId/copy', async (req, res) => {
+  try {
+    const { folderId } = req.body;
+    const result = await integrations.taskade.copyProject(req.params.projectId, folderId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Taskade status check
+app.get('/api/taskade/status', async (req, res) => {
+  try {
+    const configured = integrations.taskade.isConfigured();
+    if (!configured) {
+      return res.json({ configured: false, connected: false, message: 'TASKADE_API_KEY not set' });
+    }
+    // Test connection by fetching workspaces
+    const workspaces = await integrations.taskade.getWorkspaces();
+    res.json({
+      configured: true,
+      connected: true,
+      workspaceCount: workspaces.items?.length || 0
+    });
+  } catch (error) {
+    res.json({ configured: true, connected: false, error: error.message });
+  }
+});
+
 // ============================================
 // TASKMAGIC INTEGRATION ENDPOINTS
 // ============================================
