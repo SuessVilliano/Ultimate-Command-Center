@@ -355,19 +355,7 @@ export async function generateAndSendDailyReport(recipientEmail = null) {
     const { filepath, filename, reportData } = await dailyReport.generatePDFReport();
     console.log(`PDF report generated: ${filename}`);
 
-    // Check for urgent tickets and send alerts
-    if (reportData.urgentTickets && reportData.urgentTickets.length > 0) {
-      try {
-        if (emailService.isEmailEnabled()) {
-          await emailService.sendUrgentAlert(reportData.urgentTickets, recipientEmail);
-          console.log(`Urgent alert sent for ${reportData.urgentTickets.length} tickets`);
-        }
-      } catch (e) {
-        console.log('Could not send urgent alert:', e.message);
-      }
-    }
-
-    // Send the daily report email
+    // Send the daily report email (includes urgent tickets in the full report)
     let emailSent = false;
     let emailRecipient = null;
     if (emailService.isEmailEnabled()) {

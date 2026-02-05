@@ -12,10 +12,11 @@ import { getSetting, setSetting, logAgentInteraction } from './database.js';
 let anthropicClient = null;
 let openaiClient = null;
 let geminiClient = null;
+let kimiApiKey = null; // NVIDIA NIM API key for Kimi
 
 // Current configuration
 let currentProvider = 'gemini';
-let storedKeys = { anthropic: null, openai: null, gemini: null };
+let storedKeys = { anthropic: null, openai: null, gemini: null, kimi: null };
 let currentModel = null;
 
 /**
@@ -26,11 +27,13 @@ export function initAIProviders(config = {}) {
   let persistedAnthropicKey = null;
   let persistedOpenaiKey = null;
   let persistedGeminiKey = null;
+  let persistedKimiKey = null;
 
   try {
     persistedAnthropicKey = getSetting('anthropic_api_key', null);
     persistedOpenaiKey = getSetting('openai_api_key', null);
     persistedGeminiKey = getSetting('gemini_api_key', null);
+    persistedKimiKey = getSetting('kimi_api_key', null);
   } catch (e) {
     // Database might not be ready yet
   }
@@ -39,8 +42,9 @@ export function initAIProviders(config = {}) {
   const anthropicKey = config.anthropicKey || persistedAnthropicKey || process.env.ANTHROPIC_API_KEY;
   const openaiKey = config.openaiKey || persistedOpenaiKey || process.env.OPENAI_API_KEY;
   const geminiKey = config.geminiKey || persistedGeminiKey || process.env.GEMINI_API_KEY;
+  const kimiKey = config.kimiKey || persistedKimiKey || process.env.KIMI_API_KEY || process.env.NVIDIA_API_KEY;
 
-  storedKeys = { anthropic: anthropicKey || null, openai: openaiKey || null, gemini: geminiKey || null };
+  storedKeys = { anthropic: anthropicKey || null, openai: openaiKey || null, gemini: geminiKey || null, kimi: kimiKey || null };
 
   if (anthropicKey) {
     anthropicClient = new Anthropic({ apiKey: anthropicKey });
@@ -57,18 +61,24 @@ export function initAIProviders(config = {}) {
     console.log('Google (Gemini) client initialized');
   }
 
+  if (kimiKey) {
+    kimiApiKey = kimiKey;
+    console.log('NVIDIA (Kimi) API key configured');
+  }
+
   // Set default provider
   let savedProvider = null;
   try { savedProvider = getSetting('ai_provider', null); } catch (e) {}
   currentProvider = savedProvider || config.provider || process.env.AI_PROVIDER || 'gemini';
   currentModel = getDefaultModel(currentProvider);
 
-  console.log(`AI Provider initialized: ${currentProvider} (Claude: ${!!anthropicClient}, OpenAI: ${!!openaiClient}, Gemini: ${!!geminiClient})`);
+  console.log(`AI Provider initialized: ${currentProvider} (Claude: ${!!anthropicClient}, OpenAI: ${!!openaiClient}, Gemini: ${!!geminiClient}, Kimi: ${!!kimiApiKey})`);
 
   return {
     claude: !!anthropicClient,
     openai: !!openaiClient,
     gemini: !!geminiClient,
+    kimi: !!kimiApiKey,
     currentProvider,
     currentModel
   };
@@ -82,6 +92,7 @@ function getDefaultModel(provider) {
     return process.env.GPT_MODEL || 'gpt-4o';
   }
   if (provider === 'gemini') return process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+  if (provider === 'kimi') return process.env.KIMI_MODEL || 'nvidia/llama-3.1-nemotron-70b-instruct';
   return process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
 }
 
@@ -97,6 +108,9 @@ export function switchProvider(provider, model = null) {
   }
   if (provider === 'gemini' && !geminiClient) {
     throw new Error('Gemini API key not configured');
+  }
+  if (provider === 'kimi' && !kimiApiKey) {
+    throw new Error('Kimi/NVIDIA API key not configured');
   }
 
   currentProvider = provider;
@@ -123,12 +137,14 @@ export function getCurrentProvider() {
     available: {
       claude: !!anthropicClient,
       openai: !!openaiClient,
-      gemini: !!geminiClient
+      gemini: !!geminiClient,
+      kimi: !!kimiApiKey
     },
     hasKeys: {
       claude: !!storedKeys.anthropic,
       openai: !!storedKeys.openai,
-      gemini: !!storedKeys.gemini
+      gemini: !!storedKeys.gemini,
+      kimi: !!storedKeys.kimi
     },
     models: {
       gemini: [
@@ -145,6 +161,11 @@ export function getCurrentProvider() {
         { id: 'gpt-4o', name: 'GPT-4o', default: true },
         { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
         { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' }
+      ],
+      kimi: [
+        { id: 'nvidia/llama-3.1-nemotron-70b-instruct', name: 'Nemotron 70B', default: true },
+        { id: 'nvidia/llama-3.1-nemotron-51b-instruct', name: 'Nemotron 51B' },
+        { id: 'mistralai/mixtral-8x22b-instruct-v0.1', name: 'Mixtral 8x22B' }
       ]
     }
   };
@@ -193,6 +214,19 @@ export function updateApiKey(provider, apiKey) {
     return true;
   }
 
+  if (provider === 'kimi' || provider === 'nvidia') {
+    kimiApiKey = apiKey;
+    storedKeys.kimi = apiKey;
+    // Persist to database
+    try {
+      setSetting('kimi_api_key', apiKey);
+    } catch (e) {
+      console.log('Could not persist Kimi key to database');
+    }
+    console.log('Kimi/NVIDIA API key updated');
+    return true;
+  }
+
   return false;
 }
 
@@ -216,6 +250,9 @@ export async function chat(messages, options = {}) {
       text = response.choices[0]?.message?.content || '';
     } else if (provider === 'gemini') {
       response = await chatWithGemini(messages, { model, maxTokens, temperature, systemPrompt });
+      text = response.text || '';
+    } else if (provider === 'kimi') {
+      response = await chatWithKimi(messages, { model, maxTokens, temperature, systemPrompt });
       text = response.text || '';
     } else {
       response = await chatWithClaude(messages, { model, maxTokens, temperature, systemPrompt });
@@ -358,6 +395,67 @@ async function chatWithGemini(messages, options) {
     };
   } catch (error) {
     console.error('Gemini chat error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Chat with Kimi/NVIDIA NIM API
+ * Uses OpenAI-compatible API endpoint
+ */
+async function chatWithKimi(messages, options) {
+  if (!kimiApiKey) {
+    throw new Error('Kimi/NVIDIA API key not initialized. Add KIMI_API_KEY or NVIDIA_API_KEY to .env');
+  }
+
+  const formattedMessages = [];
+
+  // Add system prompt if provided
+  if (options.systemPrompt) {
+    formattedMessages.push({
+      role: 'system',
+      content: options.systemPrompt
+    });
+  }
+
+  // Add conversation messages
+  for (const m of messages) {
+    formattedMessages.push({
+      role: m.role,
+      content: m.content
+    });
+  }
+
+  try {
+    // NVIDIA NIM API uses OpenAI-compatible endpoint
+    const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${kimiApiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: options.model || 'nvidia/llama-3.1-nemotron-70b-instruct',
+        messages: formattedMessages,
+        max_tokens: options.maxTokens || 1024,
+        temperature: options.temperature || 0.7,
+        stream: false
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`NVIDIA API error: ${response.status} - ${error}`);
+    }
+
+    const data = await response.json();
+
+    return {
+      text: data.choices?.[0]?.message?.content || '',
+      usage: data.usage || null
+    };
+  } catch (error) {
+    console.error('Kimi/NVIDIA chat error:', error);
     throw error;
   }
 }
