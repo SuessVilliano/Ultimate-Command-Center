@@ -571,10 +571,11 @@ function Tickets() {
   };
 
   // AI Analysis using local Claude server
+  // Returns the analysis object so callers can use it directly (avoids stale state in batch loops)
   const analyzeTicket = async (ticket) => {
     if (aiServerStatus !== 'online') {
       setError('AI Server not available. Start the server: cd server && npm start');
-      return;
+      return null;
     }
 
     setAnalyzingTicket(ticket.id);
@@ -598,18 +599,24 @@ function Tickets() {
       }
 
       const analysis = await response.json();
-      const newAnalysis = { ...aiAnalysis, [ticket.id]: analysis };
-      setAiAnalysis(newAnalysis);
 
-      // Update cache
-      localStorage.setItem(STORAGE_KEYS.TICKETS_CACHE, JSON.stringify({
-        tickets,
-        analysis: newAnalysis,
-        timestamp: Date.now()
-      }));
+      // Use functional update to avoid stale state in batch loops
+      setAiAnalysis(prev => {
+        const updated = { ...prev, [ticket.id]: analysis };
+        // Update cache with latest state
+        localStorage.setItem(STORAGE_KEYS.TICKETS_CACHE, JSON.stringify({
+          tickets,
+          analysis: updated,
+          timestamp: Date.now()
+        }));
+        return updated;
+      });
+
+      return analysis;
     } catch (err) {
       console.error('AI analysis failed:', err);
       setError(err.message);
+      return null;
     } finally {
       setAnalyzingTicket(null);
     }
@@ -800,6 +807,9 @@ function Tickets() {
     setAnalysisProgress({ current: 0, total: openTickets.length * 2, phase: 'Analyzing tickets...' });
 
     try {
+      // Track analyses locally to avoid stale React state in the loop
+      const localAnalysisMap = { ...aiAnalysis };
+
       // Phase 1: Analyze all tickets
       for (let i = 0; i < openTickets.length; i++) {
         const ticket = openTickets[i];
@@ -809,13 +819,17 @@ function Tickets() {
           phase: `Analyzing: ${ticket.subject.substring(0, 30)}...`
         });
 
-        if (!aiAnalysis[ticket.id]) {
-          await analyzeTicket(ticket);
+        if (!localAnalysisMap[ticket.id]) {
+          const analysis = await analyzeTicket(ticket);
+          if (analysis) {
+            localAnalysisMap[ticket.id] = analysis;
+          }
         }
         await new Promise(r => setTimeout(r, 300)); // Rate limiting
       }
 
       // Phase 2: Generate responses for all analyzed tickets
+      // Pass the analysis directly so we don't depend on stale state
       setAnalysisProgress({
         current: openTickets.length,
         total: openTickets.length * 2,
@@ -830,9 +844,9 @@ function Tickets() {
           phase: `Response for: ${ticket.subject.substring(0, 30)}...`
         });
 
-        // Generate response if not already cached
+        // Generate response if not already cached, passing analysis directly
         if (!cachedResponses[ticket.id]) {
-          await generateResponseForTicket(ticket);
+          await generateResponseForTicket(ticket, localAnalysisMap[ticket.id]);
         }
         await new Promise(r => setTimeout(r, 300)); // Rate limiting
       }
@@ -853,11 +867,12 @@ function Tickets() {
   };
 
   // Generate response for a specific ticket (silent, for batch processing)
-  const generateResponseForTicket = async (ticket) => {
+  // Accepts optional analysisOverride to avoid reading stale React state during batch loops
+  const generateResponseForTicket = async (ticket, analysisOverride) => {
     if (aiServerStatus !== 'online') return;
 
     try {
-      const analysis = aiAnalysis[ticket.id];
+      const analysis = analysisOverride || aiAnalysis[ticket.id];
       const agentName = currentUser?.agentName || currentUser?.name || 'Support Team';
 
       const ticketLower = (ticket.subject + ' ' + (ticket.description_text || ticket.description || '')).toLowerCase();
