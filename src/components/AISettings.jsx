@@ -7,7 +7,8 @@ const BACKEND_URL = API_URL;
 const PROVIDERS = [
   { id: 'gemini', name: 'Gemini', icon: '🌟', color: 'blue' },
   { id: 'claude', name: 'Claude', icon: '🤖', color: 'purple' },
-  { id: 'openai', name: 'OpenAI', icon: '🧠', color: 'green' }
+  { id: 'openai', name: 'OpenAI', icon: '🧠', color: 'green' },
+  { id: 'kimi', name: 'NVIDIA/Kimi', icon: '🔷', color: 'emerald' }
 ];
 
 export default function AISettings({ isDark = true, onClose, onProviderChange }) {
@@ -16,21 +17,23 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
   const [providerStatus, setProviderStatus] = useState({
     provider: 'gemini',
     model: 'gemini-2.0-flash',
-    available: { claude: false, openai: false, gemini: false },
-    hasKeys: { claude: false, openai: false, gemini: false },
+    available: { claude: false, openai: false, gemini: false, kimi: false },
+    hasKeys: { claude: false, openai: false, gemini: false, kimi: false },
     models: {}
   });
 
   const [apiKeys, setApiKeys] = useState({
     gemini: '',
     claude: '',
-    openai: ''
+    openai: '',
+    kimi: ''
   });
 
   const [showKeys, setShowKeys] = useState({
     gemini: false,
     claude: false,
-    openai: false
+    openai: false,
+    kimi: false
   });
 
   const [selectedModel, setSelectedModel] = useState('');
@@ -139,6 +142,7 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
       case 'gemini': return 'https://aistudio.google.com/app/apikey';
       case 'claude': return 'https://console.anthropic.com/settings/keys';
       case 'openai': return 'https://platform.openai.com/api-keys';
+      case 'kimi': return 'https://build.nvidia.com/';
       default: return '#';
     }
   };
@@ -178,7 +182,7 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
         <label className={`text-xs font-medium ${isDark ? 'text-gray-400' : 'text-gray-500'} mb-2 block`}>
           Active Provider
         </label>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {PROVIDERS.map(provider => (
             <button
               key={provider.id}

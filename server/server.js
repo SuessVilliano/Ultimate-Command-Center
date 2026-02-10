@@ -195,7 +195,9 @@ app.get('/health', (req, res) => {
 
 // Get current AI provider info
 app.get('/api/ai/provider', (req, res) => {
-  res.json(ai.getCurrentProvider());
+  const info = ai.getCurrentProvider();
+  info.costEffective = ai.getCostEffectiveProvider();
+  res.json(info);
 });
 
 // Switch AI provider

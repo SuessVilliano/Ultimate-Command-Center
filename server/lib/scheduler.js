@@ -51,7 +51,7 @@ export function initScheduler(config = {}) {
 }
 
 /**
- * Fetch tickets from Freshdesk API
+ * Fetch tickets from Freshdesk API (with pagination)
  */
 async function fetchFreshdeskTickets(statuses = [2, 3, 6, 7]) {
   if (!freshdeskConfig.domain || !freshdeskConfig.apiKey) {
@@ -63,35 +63,51 @@ async function fetchFreshdeskTickets(statuses = [2, 3, 6, 7]) {
   const auth = Buffer.from(`${freshdeskConfig.apiKey}:X`).toString('base64');
 
   for (const status of statuses) {
-    try {
-      let query = `"status:${status}"`;
-      if (freshdeskConfig.agentId) {
-        query = `"agent_id:${freshdeskConfig.agentId} AND status:${status}"`;
-      }
+    let page = 1;
+    const maxPages = 5; // Safety limit
 
-      const url = `${baseUrl}/search/tickets?query=${encodeURIComponent(query)}`;
-
-      const response = await fetch(url, {
-        headers: {
-          'Authorization': `Basic ${auth}`,
-          'Content-Type': 'application/json'
+    while (page <= maxPages) {
+      try {
+        let query = `"status:${status}"`;
+        if (freshdeskConfig.agentId) {
+          query = `"agent_id:${freshdeskConfig.agentId} AND status:${status}"`;
         }
-      });
 
-      if (response.ok) {
+        const url = `${baseUrl}/search/tickets?query=${encodeURIComponent(query)}&page=${page}`;
+
+        const response = await fetch(url, {
+          headers: {
+            'Authorization': `Basic ${auth}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!response.ok) {
+          console.error(`Failed to fetch tickets with status ${status} page ${page}:`, response.status);
+          break;
+        }
+
         const data = await response.json();
-        if (data.results) {
-          allTickets.push(...data.results);
-        }
-      } else {
-        console.error(`Failed to fetch tickets with status ${status}:`, response.status);
+        const results = data.results || [];
+        allTickets.push(...results);
+
+        // If less than 30 results, we've reached the last page
+        if (results.length < 30) break;
+        page++;
+      } catch (error) {
+        console.error(`Error fetching status ${status} page ${page}:`, error.message);
+        break;
       }
-    } catch (error) {
-      console.error(`Error fetching status ${status}:`, error.message);
     }
   }
 
-  return allTickets;
+  // Remove duplicates by ticket ID
+  const seen = new Set();
+  return allTickets.filter(t => {
+    if (seen.has(t.id)) return false;
+    seen.add(t.id);
+    return true;
+  });
 }
 
 /**
@@ -148,9 +164,9 @@ export async function runScheduledAnalysis(scheduleName = 'manual') {
   };
 
   try {
-    // 1. Fetch tickets from Freshdesk
+    // 1. Fetch tickets from Freshdesk (include resolved for knowledge base)
     console.log('\n1. Fetching tickets from Freshdesk...');
-    const tickets = await fetchFreshdeskTickets([2, 3, 6, 7]); // Open, Pending, Waiting on Customer, Waiting on 3rd Party
+    const tickets = await fetchFreshdeskTickets([2, 3, 6, 7, 4]); // Open, Pending, Waiting on Customer, Waiting on 3rd Party, Resolved
     stats.ticketsFetched = tickets.length;
     console.log(`   Fetched ${tickets.length} tickets`);
 
@@ -199,9 +215,13 @@ export async function runScheduledAnalysis(scheduleName = 'manual') {
           }
         }
 
-        // Analyze with AI
-        console.log(`   Analyzing ticket #${ticket.id}: ${ticket.subject.substring(0, 50)}...`);
-        const analysis = await ai.analyzeTicket(ticket);
+        // Analyze with AI (use cheapest available provider for bulk operations)
+        const costProvider = ai.getCostEffectiveProvider();
+        console.log(`   Analyzing ticket #${ticket.id}: ${ticket.subject.substring(0, 50)}... [${costProvider.provider}]`);
+        const analysis = await ai.analyzeTicket(ticket, {
+          provider: costProvider.provider,
+          model: costProvider.model
+        });
 
         // Store analysis
         try {

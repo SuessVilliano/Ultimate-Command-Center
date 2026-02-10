@@ -214,8 +214,8 @@ function Tickets() {
     try {
       const response = await fetch(`${AI_SERVER_URL}/health`);
       const data = await response.json();
-      // Check if any AI provider is available (gemini, claude, or openai)
-      const hasAnyProvider = data.ai?.available?.gemini || data.ai?.available?.claude || data.ai?.available?.openai;
+      // Check if any AI provider is available (gemini, claude, openai, or kimi)
+      const hasAnyProvider = data.ai?.available?.gemini || data.ai?.available?.claude || data.ai?.available?.openai || data.ai?.available?.kimi;
       if (data.status === 'ok' && hasAnyProvider) {
         setAiServerStatus('online');
         // Set AI provider info
@@ -362,6 +362,14 @@ function Tickets() {
     }
   };
 
+  // Auto-dismiss errors after 15 seconds
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => setError(null), 15000);
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
+
   // Load settings on mount
   useEffect(() => {
     // Check AI server status
@@ -489,13 +497,14 @@ function Tickets() {
         return allResults;
       };
 
-      // Fetch tickets in parallel: Open, Pending, On Hold, Waiting on Customer, Resolved
-      const [openTickets, pendingTickets, waitingCustomerTickets, waitingThirdPartyTickets, resolvedTicketsList] = await Promise.all([
+      // Fetch tickets in parallel: all active statuses + resolved for knowledge base
+      const [openTickets, pendingTickets, waitingCustomerTickets, waitingThirdPartyTickets, resolvedTicketsList, closedTicketsList] = await Promise.all([
         fetchAllPages(2), // Open
         fetchAllPages(3), // Pending
         fetchAllPages(6), // Waiting on Customer
         fetchAllPages(7), // Waiting on Third Party (On Hold)
-        fetchAllPages(4)  // Resolved (for knowledge base)
+        fetchAllPages(4), // Resolved (for knowledge base)
+        fetchAllPages(5)  // Closed (recently closed, for knowledge base)
       ]);
 
       // Combine all tickets
@@ -504,7 +513,8 @@ function Tickets() {
         ...pendingTickets,
         ...waitingCustomerTickets,
         ...waitingThirdPartyTickets,
-        ...resolvedTicketsList
+        ...resolvedTicketsList,
+        ...closedTicketsList
       ];
 
       // Remove duplicates by ticket ID
@@ -551,8 +561,13 @@ function Tickets() {
         }).catch(() => {}); // Silent fail - not critical
       }
 
-      // Load any existing analyses from backend
-      loadPersistedAnalyses();
+      // Load any existing analyses from backend, then auto-analyze new tickets
+      await loadPersistedAnalyses();
+
+      // Proactive: auto-analyze unanalyzed active tickets in the background
+      if (aiServerStatus === 'online') {
+        autoAnalyzeNewTickets(uniqueTickets);
+      }
 
     } catch (err) {
       setError(err.message);
@@ -562,11 +577,53 @@ function Tickets() {
     }
   };
 
+  // Proactive auto-analysis: silently analyze unanalyzed tickets in background
+  const [autoAnalyzing, setAutoAnalyzing] = useState(false);
+  const [autoAnalysisCount, setAutoAnalysisCount] = useState({ done: 0, total: 0 });
+
+  const autoAnalyzeNewTickets = async (ticketList) => {
+    // Only analyze active tickets (not resolved)
+    const activeTickets = ticketList.filter(t => [2, 3, 6, 7].includes(t.status));
+
+    // Load persisted analyses to check what's already analyzed
+    let existingAnalyses = {};
+    try {
+      const response = await fetch(`${AI_SERVER_URL}/api/analyses`);
+      if (response.ok) {
+        const data = await response.json();
+        existingAnalyses = data.analyses || {};
+      }
+    } catch (e) {}
+
+    // Find tickets that haven't been analyzed yet
+    const unanalyzed = activeTickets.filter(t => !existingAnalyses[t.id] && !aiAnalysis[t.id]);
+    if (unanalyzed.length === 0) return;
+
+    console.log(`Proactive AI: Auto-analyzing ${unanalyzed.length} new tickets...`);
+    setAutoAnalyzing(true);
+    setAutoAnalysisCount({ done: 0, total: unanalyzed.length });
+
+    for (let i = 0; i < unanalyzed.length; i++) {
+      try {
+        await analyzeTicket(unanalyzed[i]);
+        setAutoAnalysisCount({ done: i + 1, total: unanalyzed.length });
+      } catch (e) {
+        console.log(`Auto-analysis failed for ticket ${unanalyzed[i].id}, continuing...`);
+      }
+      // Rate limiting between requests
+      await new Promise(r => setTimeout(r, 500));
+    }
+
+    setAutoAnalyzing(false);
+    console.log(`Proactive AI: Finished auto-analyzing ${unanalyzed.length} tickets`);
+  };
+
   // AI Analysis using local Claude server
+  // Returns the analysis object so callers can use it directly (avoids stale state in batch loops)
   const analyzeTicket = async (ticket) => {
     if (aiServerStatus !== 'online') {
       setError('AI Server not available. Start the server: cd server && npm start');
-      return;
+      return null;
     }
 
     setAnalyzingTicket(ticket.id);
@@ -590,18 +647,24 @@ function Tickets() {
       }
 
       const analysis = await response.json();
-      const newAnalysis = { ...aiAnalysis, [ticket.id]: analysis };
-      setAiAnalysis(newAnalysis);
 
-      // Update cache
-      localStorage.setItem(STORAGE_KEYS.TICKETS_CACHE, JSON.stringify({
-        tickets,
-        analysis: newAnalysis,
-        timestamp: Date.now()
-      }));
+      // Use functional update to avoid stale state in batch loops
+      setAiAnalysis(prev => {
+        const updated = { ...prev, [ticket.id]: analysis };
+        // Update cache with latest state
+        localStorage.setItem(STORAGE_KEYS.TICKETS_CACHE, JSON.stringify({
+          tickets,
+          analysis: updated,
+          timestamp: Date.now()
+        }));
+        return updated;
+      });
+
+      return analysis;
     } catch (err) {
       console.error('AI analysis failed:', err);
       setError(err.message);
+      return null;
     } finally {
       setAnalyzingTicket(null);
     }
@@ -792,6 +855,9 @@ function Tickets() {
     setAnalysisProgress({ current: 0, total: openTickets.length * 2, phase: 'Analyzing tickets...' });
 
     try {
+      // Track analyses locally to avoid stale React state in the loop
+      const localAnalysisMap = { ...aiAnalysis };
+
       // Phase 1: Analyze all tickets
       for (let i = 0; i < openTickets.length; i++) {
         const ticket = openTickets[i];
@@ -801,13 +867,17 @@ function Tickets() {
           phase: `Analyzing: ${ticket.subject.substring(0, 30)}...`
         });
 
-        if (!aiAnalysis[ticket.id]) {
-          await analyzeTicket(ticket);
+        if (!localAnalysisMap[ticket.id]) {
+          const analysis = await analyzeTicket(ticket);
+          if (analysis) {
+            localAnalysisMap[ticket.id] = analysis;
+          }
         }
         await new Promise(r => setTimeout(r, 300)); // Rate limiting
       }
 
       // Phase 2: Generate responses for all analyzed tickets
+      // Pass the analysis directly so we don't depend on stale state
       setAnalysisProgress({
         current: openTickets.length,
         total: openTickets.length * 2,
@@ -822,9 +892,9 @@ function Tickets() {
           phase: `Response for: ${ticket.subject.substring(0, 30)}...`
         });
 
-        // Generate response if not already cached
+        // Generate response if not already cached, passing analysis directly
         if (!cachedResponses[ticket.id]) {
-          await generateResponseForTicket(ticket);
+          await generateResponseForTicket(ticket, localAnalysisMap[ticket.id]);
         }
         await new Promise(r => setTimeout(r, 300)); // Rate limiting
       }
@@ -845,11 +915,12 @@ function Tickets() {
   };
 
   // Generate response for a specific ticket (silent, for batch processing)
-  const generateResponseForTicket = async (ticket) => {
+  // Accepts optional analysisOverride to avoid reading stale React state during batch loops
+  const generateResponseForTicket = async (ticket, analysisOverride) => {
     if (aiServerStatus !== 'online') return;
 
     try {
-      const analysis = aiAnalysis[ticket.id];
+      const analysis = analysisOverride || aiAnalysis[ticket.id];
       const agentName = currentUser?.agentName || currentUser?.name || 'Support Team';
 
       const ticketLower = (ticket.subject + ' ' + (ticket.description_text || ticket.description || '')).toLowerCase();
@@ -1703,10 +1774,36 @@ function Tickets() {
         })}
       </div>
 
+      {/* Auto-analysis indicator */}
+      {autoAnalyzing && (
+        <div className="p-3 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 flex items-center gap-3">
+          <RefreshCw className="w-4 h-4 animate-spin flex-shrink-0" />
+          <span className="text-sm">
+            Proactive AI: Auto-analyzing tickets... {autoAnalysisCount.done}/{autoAnalysisCount.total}
+          </span>
+          <div className="flex-1 h-1.5 bg-cyan-500/20 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-cyan-500 rounded-full transition-all duration-300"
+              style={{ width: `${autoAnalysisCount.total ? (autoAnalysisCount.done / autoAnalysisCount.total) * 100 : 0}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Error display */}
       {error && (
-        <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400">
-          {error}
+        <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 flex items-start justify-between gap-3">
+          <div className="flex items-start gap-2 flex-1 min-w-0">
+            <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+            <span className="break-words">{error}</span>
+          </div>
+          <button
+            onClick={() => setError(null)}
+            className="flex-shrink-0 p-1 hover:bg-red-500/20 rounded transition-colors"
+            title="Dismiss"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 
