@@ -231,7 +231,94 @@ export function updateApiKey(provider, apiKey) {
 }
 
 /**
+ * Parse a provider error into a user-friendly message and error type
+ */
+function parseProviderError(provider, error) {
+  const msg = error.message || String(error);
+
+  // Authentication errors (401)
+  if (msg.includes('401') || msg.includes('authentication_error') || msg.includes('invalid x-api-key') || msg.includes('Unauthorized') || msg.includes('Invalid API')) {
+    const providerNames = { claude: 'Anthropic (Claude)', openai: 'OpenAI', gemini: 'Google Gemini', kimi: 'NVIDIA (Kimi)' };
+    return {
+      type: 'auth',
+      userMessage: `${providerNames[provider] || provider} API key is invalid or expired. Please update your API key in Settings.`,
+      retryable: false
+    };
+  }
+
+  // Rate limit errors (429)
+  if (msg.includes('429') || msg.includes('Too Many Requests') || msg.includes('quota') || msg.includes('rate') || msg.includes('Quota exceeded')) {
+    return {
+      type: 'rate_limit',
+      userMessage: `${provider} rate limit or quota exceeded. Trying another provider...`,
+      retryable: true
+    };
+  }
+
+  // Network / timeout errors
+  if (msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT') || msg.includes('fetch failed') || msg.includes('network')) {
+    return {
+      type: 'network',
+      userMessage: `Could not reach ${provider} API. Check your network connection.`,
+      retryable: true
+    };
+  }
+
+  // Server errors (500+)
+  if (msg.includes('500') || msg.includes('502') || msg.includes('503') || msg.includes('overloaded')) {
+    return {
+      type: 'server',
+      userMessage: `${provider} service is temporarily unavailable. Trying another provider...`,
+      retryable: true
+    };
+  }
+
+  // Default
+  return {
+    type: 'unknown',
+    userMessage: `${provider} error: ${msg.substring(0, 120)}`,
+    retryable: true
+  };
+}
+
+/**
+ * Get fallback provider order (excluding the failed one)
+ */
+function getFallbackProviders(failedProvider) {
+  const allProviders = ['claude', 'openai', 'gemini', 'kimi'];
+  const availableMap = { claude: !!anthropicClient, openai: !!openaiClient, gemini: !!geminiClient, kimi: !!kimiApiKey };
+  return allProviders.filter(p => p !== failedProvider && availableMap[p]);
+}
+
+/**
+ * Call a specific provider's chat function
+ */
+async function callProvider(provider, messages, options) {
+  if (provider === 'openai') {
+    const response = await chatWithOpenAI(messages, { ...options, model: options.model || getDefaultModel('openai') });
+    return { text: response.choices[0]?.message?.content || '', usage: response.usage || null };
+  } else if (provider === 'gemini') {
+    const response = await chatWithGemini(messages, { ...options, model: options.model || getDefaultModel('gemini') });
+    return { text: response.text || '', usage: response.usage || null };
+  } else if (provider === 'kimi') {
+    const response = await chatWithKimi(messages, { ...options, model: options.model || getDefaultModel('kimi') });
+    return { text: response.text || '', usage: response.usage || null };
+  } else {
+    const response = await chatWithClaude(messages, { ...options, model: options.model || getDefaultModel('claude') });
+    return { text: response.content[0]?.text || '', usage: response.usage || null };
+  }
+}
+
+/**
+ * Sleep helper for retry backoff
+ */
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
  * Main chat completion function - works with all providers
+ * Includes automatic fallback to other available providers on failure
  */
 export async function chat(messages, options = {}) {
   const provider = options.provider || currentProvider;
@@ -241,45 +328,73 @@ export async function chat(messages, options = {}) {
   const systemPrompt = options.systemPrompt || null;
   const agentId = options.agentId || null;
 
-  let response;
-  let text;
+  const chatOptions = { model, maxTokens, temperature, systemPrompt };
+  const errors = [];
 
+  // Try primary provider first (with one retry for rate limits)
   try {
-    if (provider === 'openai') {
-      response = await chatWithOpenAI(messages, { model, maxTokens, temperature, systemPrompt });
-      text = response.choices[0]?.message?.content || '';
-    } else if (provider === 'gemini') {
-      response = await chatWithGemini(messages, { model, maxTokens, temperature, systemPrompt });
-      text = response.text || '';
-    } else if (provider === 'kimi') {
-      response = await chatWithKimi(messages, { model, maxTokens, temperature, systemPrompt });
-      text = response.text || '';
-    } else {
-      response = await chatWithClaude(messages, { model, maxTokens, temperature, systemPrompt });
-      text = response.content[0]?.text || '';
-    }
+    const result = await callProvider(provider, messages, chatOptions);
 
-    // Log interaction if agent specified
     if (agentId) {
-      try {
-        logAgentInteraction(agentId, 'chat', { messages, options }, { text, model, provider }, '', true);
-      } catch (e) {}
+      try { logAgentInteraction(agentId, 'chat', { messages, options }, { text: result.text, model, provider }, '', true); } catch (e) {}
     }
 
-    return {
-      text,
-      provider,
-      model,
-      usage: response.usage || null
-    };
+    return { text: result.text, provider, model, usage: result.usage };
   } catch (error) {
-    // Log failed interaction
-    if (agentId) {
+    const parsed = parseProviderError(provider, error);
+    console.warn(`Primary provider ${provider} failed (${parsed.type}): ${parsed.userMessage}`);
+    errors.push({ provider, error: parsed });
+
+    // For rate limits, retry once after a short delay
+    if (parsed.type === 'rate_limit') {
       try {
-        logAgentInteraction(agentId, 'chat', { messages, options }, { error: error.message }, '', false);
-      } catch (e) {}
+        console.log(`Retrying ${provider} after rate limit (2s delay)...`);
+        await sleep(2000);
+        const result = await callProvider(provider, messages, chatOptions);
+
+        if (agentId) {
+          try { logAgentInteraction(agentId, 'chat', { messages, options }, { text: result.text, model, provider }, '', true); } catch (e) {}
+        }
+
+        return { text: result.text, provider, model, usage: result.usage };
+      } catch (retryError) {
+        console.warn(`Retry for ${provider} also failed, trying fallback providers...`);
+      }
     }
-    throw error;
+
+    // If error is not retryable (bad key), or retry failed, try fallback providers
+    if (parsed.retryable || parsed.type === 'auth') {
+      const fallbacks = getFallbackProviders(provider);
+      for (const fallbackProvider of fallbacks) {
+        try {
+          console.log(`Trying fallback provider: ${fallbackProvider}`);
+          const fallbackModel = getDefaultModel(fallbackProvider);
+          const result = await callProvider(fallbackProvider, messages, { ...chatOptions, model: fallbackModel });
+
+          if (agentId) {
+            try { logAgentInteraction(agentId, 'chat', { messages, options }, { text: result.text, model: fallbackModel, provider: fallbackProvider }, '', true); } catch (e) {}
+          }
+
+          return { text: result.text, provider: fallbackProvider, model: fallbackModel, usage: result.usage, fallbackFrom: provider };
+        } catch (fallbackError) {
+          const fallbackParsed = parseProviderError(fallbackProvider, fallbackError);
+          console.warn(`Fallback provider ${fallbackProvider} also failed: ${fallbackParsed.userMessage}`);
+          errors.push({ provider: fallbackProvider, error: fallbackParsed });
+        }
+      }
+    }
+
+    // All providers failed - throw a user-friendly error
+    if (agentId) {
+      try { logAgentInteraction(agentId, 'chat', { messages, options }, { error: errors[0].error.userMessage }, '', false); } catch (e) {}
+    }
+
+    // Build a helpful combined error message
+    const primaryError = errors[0].error;
+    if (errors.length === 1) {
+      throw new Error(primaryError.userMessage);
+    }
+    throw new Error(`All AI providers failed. ${primaryError.userMessage} ${errors.length - 1} fallback provider(s) also failed.`);
   }
 }
 

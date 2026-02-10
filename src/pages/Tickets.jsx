@@ -214,8 +214,8 @@ function Tickets() {
     try {
       const response = await fetch(`${AI_SERVER_URL}/health`);
       const data = await response.json();
-      // Check if any AI provider is available (gemini, claude, or openai)
-      const hasAnyProvider = data.ai?.available?.gemini || data.ai?.available?.claude || data.ai?.available?.openai;
+      // Check if any AI provider is available (gemini, claude, openai, or kimi)
+      const hasAnyProvider = data.ai?.available?.gemini || data.ai?.available?.claude || data.ai?.available?.openai || data.ai?.available?.kimi;
       if (data.status === 'ok' && hasAnyProvider) {
         setAiServerStatus('online');
         // Set AI provider info
@@ -361,6 +361,14 @@ function Tickets() {
       setLoading(false);
     }
   };
+
+  // Auto-dismiss errors after 15 seconds
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => setError(null), 15000);
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
 
   // Load settings on mount
   useEffect(() => {
@@ -1705,8 +1713,18 @@ function Tickets() {
 
       {/* Error display */}
       {error && (
-        <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400">
-          {error}
+        <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 flex items-start justify-between gap-3">
+          <div className="flex items-start gap-2 flex-1 min-w-0">
+            <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+            <span className="break-words">{error}</span>
+          </div>
+          <button
+            onClick={() => setError(null)}
+            className="flex-shrink-0 p-1 hover:bg-red-500/20 rounded transition-colors"
+            title="Dismiss"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 
