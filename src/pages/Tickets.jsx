@@ -497,13 +497,14 @@ function Tickets() {
         return allResults;
       };
 
-      // Fetch tickets in parallel: Open, Pending, On Hold, Waiting on Customer, Resolved
-      const [openTickets, pendingTickets, waitingCustomerTickets, waitingThirdPartyTickets, resolvedTicketsList] = await Promise.all([
+      // Fetch tickets in parallel: all active statuses + resolved for knowledge base
+      const [openTickets, pendingTickets, waitingCustomerTickets, waitingThirdPartyTickets, resolvedTicketsList, closedTicketsList] = await Promise.all([
         fetchAllPages(2), // Open
         fetchAllPages(3), // Pending
         fetchAllPages(6), // Waiting on Customer
         fetchAllPages(7), // Waiting on Third Party (On Hold)
-        fetchAllPages(4)  // Resolved (for knowledge base)
+        fetchAllPages(4), // Resolved (for knowledge base)
+        fetchAllPages(5)  // Closed (recently closed, for knowledge base)
       ]);
 
       // Combine all tickets
@@ -512,7 +513,8 @@ function Tickets() {
         ...pendingTickets,
         ...waitingCustomerTickets,
         ...waitingThirdPartyTickets,
-        ...resolvedTicketsList
+        ...resolvedTicketsList,
+        ...closedTicketsList
       ];
 
       // Remove duplicates by ticket ID
@@ -559,8 +561,13 @@ function Tickets() {
         }).catch(() => {}); // Silent fail - not critical
       }
 
-      // Load any existing analyses from backend
-      loadPersistedAnalyses();
+      // Load any existing analyses from backend, then auto-analyze new tickets
+      await loadPersistedAnalyses();
+
+      // Proactive: auto-analyze unanalyzed active tickets in the background
+      if (aiServerStatus === 'online') {
+        autoAnalyzeNewTickets(uniqueTickets);
+      }
 
     } catch (err) {
       setError(err.message);
@@ -568,6 +575,47 @@ function Tickets() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Proactive auto-analysis: silently analyze unanalyzed tickets in background
+  const [autoAnalyzing, setAutoAnalyzing] = useState(false);
+  const [autoAnalysisCount, setAutoAnalysisCount] = useState({ done: 0, total: 0 });
+
+  const autoAnalyzeNewTickets = async (ticketList) => {
+    // Only analyze active tickets (not resolved)
+    const activeTickets = ticketList.filter(t => [2, 3, 6, 7].includes(t.status));
+
+    // Load persisted analyses to check what's already analyzed
+    let existingAnalyses = {};
+    try {
+      const response = await fetch(`${AI_SERVER_URL}/api/analyses`);
+      if (response.ok) {
+        const data = await response.json();
+        existingAnalyses = data.analyses || {};
+      }
+    } catch (e) {}
+
+    // Find tickets that haven't been analyzed yet
+    const unanalyzed = activeTickets.filter(t => !existingAnalyses[t.id] && !aiAnalysis[t.id]);
+    if (unanalyzed.length === 0) return;
+
+    console.log(`Proactive AI: Auto-analyzing ${unanalyzed.length} new tickets...`);
+    setAutoAnalyzing(true);
+    setAutoAnalysisCount({ done: 0, total: unanalyzed.length });
+
+    for (let i = 0; i < unanalyzed.length; i++) {
+      try {
+        await analyzeTicket(unanalyzed[i]);
+        setAutoAnalysisCount({ done: i + 1, total: unanalyzed.length });
+      } catch (e) {
+        console.log(`Auto-analysis failed for ticket ${unanalyzed[i].id}, continuing...`);
+      }
+      // Rate limiting between requests
+      await new Promise(r => setTimeout(r, 500));
+    }
+
+    setAutoAnalyzing(false);
+    console.log(`Proactive AI: Finished auto-analyzing ${unanalyzed.length} tickets`);
   };
 
   // AI Analysis using local Claude server
@@ -1725,6 +1773,22 @@ function Tickets() {
           );
         })}
       </div>
+
+      {/* Auto-analysis indicator */}
+      {autoAnalyzing && (
+        <div className="p-3 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 flex items-center gap-3">
+          <RefreshCw className="w-4 h-4 animate-spin flex-shrink-0" />
+          <span className="text-sm">
+            Proactive AI: Auto-analyzing tickets... {autoAnalysisCount.done}/{autoAnalysisCount.total}
+          </span>
+          <div className="flex-1 h-1.5 bg-cyan-500/20 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-cyan-500 rounded-full transition-all duration-300"
+              style={{ width: `${autoAnalysisCount.total ? (autoAnalysisCount.done / autoAnalysisCount.total) * 100 : 0}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Error display */}
       {error && (

@@ -97,6 +97,18 @@ function getDefaultModel(provider) {
 }
 
 /**
+ * Get the cheapest available provider for bulk/routine operations.
+ * Priority: Gemini (free/cheap) > Kimi (free tier) > OpenAI > Claude (most expensive)
+ */
+export function getCostEffectiveProvider() {
+  if (geminiClient) return { provider: 'gemini', model: getDefaultModel('gemini') };
+  if (kimiApiKey) return { provider: 'kimi', model: getDefaultModel('kimi') };
+  if (openaiClient) return { provider: 'openai', model: getDefaultModel('openai') };
+  if (anthropicClient) return { provider: 'claude', model: getDefaultModel('claude') };
+  return { provider: currentProvider, model: currentModel };
+}
+
+/**
  * Switch AI provider
  */
 export function switchProvider(provider, model = null) {
@@ -936,6 +948,7 @@ export default {
   initAIProviders,
   switchProvider,
   getCurrentProvider,
+  getCostEffectiveProvider,
   updateApiKey,
   chat,
   analyzeTicket,
