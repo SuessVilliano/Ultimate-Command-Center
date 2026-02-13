@@ -12,6 +12,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
+import pdfParse from 'pdf-parse';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -149,10 +150,19 @@ export async function parseDocument(filePath, originalName) {
         break;
 
       case '.pdf':
-        // For PDF, we'll need to use an external service or library
-        // For now, store a placeholder and the file path
-        content = `[PDF Document: ${fileName}]\n\nNote: PDF content extraction requires additional processing. The file has been stored for reference.`;
-        fileType = 'pdf';
+        try {
+          const pdfBuffer = fs.readFileSync(filePath);
+          const pdfData = await pdfParse(pdfBuffer);
+          content = pdfData.text || '';
+          if (content.length > 100000) {
+            content = content.substring(0, 100000) + '\n\n[Content truncated - full document stored]';
+          }
+          fileType = 'pdf';
+        } catch (pdfErr) {
+          console.error('PDF parsing error:', pdfErr.message);
+          content = `[PDF Document: ${fileName}]\n\nNote: Could not extract text from this PDF. Error: ${pdfErr.message}`;
+          fileType = 'pdf';
+        }
         break;
 
       case '.doc':
