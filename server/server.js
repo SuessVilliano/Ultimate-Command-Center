@@ -387,6 +387,450 @@ app.delete('/api/sop/:sopId', (req, res) => {
 });
 
 // ============================================
+// CASEBOOK ENDPOINTS (human-approved gold responses)
+// ============================================
+
+// Save an approved response to casebook
+app.post('/api/casebook', (req, res) => {
+  try {
+    const { ticket_id, subject, issue_type, customer_message, approved_response, sop_references, keywords, resolution_notes } = req.body;
+    if (!approved_response || !subject) {
+      return res.status(400).json({ error: 'subject and approved_response are required' });
+    }
+
+    const id = db.addToCasebook({
+      ticket_id, subject, issue_type, customer_message,
+      approved_response, sop_references, keywords, resolution_notes
+    });
+
+    // Index in RAG for vector search
+    try {
+      const rag = await import('./lib/langchain-rag.js');
+      rag.indexCasebookEntry({ id, subject, customer_message, approved_response, sop_references, issue_type });
+    } catch (e) {}
+
+    res.json({ success: true, id });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// List casebook entries
+app.get('/api/casebook', (req, res) => {
+  try {
+    const entries = db.getCasebookEntries({
+      issue_type: req.query.type || null,
+      limit: parseInt(req.query.limit) || 100
+    });
+    res.json({ entries });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Search casebook
+app.post('/api/casebook/search', (req, res) => {
+  try {
+    const { query, limit } = req.body;
+    if (!query) return res.status(400).json({ error: 'query is required' });
+    const terms = query.split(/\s+/).filter(w => w.length > 2);
+    const results = db.searchCasebook(terms, limit || 5);
+    res.json({ results });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete casebook entry
+app.delete('/api/casebook/:id', (req, res) => {
+  try {
+    db.deleteCasebookEntry(parseInt(req.params.id));
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Casebook stats
+app.get('/api/casebook/stats', (req, res) => {
+  try {
+    const stats = db.getCasebookStats();
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// DRAFT QUEUE ENDPOINTS
+// ============================================
+
+// List drafts (with optional status filter)
+app.get('/api/drafts', (req, res) => {
+  try {
+    const drafts = db.getAllDrafts({
+      status: req.query.status || null,
+      ticket_id: req.query.ticket_id ? parseInt(req.query.ticket_id) : null,
+      limit: parseInt(req.query.limit) || 50
+    });
+    res.json({ drafts });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get single draft
+app.get('/api/drafts/:id', (req, res) => {
+  try {
+    const dbInstance = db.getDb();
+    const draft = dbInstance.prepare('SELECT * FROM drafts WHERE id = ?').get(parseInt(req.params.id));
+    if (!draft) return res.status(404).json({ error: 'Draft not found' });
+
+    // Parse JSON fields
+    try { draft.qa_result = JSON.parse(draft.qa_result); } catch (e) {}
+    try { draft.sop_citations = JSON.parse(draft.sop_citations); } catch (e) {}
+    try { draft.pipeline_metadata = JSON.parse(draft.pipeline_metadata); } catch (e) {}
+
+    res.json(draft);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create a draft manually
+app.post('/api/drafts', (req, res) => {
+  try {
+    const { ticket_id, ticket_subject, draft_text, status } = req.body;
+    if (!ticket_id || !draft_text) {
+      return res.status(400).json({ error: 'ticket_id and draft_text are required' });
+    }
+    const id = db.saveDraft({ ticket_id, ticket_subject, draft_text, status: status || 'PENDING_REVIEW' });
+    res.json({ success: true, id });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update draft status (approve/reject/needs-edit)
+app.patch('/api/drafts/:id/status', async (req, res) => {
+  try {
+    const { status, reviewed_by } = req.body;
+    const validStatuses = ['PENDING_REVIEW', 'APPROVED', 'REJECTED', 'NEEDS_EDIT', 'ESCALATION_RECOMMENDED'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
+    }
+
+    db.updateDraftStatus(parseInt(req.params.id), status, reviewed_by || 'human');
+
+    // Emit event
+    try {
+      const eventBus = await import('./lib/cross-platform-event-bus.js');
+      const eventType = status === 'APPROVED' ? eventBus.EVENTS.DRAFT_APPROVED
+        : status === 'REJECTED' ? eventBus.EVENTS.DRAFT_REJECTED
+        : eventBus.EVENTS.DRAFT_CREATED;
+      eventBus.emit(eventType, { draftId: parseInt(req.params.id), status });
+    } catch (e) {}
+
+    res.json({ success: true, status });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Draft stats
+app.get('/api/drafts/stats', (req, res) => {
+  try {
+    const stats = db.getDraftStats();
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete a draft
+app.delete('/api/drafts/:id', (req, res) => {
+  try {
+    db.deleteDraft(parseInt(req.params.id));
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// TICKET PIPELINE + QA ENDPOINTS
+// ============================================
+
+// Process a single ticket through the full pipeline
+app.post('/api/pipeline/process', async (req, res) => {
+  try {
+    const { ticketId, agentName, skipQA } = req.body;
+    if (!ticketId) return res.status(400).json({ error: 'ticketId is required' });
+
+    const pipeline = await import('./lib/ticket-pipeline.js');
+    const result = await pipeline.processTicket(ticketId, { agentName, skipQA });
+    res.json(result);
+  } catch (error) {
+    console.error('Pipeline error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Process multiple tickets in batch
+app.post('/api/pipeline/batch', async (req, res) => {
+  try {
+    const { ticketIds, agentName, skipQA } = req.body;
+    if (!ticketIds || !Array.isArray(ticketIds)) {
+      return res.status(400).json({ error: 'ticketIds array is required' });
+    }
+
+    const pipeline = await import('./lib/ticket-pipeline.js');
+    const results = await pipeline.processMultipleTickets(ticketIds, { agentName, skipQA });
+    res.json({
+      processed: results.length,
+      successful: results.filter(r => r.draftId).length,
+      failed: results.filter(r => r.error).length,
+      results
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get pipeline status
+app.get('/api/pipeline/status', (req, res) => {
+  try {
+    const draftStats = db.getDraftStats();
+    const casebookStats = db.getCasebookStats();
+    res.json({
+      drafts: draftStats,
+      casebook: casebookStats,
+      pipeline: { active: true, mode: 'draft-only', safety: 'read-only' }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// QA evaluate a draft
+app.post('/api/qa/evaluate', async (req, res) => {
+  try {
+    const { draftId, draftText, ticketSubject, ticketDescription } = req.body;
+
+    let draft, ticket;
+    if (draftId) {
+      const dbInstance = db.getDb();
+      draft = dbInstance.prepare('SELECT * FROM drafts WHERE id = ?').get(draftId);
+      if (!draft) return res.status(404).json({ error: 'Draft not found' });
+      ticket = db.getTicketWithAnalysis(draft.ticket_id) || { subject: draft.ticket_subject, description: '' };
+    } else {
+      if (!draftText) return res.status(400).json({ error: 'draftId or draftText is required' });
+      draft = { draft_text: draftText };
+      ticket = { subject: ticketSubject || '', description: ticketDescription || '' };
+    }
+
+    const qa = await import('./lib/qa-evaluator.js');
+    const result = await qa.evaluateDraft(draft, ticket);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// GOD MODE BRIEF + VOICE INTENT ENDPOINTS
+// ============================================
+
+// God Mode Brief - unified briefing across all systems
+app.get('/api/briefing/god-mode', async (req, res) => {
+  try {
+    // Gather data from all systems in parallel
+    const [draftStats, casebookStats, recentDrafts] = await Promise.all([
+      Promise.resolve(db.getDraftStats()),
+      Promise.resolve(db.getCasebookStats()),
+      Promise.resolve(db.getDraftsByStatus('PENDING_REVIEW', 10))
+    ]);
+
+    // Get ticket queue from DB
+    const openTickets = db.getTicketsByStatus([2, 3, 6, 7]);
+    const urgentTickets = openTickets.filter(t => t.priority >= 3);
+
+    // Get proactive state if available
+    let proactiveState = { detectedIssues: [], suggestions: [] };
+    try {
+      const proactive = await import('./lib/proactive-ai-engine.js');
+      proactiveState = proactive.getProactiveState();
+    } catch (e) {}
+
+    // Get standard briefing if available
+    let standardBriefing = null;
+    try {
+      const briefing = await import('./lib/proactive-briefing.js');
+      standardBriefing = await briefing.generateBriefing('morning');
+    } catch (e) {}
+
+    const now = new Date();
+    const hour = now.getHours();
+    const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+
+    const godModeBrief = {
+      generatedAt: now.toISOString(),
+      greeting: `${greeting}, Commander.`,
+      mode: 'GOD MODE - READ-ONLY + DRAFT-ONLY',
+
+      priorities: [],
+
+      ticketQueue: {
+        total: openTickets.length,
+        urgent: urgentTickets.length,
+        byStatus: {
+          open: openTickets.filter(t => t.status === 2).length,
+          pending: openTickets.filter(t => t.status === 3).length,
+          waiting: openTickets.filter(t => t.status === 6 || t.status === 7).length
+        }
+      },
+
+      draftQueue: {
+        ...draftStats,
+        pendingDrafts: recentDrafts.map(d => ({
+          id: d.id,
+          ticketId: d.ticket_id,
+          subject: d.ticket_subject,
+          status: d.status,
+          qaPasssed: d.qa_passed,
+          createdAt: d.created_at
+        }))
+      },
+
+      casebook: casebookStats,
+
+      proactiveAI: {
+        issues: proactiveState.detectedIssues?.length || 0,
+        suggestions: proactiveState.suggestions?.length || 0,
+        lastCheck: proactiveState.lastCheck
+      },
+
+      standardBriefing: standardBriefing ? {
+        summary: standardBriefing.summary || standardBriefing.content,
+        type: standardBriefing.type
+      } : null
+    };
+
+    // Build priority list
+    if (urgentTickets.length > 0) {
+      godModeBrief.priorities.push(`${urgentTickets.length} urgent ticket(s) need attention`);
+    }
+    if (draftStats.PENDING_REVIEW > 0) {
+      godModeBrief.priorities.push(`${draftStats.PENDING_REVIEW} draft(s) ready for review`);
+    }
+    if (draftStats.ESCALATION_RECOMMENDED > 0) {
+      godModeBrief.priorities.push(`${draftStats.ESCALATION_RECOMMENDED} ticket(s) recommended for escalation`);
+    }
+    if ((proactiveState.detectedIssues?.length || 0) > 0) {
+      godModeBrief.priorities.push(`${proactiveState.detectedIssues.length} proactive issue(s) detected`);
+    }
+    if (godModeBrief.priorities.length === 0) {
+      godModeBrief.priorities.push('All clear - no urgent items');
+    }
+
+    res.json(godModeBrief);
+  } catch (error) {
+    console.error('God Mode Brief error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Voice Intent Handler - accepts JSON intents from iPhone Shortcuts
+app.post('/api/intent', async (req, res) => {
+  try {
+    const { intent, params = {}, constraints = {} } = req.body;
+    if (!intent) return res.status(400).json({ error: 'intent is required' });
+
+    // All intents enforce read-only + draft-only
+    const safeConstraints = { no_send: true, draft_only: true, ...constraints };
+
+    let data;
+    switch (intent) {
+      case 'god_brief': {
+        // Fetch the god mode brief internally
+        const briefResponse = await new Promise((resolve, reject) => {
+          const mockRes = {
+            json: (d) => resolve(d),
+            status: () => ({ json: (d) => reject(new Error(d.error)) })
+          };
+          // Just gather the data directly
+          const draftStats = db.getDraftStats();
+          const openTickets = db.getTicketsByStatus([2, 3, 6, 7]);
+          resolve({
+            type: 'god_brief',
+            priorities: [],
+            ticketCount: openTickets.length,
+            urgentCount: openTickets.filter(t => t.priority >= 3).length,
+            drafts: draftStats,
+            casebook: db.getCasebookStats(),
+            constraints: safeConstraints,
+            spoken: `You have ${openTickets.length} open tickets, ${draftStats.PENDING_REVIEW || 0} drafts pending review, and ${openTickets.filter(t => t.priority >= 3).length} urgent items.`
+          });
+        });
+        data = briefResponse;
+        break;
+      }
+
+      case 'tickets_focus': {
+        const statuses = params.new_only ? [2] : [2, 3, 6, 7];
+        const tickets = db.getTicketsByStatus(statuses);
+        const filtered = params.sla_risk === 'high'
+          ? tickets.filter(t => t.priority >= 3)
+          : tickets;
+        data = {
+          type: 'tickets_focus',
+          count: filtered.length,
+          tickets: filtered.slice(0, 10).map(t => ({
+            id: t.freshdesk_id, subject: t.subject, status: t.status, priority: t.priority
+          })),
+          constraints: safeConstraints,
+          spoken: `You have ${filtered.length} tickets matching your filter. Top ticket: ${filtered[0]?.subject || 'none'}.`
+        };
+        break;
+      }
+
+      case 'draft_status': {
+        const draftStats = db.getDraftStats();
+        const pending = db.getDraftsByStatus('PENDING_REVIEW', 5);
+        data = {
+          type: 'draft_status',
+          stats: draftStats,
+          pendingDrafts: pending.map(d => ({
+            id: d.id, ticketId: d.ticket_id, subject: d.ticket_subject, status: d.status
+          })),
+          constraints: safeConstraints,
+          spoken: `You have ${draftStats.PENDING_REVIEW || 0} drafts pending review, ${draftStats.APPROVED || 0} approved, and ${draftStats.ESCALATION_RECOMMENDED || 0} escalations recommended.`
+        };
+        break;
+      }
+
+      case 'repo_focus': {
+        try {
+          const portfolio = await import('./lib/github-portfolio.js');
+          const repoData = await portfolio.getPortfolioData(params.repo);
+          data = { type: 'repo_focus', ...repoData, constraints: safeConstraints };
+        } catch (e) {
+          data = { type: 'repo_focus', error: 'GitHub portfolio not available', constraints: safeConstraints };
+        }
+        break;
+      }
+
+      default:
+        data = { type: 'unknown', message: `Unknown intent: ${intent}`, constraints: safeConstraints };
+    }
+
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
 // TICKET ANALYSIS ENDPOINTS
 // ============================================
 

@@ -180,6 +180,26 @@ Resolution: ${resolution}
 }
 
 /**
+ * Index a casebook entry for RAG retrieval
+ */
+export function indexCasebookEntry(entry) {
+  const content = `Approved Response for: ${entry.subject}
+Issue: ${entry.customer_message || ''}
+Response: ${entry.approved_response}
+SOP: ${entry.sop_references || ''}`.trim();
+
+  const metadata = {
+    type: 'casebook',
+    casebookId: entry.id,
+    subject: entry.subject,
+    issueType: entry.issue_type || 'general',
+    indexedAt: new Date().toISOString()
+  };
+
+  return addDocument(content, metadata, `casebook_${entry.id}`);
+}
+
+/**
  * Search similar documents using vector similarity
  */
 export function searchSimilar(query, limit = 5, threshold = 0.1) {
