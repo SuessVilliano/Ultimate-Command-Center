@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
+import DraftQueue from '../components/DraftQueue';
 import { aiService } from '../services/aiService';
 
 // Storage keys
@@ -892,6 +893,93 @@ function Tickets() {
     });
   };
 
+  // Save response to Casebook (gold-standard approved responses)
+  const [savingToCasebook, setSavingToCasebook] = useState(false);
+  const [casebookSaved, setCasebookSaved] = useState({});
+  const saveToCasebook = async (ticket) => {
+    const responseText = aiResponse || cachedResponses[ticket.id]?.response;
+    if (!responseText) return;
+
+    setSavingToCasebook(true);
+    try {
+      const analysis = aiAnalysis[ticket.id];
+      const response = await fetch(`${AI_SERVER_URL}/api/casebook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ticket_id: ticket.id,
+          subject: ticket.subject,
+          issue_type: analysis?.ESCALATION_TYPE || 'general',
+          customer_message: (ticket.description_text || ticket.description || '').substring(0, 2000),
+          approved_response: responseText,
+          keywords: ticket.subject.split(/\s+/).filter(w => w.length > 3)
+        })
+      });
+      if (response.ok) {
+        setCasebookSaved(prev => ({ ...prev, [ticket.id]: true }));
+      }
+    } catch (e) {
+      console.error('Failed to save to casebook:', e);
+    } finally {
+      setSavingToCasebook(false);
+    }
+  };
+
+  // Run ticket through the full pipeline (triage → SOP → history → casebook → draft → QA)
+  const [pipelineRunning, setPipelineRunning] = useState(null);
+  const runPipeline = async (ticket) => {
+    setPipelineRunning(ticket.id);
+    try {
+      const response = await fetch(`${AI_SERVER_URL}/api/pipeline/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketId: ticket.id })
+      });
+      if (response.ok) {
+        const result = await response.json();
+        // Set the draft as the AI response for immediate display
+        if (result.pipelineResult?.steps) {
+          const draftStep = result.pipelineResult.steps.find(s => s.step === 'draft_saved');
+          if (draftStep) {
+            // Reload drafts display
+          }
+        }
+        alert(`Pipeline complete: ${result.status} (QA: ${result.qaResult?.overall || 'N/A'}, Score: ${result.qaResult?.score || 0}/100)`);
+      } else {
+        const err = await response.json();
+        setError(err.error || 'Pipeline failed');
+      }
+    } catch (e) {
+      setError('Pipeline error: ' + e.message);
+    } finally {
+      setPipelineRunning(null);
+    }
+  };
+
+  // Run pipeline for all open tickets
+  const runBatchPipeline = async () => {
+    const openTickets = tickets.filter(t => [2, 3, 6, 7].includes(t.status));
+    if (openTickets.length === 0) return;
+    if (!confirm(`Run pipeline for ${openTickets.length} open tickets? This will analyze, draft, and QA-check each one.`)) return;
+
+    setPipelineRunning('batch');
+    try {
+      const response = await fetch(`${AI_SERVER_URL}/api/pipeline/batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketIds: openTickets.map(t => t.id) })
+      });
+      if (response.ok) {
+        const result = await response.json();
+        alert(`Batch pipeline: ${result.successful} succeeded, ${result.failed} failed out of ${result.processed} tickets.`);
+      }
+    } catch (e) {
+      setError('Batch pipeline error: ' + e.message);
+    } finally {
+      setPipelineRunning(null);
+    }
+  };
+
   // Send ticket to Personal Assistant - opens Telegram with pre-filled message
   const sendToPA = (ticket, includeAnalysis = true) => {
     if (!ticket) return;
@@ -1232,6 +1320,23 @@ function Tickets() {
             {analyzingAll ? 'Processing...' : 'Analyze All'}
           </button>
           <button
+            onClick={runBatchPipeline}
+            disabled={aiServerStatus !== 'online' || pipelineRunning === 'batch'}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+              aiServerStatus === 'online' && pipelineRunning !== 'batch'
+                ? 'bg-cyan-600 hover:bg-cyan-700 text-white'
+                : 'bg-gray-600 text-gray-400 cursor-not-allowed'
+            }`}
+            title="Run full pipeline for all open tickets"
+          >
+            {pipelineRunning === 'batch' ? (
+              <RefreshCw className="w-4 h-4 animate-spin" />
+            ) : (
+              <Zap className="w-4 h-4" />
+            )}
+            {pipelineRunning === 'batch' ? 'Pipeline Running...' : 'Pipeline All'}
+          </button>
+          <button
             onClick={() => freshdeskDomain && freshdeskApiKey && fetchTickets(freshdeskDomain, freshdeskApiKey)}
             disabled={loading}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg ${
@@ -1316,6 +1421,14 @@ function Tickets() {
             ))}
           </div>
         )}
+      </div>
+
+      {/* Draft Queue */}
+      <div className="mt-4">
+        <DraftQueue isDark={isDark} onSelectTicket={(ticketId) => {
+          const ticket = tickets.find(t => t.id === ticketId);
+          if (ticket) setSelectedTicket(ticket);
+        }} />
       </div>
 
       {/* Settings Modal - Updated v2.0 with tabs */}
@@ -2394,24 +2507,40 @@ function Tickets() {
                       <h4 className={`text-sm font-semibold ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
                         Ready to Copy Response
                       </h4>
-                      <button
-                        id="copy-response-btn"
-                        onClick={() => {
-                          if (aiResponse) {
-                            copyResponseToClipboard();
-                          } else {
-                            quickCopyResponse(selectedTicket.id);
-                          }
-                        }}
-                        className={`flex items-center gap-1 px-3 py-1 text-xs rounded-lg transition-colors ${
-                          isDark
-                            ? 'bg-green-600 hover:bg-green-700 text-white'
-                            : 'bg-green-500 hover:bg-green-600 text-white'
-                        }`}
-                      >
-                        <Copy className="w-3 h-3" />
-                        Copy to Clipboard
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          id="copy-response-btn"
+                          onClick={() => {
+                            if (aiResponse) {
+                              copyResponseToClipboard();
+                            } else {
+                              quickCopyResponse(selectedTicket.id);
+                            }
+                          }}
+                          className={`flex items-center gap-1 px-3 py-1 text-xs rounded-lg transition-colors ${
+                            isDark
+                              ? 'bg-green-600 hover:bg-green-700 text-white'
+                              : 'bg-green-500 hover:bg-green-600 text-white'
+                          }`}
+                        >
+                          <Copy className="w-3 h-3" />
+                          Copy
+                        </button>
+                        <button
+                          onClick={() => saveToCasebook(selectedTicket)}
+                          disabled={savingToCasebook || casebookSaved[selectedTicket.id]}
+                          className={`flex items-center gap-1 px-3 py-1 text-xs rounded-lg transition-colors ${
+                            casebookSaved[selectedTicket.id]
+                              ? 'bg-yellow-600/50 text-yellow-300 cursor-default'
+                              : savingToCasebook
+                                ? 'bg-yellow-600/30 text-yellow-400'
+                                : isDark ? 'bg-yellow-600 hover:bg-yellow-700 text-white' : 'bg-yellow-500 hover:bg-yellow-600 text-white'
+                          }`}
+                        >
+                          <Star className="w-3 h-3" />
+                          {casebookSaved[selectedTicket.id] ? 'Saved' : savingToCasebook ? 'Saving...' : 'Casebook'}
+                        </button>
+                      </div>
                     </div>
                     <div className={`p-3 rounded-lg text-sm whitespace-pre-wrap ${
                       isDark ? 'bg-green-500/10 border border-green-500/30 text-green-300' : 'bg-green-50 border border-green-200 text-green-800'
@@ -2441,6 +2570,25 @@ function Tickets() {
                         <MessageSquare className="w-4 h-4" />
                       )}
                       Generate Response
+                    </button>
+                    <button
+                      onClick={() => runPipeline(selectedTicket)}
+                      disabled={pipelineRunning === selectedTicket.id || aiServerStatus !== 'online'}
+                      className={`px-4 py-2 rounded-lg flex items-center gap-2 ${
+                        pipelineRunning === selectedTicket.id
+                          ? 'bg-cyan-600/50 cursor-not-allowed text-white'
+                          : aiServerStatus !== 'online'
+                            ? 'bg-gray-600 cursor-not-allowed text-gray-400'
+                            : 'bg-cyan-600 hover:bg-cyan-700 text-white'
+                      }`}
+                      title="Run full pipeline: Triage → SOP → History → Casebook → Draft → QA"
+                    >
+                      {pipelineRunning === selectedTicket.id ? (
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Zap className="w-4 h-4" />
+                      )}
+                      Pipeline
                     </button>
                     <button
                       onClick={() => openInWorkProfile(`https://${freshdeskDomain}.freshdesk.com/a/tickets/${selectedTicket.id}`)}

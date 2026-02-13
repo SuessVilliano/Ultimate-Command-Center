@@ -62,6 +62,11 @@ export const EVENTS = {
   AUTOMATION_COMPLETED: 'automation.completed',
   AUTOMATION_FAILED: 'automation.failed',
 
+  // Draft Events
+  DRAFT_CREATED: 'draft.created',
+  DRAFT_APPROVED: 'draft.approved',
+  DRAFT_REJECTED: 'draft.rejected',
+
   // System Events
   PLATFORM_CONNECTED: 'platform.connected',
   PLATFORM_DISCONNECTED: 'platform.disconnected',

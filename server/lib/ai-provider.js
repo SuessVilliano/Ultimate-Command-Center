@@ -710,6 +710,22 @@ ${i + 1}. Ticket #${s.id}: "${s.subject}"
 Use insights from these similar tickets to inform your response.`;
   }
 
+  // Search casebook for human-approved responses to similar issues
+  let casebookContext = '';
+  try {
+    const { searchCasebook } = await import('./database.js');
+    const searchTerms = ticket.subject.split(/\s+/).filter(w => w.length > 3);
+    const casebookMatches = searchCasebook(searchTerms, 3);
+    if (casebookMatches.length > 0) {
+      casebookContext = `\n\nHUMAN-APPROVED CASEBOOK RESPONSES (these are gold-standard — match their tone and approach):\n` +
+        casebookMatches.map((c, i) =>
+          `${i + 1}. Issue: "${c.subject}"\n   Approved Response: ${c.approved_response}\n   SOP Refs: ${c.sop_references || 'N/A'}`
+        ).join('\n') + '\n';
+    }
+  } catch (e) {
+    // Casebook not available yet
+  }
+
   const ticketType = options.ticketType || 'general';
   const sopContent = getSOPContext();
   const sopSection = sopContent
@@ -734,7 +750,7 @@ Description: ${ticket.description || ticket.description_text || 'No description 
 Ticket Type: ${ticketType}
 ${analysis?.SUMMARY ? `Issue Summary: ${analysis.SUMMARY}` : ''}
 ${similarContext}
-
+${casebookContext}
 RESPONSE GUIDELINES FOR ${ticketType.toUpperCase()} TICKETS:
 ${typeGuidelines[ticketType] || typeGuidelines.general}
 

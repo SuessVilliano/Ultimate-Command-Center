@@ -46,6 +46,7 @@ import {
   valuationSummary
 } from '../data/portfolio';
 import ProactiveAIDashboard from '../components/ProactiveAIDashboard';
+import GodModeBrief from '../components/GodModeBrief';
 
 // Storage keys
 const STORAGE_KEYS = {
@@ -977,6 +978,9 @@ function Dashboard() {
 
         {/* Right Column - Wellness & Stats */}
         <div className="space-y-6">
+          {/* God Mode Brief */}
+          <GodModeBrief isDark={true} />
+
           {/* AI Daily Briefing */}
           <AIBriefingCard />
 

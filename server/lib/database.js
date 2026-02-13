@@ -190,6 +190,46 @@ function createTables() {
     )
   `);
 
+  // Casebook table - stores human-approved gold-standard responses
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS casebook (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ticket_id INTEGER,
+      subject TEXT NOT NULL,
+      issue_type TEXT,
+      customer_message TEXT,
+      approved_response TEXT NOT NULL,
+      sop_references TEXT,
+      keywords TEXT,
+      resolution_notes TEXT,
+      approved_by TEXT DEFAULT 'human',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Drafts table - stores pipeline-generated drafts for review
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS drafts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ticket_id INTEGER NOT NULL,
+      ticket_subject TEXT,
+      draft_text TEXT NOT NULL,
+      status TEXT DEFAULT 'PENDING_REVIEW',
+      qa_result TEXT,
+      qa_passed INTEGER,
+      sop_citations TEXT,
+      similar_tickets_used TEXT,
+      casebook_entries_used TEXT,
+      pipeline_metadata TEXT,
+      created_by TEXT DEFAULT 'pipeline',
+      reviewed_by TEXT,
+      reviewed_at TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   // Create indexes for better query performance
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status);
@@ -198,6 +238,10 @@ function createTables() {
     CREATE INDEX IF NOT EXISTS idx_knowledge_keywords ON knowledge_base(keywords);
     CREATE INDEX IF NOT EXISTS idx_scheduled_runs_type ON scheduled_runs(run_type);
     CREATE INDEX IF NOT EXISTS idx_embeddings_source ON embeddings(source_type, source_id);
+    CREATE INDEX IF NOT EXISTS idx_casebook_keywords ON casebook(keywords);
+    CREATE INDEX IF NOT EXISTS idx_casebook_type ON casebook(issue_type);
+    CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts(status);
+    CREATE INDEX IF NOT EXISTS idx_drafts_ticket ON drafts(ticket_id);
   `);
 
   console.log('Database tables created successfully');
@@ -809,6 +853,237 @@ export function getEmbeddingsBySource(sourceType, sourceId = null) {
   return stmt.all(...params);
 }
 
+// ============================================
+// CASEBOOK OPERATIONS
+// ============================================
+
+/**
+ * Add an approved response to the casebook
+ */
+export function addToCasebook(entry) {
+  const stmt = db.prepare(`
+    INSERT INTO casebook (ticket_id, subject, issue_type, customer_message, approved_response, sop_references, keywords, resolution_notes, approved_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const result = stmt.run(
+    entry.ticket_id || null,
+    entry.subject,
+    entry.issue_type || 'general',
+    entry.customer_message || '',
+    entry.approved_response,
+    entry.sop_references || '',
+    JSON.stringify(entry.keywords || []),
+    entry.resolution_notes || '',
+    entry.approved_by || 'human'
+  );
+
+  return result.lastInsertRowid;
+}
+
+/**
+ * Search casebook by keywords
+ */
+export function searchCasebook(searchTerms, limit = 5) {
+  const stmt = db.prepare(`
+    SELECT * FROM casebook
+    ORDER BY created_at DESC
+    LIMIT ?
+  `);
+
+  const results = stmt.all(limit * 3);
+  const terms = Array.isArray(searchTerms) ? searchTerms : [searchTerms];
+
+  const scored = results.map(row => {
+    const rowKeywords = JSON.parse(row.keywords || '[]');
+    const searchText = `${row.subject} ${row.issue_type} ${row.approved_response} ${rowKeywords.join(' ')}`.toLowerCase();
+    const score = terms.filter(t => t.length > 2 && searchText.includes(t.toLowerCase())).length;
+    return { ...row, score, keywords: rowKeywords };
+  });
+
+  return scored
+    .filter(r => r.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+}
+
+/**
+ * Get casebook entries with optional filters
+ */
+export function getCasebookEntries(filters = {}) {
+  let query = 'SELECT * FROM casebook';
+  const params = [];
+
+  if (filters.issue_type) {
+    query += ' WHERE issue_type = ?';
+    params.push(filters.issue_type);
+  }
+
+  query += ' ORDER BY created_at DESC';
+
+  if (filters.limit) {
+    query += ' LIMIT ?';
+    params.push(filters.limit);
+  }
+
+  const stmt = db.prepare(query);
+  return stmt.all(...params);
+}
+
+/**
+ * Delete a casebook entry
+ */
+export function deleteCasebookEntry(id) {
+  const stmt = db.prepare('DELETE FROM casebook WHERE id = ?');
+  return stmt.run(id);
+}
+
+/**
+ * Get casebook stats
+ */
+export function getCasebookStats() {
+  const countStmt = db.prepare('SELECT COUNT(*) as total FROM casebook');
+  const total = countStmt.get().total;
+
+  const typesStmt = db.prepare('SELECT issue_type, COUNT(*) as count FROM casebook GROUP BY issue_type ORDER BY count DESC');
+  const types = typesStmt.all();
+
+  const lastStmt = db.prepare('SELECT MAX(created_at) as last_added FROM casebook');
+  const lastAdded = lastStmt.get().last_added;
+
+  return { total, types, lastAdded };
+}
+
+// ============================================
+// DRAFT QUEUE OPERATIONS
+// ============================================
+
+/**
+ * Save a draft to the queue
+ */
+export function saveDraft(draft) {
+  const stmt = db.prepare(`
+    INSERT INTO drafts (ticket_id, ticket_subject, draft_text, status, qa_result, qa_passed, sop_citations, similar_tickets_used, casebook_entries_used, pipeline_metadata, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const result = stmt.run(
+    draft.ticket_id,
+    draft.ticket_subject || '',
+    draft.draft_text,
+    draft.status || 'PENDING_REVIEW',
+    draft.qa_result || null,
+    draft.qa_passed != null ? draft.qa_passed : null,
+    draft.sop_citations || null,
+    draft.similar_tickets_used || null,
+    draft.casebook_entries_used || null,
+    draft.pipeline_metadata || null,
+    draft.created_by || 'pipeline'
+  );
+
+  return result.lastInsertRowid;
+}
+
+/**
+ * Get drafts by status
+ */
+export function getDraftsByStatus(status, limit = 50) {
+  const stmt = db.prepare(`
+    SELECT * FROM drafts
+    WHERE status = ?
+    ORDER BY created_at DESC
+    LIMIT ?
+  `);
+
+  return stmt.all(status, limit);
+}
+
+/**
+ * Get the latest draft for a ticket
+ */
+export function getDraftForTicket(ticketId) {
+  const stmt = db.prepare(`
+    SELECT * FROM drafts
+    WHERE ticket_id = ?
+    ORDER BY created_at DESC
+    LIMIT 1
+  `);
+
+  return stmt.get(ticketId);
+}
+
+/**
+ * Update draft status (approve/reject/needs-edit)
+ */
+export function updateDraftStatus(id, status, reviewedBy = 'human') {
+  const stmt = db.prepare(`
+    UPDATE drafts
+    SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
+
+  return stmt.run(status, reviewedBy, id);
+}
+
+/**
+ * Get all drafts with optional filters
+ */
+export function getAllDrafts(filters = {}) {
+  let query = 'SELECT * FROM drafts';
+  const params = [];
+  const conditions = [];
+
+  if (filters.status) {
+    conditions.push('status = ?');
+    params.push(filters.status);
+  }
+  if (filters.ticket_id) {
+    conditions.push('ticket_id = ?');
+    params.push(filters.ticket_id);
+  }
+
+  if (conditions.length > 0) {
+    query += ' WHERE ' + conditions.join(' AND ');
+  }
+
+  query += ' ORDER BY created_at DESC';
+
+  if (filters.limit) {
+    query += ' LIMIT ?';
+    params.push(filters.limit);
+  }
+
+  const stmt = db.prepare(query);
+  return stmt.all(...params);
+}
+
+/**
+ * Get draft stats (counts by status)
+ */
+export function getDraftStats() {
+  const stmt = db.prepare(`
+    SELECT status, COUNT(*) as count FROM drafts GROUP BY status
+  `);
+
+  const rows = stmt.all();
+  const stats = { total: 0, PENDING_REVIEW: 0, APPROVED: 0, REJECTED: 0, NEEDS_EDIT: 0, ESCALATION_RECOMMENDED: 0 };
+
+  for (const row of rows) {
+    stats[row.status] = row.count;
+    stats.total += row.count;
+  }
+
+  return stats;
+}
+
+/**
+ * Delete a draft
+ */
+export function deleteDraft(id) {
+  const stmt = db.prepare('DELETE FROM drafts WHERE id = ?');
+  return stmt.run(id);
+}
+
 export default {
   initDatabase,
   isUsingSupabase,
@@ -837,5 +1112,17 @@ export default {
   logAgentInteraction,
   getAgentHistory,
   storeEmbedding,
-  getEmbeddingsBySource
+  getEmbeddingsBySource,
+  addToCasebook,
+  searchCasebook,
+  getCasebookEntries,
+  deleteCasebookEntry,
+  getCasebookStats,
+  saveDraft,
+  getDraftsByStatus,
+  getDraftForTicket,
+  updateDraftStatus,
+  getAllDrafts,
+  getDraftStats,
+  deleteDraft
 };
