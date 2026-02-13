@@ -91,7 +91,7 @@ function getDefaultModel(provider) {
   if (provider === 'openai') {
     return process.env.GPT_MODEL || 'gpt-4o';
   }
-  if (provider === 'gemini') return process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+  if (provider === 'gemini') return process.env.GEMINI_MODEL || 'gemini-2.5-flash-preview-05-20';
   if (provider === 'kimi') return process.env.KIMI_MODEL || 'nvidia/llama-3.1-nemotron-70b-instruct';
   return process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
 }
@@ -160,9 +160,9 @@ export function getCurrentProvider() {
     },
     models: {
       gemini: [
-        { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', default: true },
-        { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
-        { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (Experimental)' }
+        { id: 'gemini-2.5-flash-preview-05-20', name: 'Gemini 2.5 Flash', default: true },
+        { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
+        { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' }
       ],
       claude: [
         { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', default: true },
@@ -484,7 +484,7 @@ async function chatWithGemini(messages, options) {
   }
 
   const model = geminiClient.getGenerativeModel({
-    model: options.model || 'gemini-2.0-flash',
+    model: options.model || 'gemini-2.5-flash-preview-05-20',
     generationConfig: {
       maxOutputTokens: options.maxTokens,
       temperature: options.temperature
@@ -588,16 +588,57 @@ async function chatWithKimi(messages, options) {
 }
 
 /**
+ * Load SOP (Standard Operating Procedures) content for AI context.
+ * Cached in memory for 5 minutes to avoid DB reads on every request.
+ */
+let sopCache = { content: '', loadedAt: 0 };
+
+function getSOPContext() {
+  const now = Date.now();
+  // Refresh cache every 5 minutes
+  if (now - sopCache.loadedAt > 5 * 60 * 1000) {
+    try {
+      const sopsJson = getSetting('sop_documents', '[]');
+      const sops = JSON.parse(sopsJson);
+      if (sops.length > 0) {
+        let combined = '';
+        for (const sop of sops) {
+          const content = sop.content || '';
+          // Limit total SOP context to avoid token overuse
+          if (combined.length + content.length < 6000) {
+            combined += `\n${content}\n`;
+          } else {
+            combined += `\n${content.substring(0, 2000)}\n[...truncated]\n`;
+            break;
+          }
+        }
+        sopCache = { content: combined.trim(), loadedAt: now };
+      } else {
+        sopCache = { content: '', loadedAt: now };
+      }
+    } catch (e) {
+      sopCache = { content: '', loadedAt: now };
+    }
+  }
+  return sopCache.content;
+}
+
+/**
  * Analyze a support ticket
  */
 export async function analyzeTicket(ticket, options = {}) {
-  const prompt = `You are a support ticket analyzer for a SaaS company. Analyze this support ticket and provide:
+  const sopContent = getSOPContext();
+  const sopSection = sopContent
+    ? `\n\nCOMPANY STANDARD OPERATING PROCEDURES (follow these strictly):\n${sopContent}\n`
+    : '';
+
+  const prompt = `You are a support ticket analyzer for a GoHighLevel SaaS support team. Analyze this support ticket and provide:
 1. ESCALATION_TYPE: One of [DEV, TWILIO, BILLING, FEATURE, BUG, SUPPORT]
 2. URGENCY_SCORE: 1-10 (10 being most urgent)
 3. SUGGESTED_RESPONSE: A brief suggested response to the customer
 4. ACTION_ITEMS: List of specific actions to resolve this
 5. SUMMARY: One sentence summary of the issue
-
+${sopSection}
 Ticket Subject: ${ticket.subject}
 Ticket Description: ${ticket.description || ticket.description_text || 'No description'}
 Priority: ${ticket.priority || 'Unknown'}
@@ -670,6 +711,11 @@ Use insights from these similar tickets to inform your response.`;
   }
 
   const ticketType = options.ticketType || 'general';
+  const sopContent = getSOPContext();
+  const sopSection = sopContent
+    ? `\nCOMPANY SOPs (you MUST follow these protocols):\n${sopContent}\n`
+    : '';
+
   const prompt = `You are ${agentName || 'a support agent'}, a GoHighLevel Support Agent responding to a customer ticket. Write a professional, helpful response.
 
 CRITICAL FORMATTING RULES:
@@ -678,7 +724,7 @@ CRITICAL FORMATTING RULES:
 - Use simple line breaks for paragraphs
 - Keep it conversational and professional
 - The response should be ready to copy and paste directly into Freshdesk
-
+${sopSection}
 YOUR NAME: ${agentName || 'Support Agent'}
 CUSTOMER NAME: ${ticket.requester?.name || ticket.requester_name || 'there'}
 

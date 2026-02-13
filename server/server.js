@@ -243,6 +243,150 @@ app.post('/api/ai/key', (req, res) => {
 });
 
 // ============================================
+// SOP (Standard Operating Procedures) ENDPOINTS
+// ============================================
+
+// Upload SOP document (PDF, TXT, etc.)
+app.post('/api/sop/upload', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'File is required' });
+    }
+
+    // Parse the file content
+    const parsed = await contentIngestion.handleFileUpload(req.file, 'sop');
+
+    // Store SOP content in settings for quick access by AI prompts
+    const sopTitle = req.body.title || req.file.originalname;
+    try {
+      // Get existing SOPs
+      const existingSops = db.getSetting('sop_documents', '[]');
+      const sops = JSON.parse(existingSops);
+      sops.push({
+        id: Date.now().toString(),
+        title: sopTitle,
+        fileName: req.file.originalname,
+        content: parsed.content,
+        summary: parsed.summary,
+        uploadedAt: new Date().toISOString()
+      });
+      db.setSetting('sop_documents', JSON.stringify(sops));
+
+      // Also inject into all relevant agent knowledge bases
+      const agentIds = ['highlevel-specialist', 'business-analyst', 'dev-ops'];
+      for (const agentId of agentIds) {
+        try {
+          agentKnowledge.addKnowledge(agentId, {
+            type: 'document',
+            title: `SOP: ${sopTitle}`,
+            content: parsed.content,
+            summary: parsed.summary || `Standard Operating Procedures: ${sopTitle}`,
+            file_path: parsed.file_path,
+            file_type: 'pdf',
+            metadata: { source: 'sop_upload', originalName: req.file.originalname }
+          });
+        } catch (e) {
+          console.log(`Could not add SOP to agent ${agentId}:`, e.message);
+        }
+      }
+    } catch (e) {
+      console.error('Could not persist SOP:', e.message);
+    }
+
+    res.json({
+      success: true,
+      title: sopTitle,
+      contentLength: parsed.content?.length || 0,
+      summary: parsed.summary
+    });
+  } catch (error) {
+    console.error('SOP upload error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Upload SOP as raw text (for pasting content directly)
+app.post('/api/sop/text', (req, res) => {
+  try {
+    const { title, content } = req.body;
+    if (!content) {
+      return res.status(400).json({ error: 'Content is required' });
+    }
+
+    const existingSops = db.getSetting('sop_documents', '[]');
+    const sops = JSON.parse(existingSops);
+    sops.push({
+      id: Date.now().toString(),
+      title: title || 'Support SOP',
+      content,
+      summary: content.substring(0, 500),
+      uploadedAt: new Date().toISOString()
+    });
+    db.setSetting('sop_documents', JSON.stringify(sops));
+
+    // Inject into agent knowledge bases
+    const agentIds = ['highlevel-specialist', 'business-analyst', 'dev-ops'];
+    for (const agentId of agentIds) {
+      try {
+        agentKnowledge.addKnowledge(agentId, {
+          type: 'text',
+          title: `SOP: ${title || 'Support SOP'}`,
+          content,
+          summary: content.substring(0, 500)
+        });
+      } catch (e) {}
+    }
+
+    res.json({ success: true, title: title || 'Support SOP', contentLength: content.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all SOPs
+app.get('/api/sop', (req, res) => {
+  try {
+    const sops = JSON.parse(db.getSetting('sop_documents', '[]'));
+    res.json({ sops: sops.map(s => ({ id: s.id, title: s.title, fileName: s.fileName, uploadedAt: s.uploadedAt, contentLength: s.content?.length || 0 })) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get SOP content (for injection into prompts)
+app.get('/api/sop/content', (req, res) => {
+  try {
+    const sops = JSON.parse(db.getSetting('sop_documents', '[]'));
+    // Combine all SOP content for AI context (limit to 8000 chars total)
+    let combined = '';
+    for (const sop of sops) {
+      const sopContent = sop.content || '';
+      if (combined.length + sopContent.length < 8000) {
+        combined += `\n--- ${sop.title} ---\n${sopContent}\n`;
+      } else {
+        combined += `\n--- ${sop.title} (truncated) ---\n${sopContent.substring(0, 2000)}\n`;
+        break;
+      }
+    }
+    res.json({ content: combined, sopCount: sops.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete an SOP
+app.delete('/api/sop/:sopId', (req, res) => {
+  try {
+    const sops = JSON.parse(db.getSetting('sop_documents', '[]'));
+    const filtered = sops.filter(s => s.id !== req.params.sopId);
+    db.setSetting('sop_documents', JSON.stringify(filtered));
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
 // TICKET ANALYSIS ENDPOINTS
 // ============================================
 

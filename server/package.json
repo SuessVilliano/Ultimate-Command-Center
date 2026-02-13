@@ -26,6 +26,7 @@
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.0",
     "openai": "^4.52.0",
+    "pdf-parse": "^1.1.4",
     "pdfkit": "^0.15.0",
     "uuid": "^9.0.0",
     "vectra": "^0.9.0"
