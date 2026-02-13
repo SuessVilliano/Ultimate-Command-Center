@@ -28,7 +28,10 @@ import {
   Copy,
   Check,
   Search,
-  X
+  X,
+  Upload,
+  FileText,
+  Trash2
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -202,12 +205,18 @@ function Tickets() {
   const [scheduleStatus, setScheduleStatus] = useState(null);
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [recentRuns, setRecentRuns] = useState([]);
-  const [settingsTab, setSettingsTab] = useState('freshdesk'); // freshdesk, ai, schedule
+  const [settingsTab, setSettingsTab] = useState('freshdesk'); // freshdesk, ai, schedule, sops
   const [cachedResponses, setCachedResponses] = useState({}); // Store generated responses
   const [searchQuery, setSearchQuery] = useState(''); // Search for tickets
   const [sendingToPA, setSendingToPA] = useState(false); // Sending to Personal Assistant
   const [sentToPA, setSentToPA] = useState({}); // Track which tickets were sent
   const [quickLinksCollapsed, setQuickLinksCollapsed] = useState(false); // Collapsible quick links
+  // SOP Management state
+  const [sopList, setSopList] = useState([]);
+  const [sopUploading, setSopUploading] = useState(false);
+  const [sopTextTitle, setSopTextTitle] = useState('');
+  const [sopTextContent, setSopTextContent] = useState('');
+  const [sopMessage, setSopMessage] = useState({ type: '', text: '' });
 
   // Check AI server status and load persisted data
   const checkAiServer = async () => {
@@ -359,6 +368,98 @@ function Tickets() {
       setError('Failed to run scheduled analysis');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // SOP Management functions
+  const fetchSOPs = async () => {
+    try {
+      const response = await fetch(`${AI_SERVER_URL}/api/sop`);
+      if (response.ok) {
+        const data = await response.json();
+        setSopList(data.sops || []);
+      }
+    } catch (e) {
+      console.error('Failed to fetch SOPs:', e);
+    }
+  };
+
+  const handleSOPFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setSopUploading(true);
+    setSopMessage({ type: '', text: '' });
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('title', file.name.replace(/\.[^.]+$/, ''));
+
+    try {
+      const response = await fetch(`${AI_SERVER_URL}/api/sop/upload`, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setSopMessage({ type: 'success', text: `SOP "${data.title}" uploaded! (${(data.contentLength / 1000).toFixed(1)}k chars extracted)` });
+        fetchSOPs();
+      } else {
+        const err = await response.json();
+        setSopMessage({ type: 'error', text: err.error || 'Upload failed' });
+      }
+    } catch (err) {
+      setSopMessage({ type: 'error', text: 'Failed to upload SOP file' });
+    } finally {
+      setSopUploading(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleSOPTextSubmit = async () => {
+    if (!sopTextContent.trim()) return;
+
+    setSopUploading(true);
+    setSopMessage({ type: '', text: '' });
+
+    try {
+      const response = await fetch(`${AI_SERVER_URL}/api/sop/text`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: sopTextTitle.trim() || 'Support SOP',
+          content: sopTextContent.trim()
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setSopMessage({ type: 'success', text: `SOP "${data.title}" saved!` });
+        setSopTextTitle('');
+        setSopTextContent('');
+        fetchSOPs();
+      } else {
+        setSopMessage({ type: 'error', text: 'Failed to save SOP text' });
+      }
+    } catch (err) {
+      setSopMessage({ type: 'error', text: 'Failed to save SOP text' });
+    } finally {
+      setSopUploading(false);
+    }
+  };
+
+  const deleteSOPDocument = async (sopId, title) => {
+    if (!confirm(`Delete SOP "${title}"?`)) return;
+
+    try {
+      const response = await fetch(`${AI_SERVER_URL}/api/sop/${sopId}`, { method: 'DELETE' });
+      if (response.ok) {
+        setSopMessage({ type: 'success', text: `SOP "${title}" deleted` });
+        fetchSOPs();
+      }
+    } catch (err) {
+      setSopMessage({ type: 'error', text: 'Failed to delete SOP' });
     }
   };
 
@@ -1233,15 +1334,16 @@ function Tickets() {
             </div>
 
             {/* Tabs */}
-            <div className="flex gap-2 mb-4 border-b border-purple-900/30 pb-2">
+            <div className="flex gap-2 mb-4 border-b border-purple-900/30 pb-2 overflow-x-auto">
               {[
                 { id: 'freshdesk', label: 'Freshdesk' },
                 { id: 'ai', label: 'AI Provider' },
-                { id: 'schedule', label: 'Schedule' }
+                { id: 'schedule', label: 'Schedule' },
+                { id: 'sops', label: 'SOPs' }
               ].map(tab => (
                 <button
                   key={tab.id}
-                  onClick={() => setSettingsTab(tab.id)}
+                  onClick={() => { setSettingsTab(tab.id); if (tab.id === 'sops') fetchSOPs(); }}
                   className={`px-4 py-2 rounded-lg text-sm transition-colors ${
                     settingsTab === tab.id
                       ? 'bg-purple-600 text-white'
@@ -1253,7 +1355,7 @@ function Tickets() {
               ))}
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-4 max-h-[60vh] overflow-y-auto">
               {/* Freshdesk Tab */}
               {settingsTab === 'freshdesk' && (
                 <>
@@ -1341,7 +1443,7 @@ function Tickets() {
                         <div className="text-xl mb-1">🌟</div>
                         <div className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Gemini</div>
                         <p className={`text-xs mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                          2.0 Flash
+                          2.5 Flash
                         </p>
                       </button>
                       <button
@@ -1615,6 +1717,137 @@ function Tickets() {
                       </div>
                     </div>
                   )}
+                </>
+              )}
+
+              {/* SOPs Tab */}
+              {settingsTab === 'sops' && (
+                <>
+                  {sopMessage.text && (
+                    <div className={`p-2 rounded text-sm ${sopMessage.type === 'success' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                      {sopMessage.text}
+                    </div>
+                  )}
+
+                  {/* Upload SOP File */}
+                  <div className={`p-4 rounded-lg ${isDark ? 'bg-purple-500/10 border border-purple-500/30' : 'bg-purple-50 border border-purple-200'}`}>
+                    <div className="flex items-center gap-2 mb-3">
+                      <Upload className="w-4 h-4 text-purple-400" />
+                      <span className={`font-medium ${isDark ? 'text-purple-300' : 'text-purple-700'}`}>
+                        Upload SOP Document
+                      </span>
+                    </div>
+                    <p className={`text-xs mb-3 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                      Upload a PDF, TXT, or document file. Content will be extracted and injected into AI agent knowledge.
+                    </p>
+                    <label className={`flex items-center justify-center gap-2 p-3 rounded-lg border-2 border-dashed cursor-pointer transition-colors ${
+                      isDark ? 'border-purple-500/40 hover:border-purple-400 hover:bg-purple-500/10' : 'border-purple-300 hover:border-purple-400 hover:bg-purple-50'
+                    } ${sopUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                      {sopUploading ? (
+                        <RefreshCw className="w-5 h-5 animate-spin text-purple-400" />
+                      ) : (
+                        <Upload className="w-5 h-5 text-purple-400" />
+                      )}
+                      <span className={`text-sm ${isDark ? 'text-purple-300' : 'text-purple-600'}`}>
+                        {sopUploading ? 'Uploading & Parsing...' : 'Click to upload PDF, TXT, DOC...'}
+                      </span>
+                      <input
+                        type="file"
+                        accept=".pdf,.txt,.md,.doc,.docx,.csv,.json"
+                        onChange={handleSOPFileUpload}
+                        className="hidden"
+                        disabled={sopUploading}
+                      />
+                    </label>
+                  </div>
+
+                  {/* Paste SOP Text */}
+                  <div className={`p-4 rounded-lg ${isDark ? 'bg-cyan-500/10 border border-cyan-500/30' : 'bg-cyan-50 border border-cyan-200'}`}>
+                    <div className="flex items-center gap-2 mb-3">
+                      <FileText className="w-4 h-4 text-cyan-400" />
+                      <span className={`font-medium ${isDark ? 'text-cyan-300' : 'text-cyan-700'}`}>
+                        Paste SOP Text
+                      </span>
+                    </div>
+                    <input
+                      type="text"
+                      value={sopTextTitle}
+                      onChange={(e) => setSopTextTitle(e.target.value)}
+                      placeholder="SOP Title (e.g. GHL Support SOPs)"
+                      className={`w-full p-2 rounded-lg border text-sm mb-2 ${
+                        isDark ? 'bg-white/5 border-purple-900/30 text-white placeholder-gray-500' : 'bg-white border-gray-200 text-gray-900'
+                      }`}
+                    />
+                    <textarea
+                      value={sopTextContent}
+                      onChange={(e) => setSopTextContent(e.target.value)}
+                      placeholder="Paste your SOP content here..."
+                      rows={4}
+                      className={`w-full p-2 rounded-lg border text-sm mb-2 resize-none ${
+                        isDark ? 'bg-white/5 border-purple-900/30 text-white placeholder-gray-500' : 'bg-white border-gray-200 text-gray-900'
+                      }`}
+                    />
+                    <button
+                      onClick={handleSOPTextSubmit}
+                      disabled={!sopTextContent.trim() || sopUploading}
+                      className={`w-full py-2 rounded-lg text-sm font-medium transition-colors ${
+                        sopTextContent.trim() && !sopUploading
+                          ? 'bg-cyan-600 hover:bg-cyan-700 text-white'
+                          : 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                      }`}
+                    >
+                      Save SOP Text
+                    </button>
+                  </div>
+
+                  {/* Current SOPs List */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                        Active SOPs ({sopList.length})
+                      </h4>
+                      <button onClick={fetchSOPs} className={`text-xs px-2 py-1 rounded ${isDark ? 'bg-white/10 hover:bg-white/20 text-gray-300' : 'bg-gray-100 text-gray-600'}`}>
+                        Refresh
+                      </button>
+                    </div>
+                    {sopList.length === 0 ? (
+                      <div className={`p-4 rounded-lg text-center ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+                        <FileText className={`w-8 h-8 mx-auto mb-2 ${isDark ? 'text-gray-600' : 'text-gray-300'}`} />
+                        <p className={`text-sm ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                          No SOPs uploaded yet. Upload your company SOPs above.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-48 overflow-y-auto">
+                        {sopList.map(sop => (
+                          <div key={sop.id} className={`p-3 rounded-lg flex items-center justify-between ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+                            <div className="flex-1 min-w-0">
+                              <div className={`text-sm font-medium truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                                {sop.title}
+                              </div>
+                              <div className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                                {sop.fileName && `${sop.fileName} • `}
+                                {((sop.contentLength || 0) / 1000).toFixed(1)}k chars
+                                {sop.uploadedAt && ` • ${new Date(sop.uploadedAt).toLocaleDateString()}`}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => deleteSOPDocument(sop.id, sop.title)}
+                              className="p-1.5 rounded hover:bg-red-500/20 text-gray-500 hover:text-red-400 transition-colors ml-2"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className={`p-3 rounded-lg ${isDark ? 'bg-green-500/10 border border-green-500/20' : 'bg-green-50'}`}>
+                    <p className={`text-xs ${isDark ? 'text-green-400' : 'text-green-700'}`}>
+                      SOPs are automatically injected into all AI ticket analyses and response generation. Agents will follow your protocols and rules.
+                    </p>
+                  </div>
                 </>
               )}
 
