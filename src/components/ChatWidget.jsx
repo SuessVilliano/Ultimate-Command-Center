@@ -43,7 +43,6 @@ import {
   Wifi,
   WifiOff,
 } from 'lucide-react';
-import Recorder from 'opus-recorder';
 import { useTheme } from '../context/ThemeContext';
 import { COMMANDER_AGENT, SPECIALIZED_AGENTS, AGENT_CATEGORIES, getAgentById } from '../data/agents';
 import aiService from '../services/aiService';
@@ -303,6 +302,7 @@ function ChatWidget({ onNavigate }) {
   const analyserRef = useRef(null);
   const micStreamRef = useRef(null);
   const animFrameRef = useRef(null);
+  const voiceTranscriptRef = useRef('');
 
   // Cleanup on unmount
   useEffect(() => {
@@ -348,14 +348,20 @@ function ChatWidget({ onNavigate }) {
       micStreamRef.current = stream;
       startLevelMonitoring(stream);
 
+      // Dynamically import opus-recorder so a load failure doesn't crash the whole component
+      const { default: Recorder } = await import('opus-recorder');
+
+      // Create a single MediaStreamSource to share with the recorder
+      const sourceNode = audioCtx.createMediaStreamSource(stream);
+
       const recorder = new Recorder({
         encoderPath: '/encoderWorker.min.js',
         mediaTrackConstraints: { sampleRate: 24000, channelCount: 1 },
         encoderSampleRate: 24000,
         encoderFrameSize: 960,
-        encoderApplication: 2048,
+        encoderApplication: 2049,  // OPUS_APPLICATION_VOIP
         streamPages: true,
-        sourceNode: audioCtx.createMediaStreamSource(stream),
+        sourceNode,
       });
 
       recorder.ondataavailable = (opusData) => {
@@ -377,6 +383,7 @@ function ChatWidget({ onNavigate }) {
     setVoiceConnecting(true);
     setVoiceError(null);
     setVoiceTranscript('');
+    voiceTranscriptRef.current = '';
 
     const serverAddr = getPersonaPlexServer();
     const textSeed = Math.floor(Math.random() * 100000);
@@ -453,6 +460,7 @@ function ChatWidget({ onNavigate }) {
             break;
           case MSG_TEXT: {
             const text = new TextDecoder().decode(payload);
+            voiceTranscriptRef.current += text;
             setVoiceTranscript((prev) => prev + text);
             break;
           }
@@ -511,13 +519,13 @@ function ChatWidget({ onNavigate }) {
       audioCtxRef.current = null;
     }
 
-    // Flush transcript to chat as a message
-    setVoiceTranscript((prev) => {
-      if (prev.trim()) {
-        addMessage('commander', prev.trim(), 'liv8-commander');
-      }
-      return '';
-    });
+    // Flush transcript to chat as a message (read from ref, not inside a state updater)
+    const finalTranscript = voiceTranscriptRef.current.trim();
+    if (finalTranscript) {
+      addMessage('commander', finalTranscript, 'liv8-commander');
+    }
+    voiceTranscriptRef.current = '';
+    setVoiceTranscript('');
 
     setMicActive(false);
     setAiAudioLevel(0);
