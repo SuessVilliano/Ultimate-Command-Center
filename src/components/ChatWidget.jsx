@@ -605,7 +605,7 @@ function ChatWidget({ onNavigate }) {
       {/* Floating Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className={`fixed bottom-6 right-6 z-50 p-4 rounded-full shadow-2xl transition-all duration-300 group ${
+        className={`fixed bottom-24 right-6 z-50 p-4 rounded-full shadow-2xl transition-all duration-300 group ${
           isOpen ? 'bg-red-500 hover:bg-red-600' : 'bg-gradient-to-r from-purple-600 to-cyan-500 hover:scale-110'
         }`}
       >
@@ -621,7 +621,7 @@ function ChatWidget({ onNavigate }) {
 
       {/* Chat Panel */}
       {isOpen && (
-        <div className={`fixed bottom-24 right-6 z-50 w-[450px] h-[650px] rounded-2xl shadow-2xl flex flex-col overflow-hidden border transition-all duration-300 ${
+        <div className={`fixed bottom-[7.5rem] right-6 z-50 w-[450px] h-[600px] rounded-2xl shadow-2xl flex flex-col overflow-hidden border transition-all duration-300 ${
           isDark ? 'bg-gray-900 border-purple-500/30' : 'bg-white border-gray-200'
         }`}>
           {/* Header */}

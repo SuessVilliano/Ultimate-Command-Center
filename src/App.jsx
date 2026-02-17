@@ -3,6 +3,7 @@ import { ThemeProvider, useTheme } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Sidebar, { MobileMenuButton } from './components/Sidebar';
 import ChatWidget from './components/ChatWidget';
+import PersonaPlexPopup from './components/PersonaPlexPopup';
 import VaultLogin from './components/VaultLogin';
 import Dashboard from './pages/Dashboard';
 import Projects from './pages/Projects';
@@ -113,8 +114,11 @@ function AppContent() {
         {renderPage()}
       </main>
 
-      {/* Chat Widget - AI Assistant with Agents and Send to PA */}
+      {/* Chat Widget - AI Assistant with Agents and Send to PA (text fallback) */}
       <ChatWidget onNavigate={handleNavigate} />
+
+      {/* PersonaPlex Voice AI Popup */}
+      <PersonaPlexPopup />
     </div>
   );
 }
