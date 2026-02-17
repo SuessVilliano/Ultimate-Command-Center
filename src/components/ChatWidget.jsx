@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   MessageCircle,
   X,
@@ -38,13 +38,72 @@ import {
   Webhook,
   CheckSquare,
   RefreshCw,
-  History
+  History,
+  Phone,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
+import Recorder from 'opus-recorder';
 import { useTheme } from '../context/ThemeContext';
 import { COMMANDER_AGENT, SPECIALIZED_AGENTS, AGENT_CATEGORIES, getAgentById } from '../data/agents';
 import aiService from '../services/aiService';
 import AISettings from './AISettings';
 import { API_URL } from '../config';
+
+// ── PersonaPlex protocol constants ──────────────────────────────
+const MSG_HANDSHAKE = 0x00;
+const MSG_AUDIO    = 0x01;
+const MSG_TEXT     = 0x02;
+const MSG_CONTROL  = 0x03;
+const MSG_PING     = 0x06;
+const CTRL_START   = 0x00;
+
+function encodeMessage(type, payload) {
+  const typeBuf = new Uint8Array([type]);
+  if (!payload || payload.length === 0) return typeBuf;
+  const merged = new Uint8Array(1 + payload.length);
+  merged[0] = type;
+  merged.set(payload instanceof Uint8Array ? payload : new Uint8Array(payload), 1);
+  return merged;
+}
+
+function decodeMessage(data) {
+  const arr = new Uint8Array(data);
+  return { type: arr[0], payload: arr.slice(1) };
+}
+
+function getPersonaPlexServer() {
+  const params = new URLSearchParams(window.location.search);
+  const fromQuery = params.get('worker_addr');
+  if (fromQuery) return fromQuery;
+  const fromEnv = import.meta.env.VITE_PERSONAPLEX_SERVER;
+  if (fromEnv) return fromEnv;
+  return 'localhost:8998';
+}
+
+const PERSONAPLEX_VOICES = [
+  { value: 'NATF0.pt', label: 'Natural Female 1' },
+  { value: 'NATF1.pt', label: 'Natural Female 2' },
+  { value: 'NATF2.pt', label: 'Natural Female 3' },
+  { value: 'NATF3.pt', label: 'Natural Female 4' },
+  { value: 'NATM0.pt', label: 'Natural Male 1' },
+  { value: 'NATM1.pt', label: 'Natural Male 2' },
+  { value: 'NATM2.pt', label: 'Natural Male 3' },
+  { value: 'NATM3.pt', label: 'Natural Male 4' },
+  { value: 'VARF0.pt', label: 'Varied Female 1' },
+  { value: 'VARF1.pt', label: 'Varied Female 2' },
+  { value: 'VARF2.pt', label: 'Varied Female 3' },
+  { value: 'VARF3.pt', label: 'Varied Female 4' },
+  { value: 'VARF4.pt', label: 'Varied Female 5' },
+  { value: 'VARM0.pt', label: 'Varied Male 1' },
+  { value: 'VARM1.pt', label: 'Varied Male 2' },
+  { value: 'VARM2.pt', label: 'Varied Male 3' },
+  { value: 'VARM3.pt', label: 'Varied Male 4' },
+  { value: 'VARM4.pt', label: 'Varied Male 5' },
+];
+
+const DEFAULT_VOICE_PROMPT =
+  `You are an AI assistant integrated into LIV8 Command Center — a voice-enabled operations dashboard for managing projects, support tickets, GitHub repos, AI agent teams, domain portfolios, integrations (Freshdesk, ClickUp, GitHub), news monitoring, and automated workflows. You help users navigate the app, find information, manage tasks, troubleshoot issues, and operate the platform hands-free. Be concise and helpful.`;
 
 function ChatWidget({ onNavigate }) {
   const { theme, toggleTheme } = useTheme();
@@ -131,12 +190,16 @@ function ChatWidget({ onNavigate }) {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedAgents, setSelectedAgents] = useState([]);
 
-  // Voice state
-  const [isListening, setIsListening] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [voices, setVoices] = useState([]);
-  const [selectedVoice, setSelectedVoice] = useState(null);
-  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  // PersonaPlex voice state
+  const [voiceActive, setVoiceActive] = useState(false);
+  const [voiceConnecting, setVoiceConnecting] = useState(false);
+  const [voiceError, setVoiceError] = useState(null);
+  const [selectedVoice, setSelectedVoice] = useState('NATF0.pt');
+  const [showVoiceSetup, setShowVoiceSetup] = useState(false);
+  const [voiceTranscript, setVoiceTranscript] = useState('');
+  const [aiAudioLevel, setAiAudioLevel] = useState(0);
+  const [userAudioLevel, setUserAudioLevel] = useState(0);
+  const [micActive, setMicActive] = useState(false);
 
   // File & screen state
   const [uploadedFiles, setUploadedFiles] = useState([]);
@@ -228,44 +291,26 @@ function ChatWidget({ onNavigate }) {
   // Refs
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
-  const recognitionRef = useRef(null);
   const screenStreamRef = useRef(null);
 
-  // Initialize speech
+  // PersonaPlex refs
+  const wsRef = useRef(null);
+  const recorderRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const workletNodeRef = useRef(null);
+  const decoderWorkerRef = useRef(null);
+  const pingIntervalRef = useRef(null);
+  const analyserRef = useRef(null);
+  const micStreamRef = useRef(null);
+  const animFrameRef = useRef(null);
+
+  // Cleanup on unmount
   useEffect(() => {
-    if ('speechSynthesis' in window) {
-      const loadVoices = () => {
-        const availableVoices = window.speechSynthesis.getVoices();
-        setVoices(availableVoices);
-        const englishVoice = availableVoices.find(v =>
-          v.lang.startsWith('en') && (v.name.includes('Google') || v.name.includes('Microsoft') || v.name.includes('Zira'))
-        ) || availableVoices.find(v => v.lang.startsWith('en'));
-        setSelectedVoice(englishVoice);
-      };
-      loadVoices();
-      window.speechSynthesis.onvoiceschanged = loadVoices;
-    }
-
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = false;
-      recognitionRef.current.interimResults = false;
-      recognitionRef.current.lang = 'en-US';
-
-      recognitionRef.current.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        handleSend(transcript);
-      };
-
-      recognitionRef.current.onend = () => setIsListening(false);
-      recognitionRef.current.onerror = () => setIsListening(false);
-    }
-
     return () => {
       if (screenStreamRef.current) {
         screenStreamRef.current.getTracks().forEach(track => track.stop());
       }
+      disconnectPersonaPlex();
     };
   }, []);
 
@@ -273,15 +318,230 @@ function ChatWidget({ onNavigate }) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const speak = (text) => {
-    if (!voiceEnabled || !selectedVoice) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.voice = selectedVoice;
-    utterance.rate = 1;
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    window.speechSynthesis.speak(utterance);
+  // ── PersonaPlex voice engine ────────────────────────────────────
+
+  const startLevelMonitoring = useCallback((stream) => {
+    try {
+      const ctx = audioCtxRef.current;
+      if (!ctx) return;
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      src.connect(analyser);
+      analyserRef.current = analyser;
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      const tick = () => {
+        analyser.getByteFrequencyData(dataArray);
+        const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+        setUserAudioLevel(Math.min(avg / 128, 1));
+        animFrameRef.current = requestAnimationFrame(tick);
+      };
+      tick();
+    } catch { /* non-critical */ }
+  }, []);
+
+  const startMicForPersonaPlex = useCallback(async (ws, audioCtx) => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { sampleRate: 24000, channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      });
+      micStreamRef.current = stream;
+      startLevelMonitoring(stream);
+
+      const recorder = new Recorder({
+        encoderPath: '/encoderWorker.min.js',
+        mediaTrackConstraints: { sampleRate: 24000, channelCount: 1 },
+        encoderSampleRate: 24000,
+        encoderFrameSize: 960,
+        encoderApplication: 2048,
+        streamPages: true,
+        sourceNode: audioCtx.createMediaStreamSource(stream),
+      });
+
+      recorder.ondataavailable = (opusData) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(encodeMessage(MSG_AUDIO, new Uint8Array(opusData)));
+        }
+      };
+
+      await recorder.start();
+      recorderRef.current = recorder;
+      setMicActive(true);
+    } catch (err) {
+      console.error('PersonaPlex mic error:', err);
+      setMicActive(false);
+    }
+  }, [startLevelMonitoring]);
+
+  const connectPersonaPlex = useCallback(async () => {
+    setVoiceConnecting(true);
+    setVoiceError(null);
+    setVoiceTranscript('');
+
+    const serverAddr = getPersonaPlexServer();
+    const textSeed = Math.floor(Math.random() * 100000);
+    const audioSeed = Math.floor(Math.random() * 100000);
+
+    const wsUrl =
+      `wss://${serverAddr}/api/chat?` +
+      `text_temperature=0.7&text_topk=25&audio_temperature=0.8&audio_topk=250` +
+      `&pad_mult=0&text_seed=${textSeed}&audio_seed=${audioSeed}` +
+      `&repetition_penalty_context=64&repetition_penalty=1.0` +
+      `&text_prompt=${encodeURIComponent(DEFAULT_VOICE_PROMPT)}` +
+      `&voice_prompt=${encodeURIComponent(selectedVoice)}`;
+
+    try {
+      const audioCtx = new AudioContext({ sampleRate: 24000 });
+      audioCtxRef.current = audioCtx;
+
+      await audioCtx.audioWorklet.addModule('/moshi-processor.js');
+      const workletNode = new AudioWorkletNode(audioCtx, 'moshi-processor');
+      workletNode.connect(audioCtx.destination);
+      workletNodeRef.current = workletNode;
+
+      workletNode.port.onmessage = (e) => {
+        if (e.data && typeof e.data.delay === 'number') {
+          setAiAudioLevel(e.data.delay > 0.05 ? 0.6 + Math.random() * 0.4 : 0);
+        }
+      };
+
+      const decoderWorker = new Worker('/decoderWorker.min.js');
+      decoderWorkerRef.current = decoderWorker;
+
+      decoderWorker.onmessage = (e) => {
+        if (e.data && e.data.length) {
+          const pcm = new Float32Array(e.data);
+          workletNode.port.postMessage({ type: 'audio', frame: pcm, micDuration: 0 });
+        }
+      };
+
+      decoderWorker.postMessage({
+        command: 'init',
+        decoderSampleRate: 24000,
+        outputBufferSampleRate: 24000,
+      });
+
+      const ws = new WebSocket(wsUrl);
+      ws.binaryType = 'arraybuffer';
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setVoiceConnecting(false);
+        setVoiceActive(true);
+        setShowVoiceSetup(false);
+
+        ws.send(encodeMessage(MSG_CONTROL, new Uint8Array([CTRL_START])));
+
+        pingIntervalRef.current = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(encodeMessage(MSG_PING, null));
+          }
+        }, 5000);
+
+        addMessage('system', 'Voice session started — speak freely, the AI can hear and respond in real-time');
+        startMicForPersonaPlex(ws, audioCtx);
+      };
+
+      ws.onmessage = (event) => {
+        const { type, payload } = decodeMessage(event.data);
+        switch (type) {
+          case MSG_AUDIO:
+            decoderWorker.postMessage(
+              { command: 'decode', pages: payload.buffer },
+              [payload.buffer]
+            );
+            break;
+          case MSG_TEXT: {
+            const text = new TextDecoder().decode(payload);
+            setVoiceTranscript((prev) => prev + text);
+            break;
+          }
+          default:
+            break;
+        }
+      };
+
+      ws.onerror = () => {
+        setVoiceConnecting(false);
+        setVoiceError('Connection failed. Is the PersonaPlex server running?');
+      };
+
+      ws.onclose = () => {
+        setVoiceActive(false);
+        setVoiceConnecting(false);
+        cleanupVoicePing();
+      };
+    } catch (err) {
+      console.error('PersonaPlex connect error:', err);
+      setVoiceConnecting(false);
+      setVoiceError('Failed to initialize audio. Check browser permissions.');
+    }
+  }, [selectedVoice, startMicForPersonaPlex]);
+
+  const disconnectPersonaPlex = useCallback(() => {
+    cleanupVoicePing();
+
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    if (recorderRef.current) {
+      try { recorderRef.current.stop(); } catch { /* */ }
+      recorderRef.current = null;
+    }
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach((t) => t.stop());
+      micStreamRef.current = null;
+    }
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    if (decoderWorkerRef.current) {
+      decoderWorkerRef.current.terminate();
+      decoderWorkerRef.current = null;
+    }
+    if (workletNodeRef.current) {
+      workletNodeRef.current.port.postMessage({ type: 'reset' });
+      workletNodeRef.current.disconnect();
+      workletNodeRef.current = null;
+    }
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close().catch(() => {});
+      audioCtxRef.current = null;
+    }
+
+    // Flush transcript to chat as a message
+    setVoiceTranscript((prev) => {
+      if (prev.trim()) {
+        addMessage('commander', prev.trim(), 'liv8-commander');
+      }
+      return '';
+    });
+
+    setMicActive(false);
+    setAiAudioLevel(0);
+    setUserAudioLevel(0);
+    setVoiceActive(false);
+    setVoiceConnecting(false);
+  }, []);
+
+  const cleanupVoicePing = () => {
+    if (pingIntervalRef.current) {
+      clearInterval(pingIntervalRef.current);
+      pingIntervalRef.current = null;
+    }
+  };
+
+  const handleMicButton = () => {
+    if (voiceActive) {
+      addMessage('system', 'Voice session ended');
+      disconnectPersonaPlex();
+    } else if (voiceConnecting) {
+      // Already connecting, do nothing
+    } else {
+      setShowVoiceSetup(!showVoiceSetup);
+    }
   };
 
   const addMessage = (role, content, agentId = 'liv8-commander', extras = {}) => {
@@ -430,9 +690,6 @@ function ChatWidget({ onNavigate }) {
           addMessage('commander', "Analyzing all your tickets and creating an execution plan...", 'liv8-commander');
           const planData = await aiService.getExecutionPlan();
           addMessage('commander', planData.plan, 'liv8-commander');
-          if (planData.ticketCount > 0) {
-            speak(`Execution plan ready for ${planData.ticketCount} tickets`);
-          }
         } catch (e) {
           addMessage('commander', `Error creating execution plan: ${e.message}`, 'liv8-commander');
         }
@@ -445,9 +702,6 @@ function ChatWidget({ onNavigate }) {
         try {
           const result = await aiService.commanderChat(localResult.message);
           addMessage('commander', result.response, 'liv8-commander');
-          if (result.context) {
-            speak(`I have access to ${result.context.ticketCount} tickets and ${result.context.agentCount} agents`);
-          }
         } catch (e) {
           addMessage('commander', `Error: ${e.message}`, 'liv8-commander');
         }
@@ -459,7 +713,6 @@ function ChatWidget({ onNavigate }) {
       setTimeout(() => {
         addMessage('commander', localResult.response, 'liv8-commander');
         setIsProcessing(false);
-        if (localResult.speakText) speak(localResult.speakText);
       }, 300);
       return;
     }
@@ -474,7 +727,6 @@ function ChatWidget({ onNavigate }) {
 
       const result = await aiService.generateResponse(messageText, context);
       addMessage('commander', result.response, 'liv8-commander');
-      if (result.speakText) speak(result.speakText);
     } catch (error) {
       console.error('AI response error:', error);
       addMessage('commander', "I'm having trouble processing that request. Please try again or rephrase your question.", 'liv8-commander');
@@ -539,14 +791,6 @@ function ChatWidget({ onNavigate }) {
     { text: "What should I focus on today?", icon: Zap }
   ];
 
-  const toggleListening = () => {
-    if (isListening) {
-      recognitionRef.current?.stop();
-    } else {
-      recognitionRef.current?.start();
-      setIsListening(true);
-    }
-  };
 
   const handleFileUpload = (e) => {
     const files = Array.from(e.target.files);
@@ -605,7 +849,7 @@ function ChatWidget({ onNavigate }) {
       {/* Floating Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className={`fixed bottom-24 right-6 z-50 p-4 rounded-full shadow-2xl transition-all duration-300 group ${
+        className={`fixed bottom-6 right-6 z-50 p-4 rounded-full shadow-2xl transition-all duration-300 group ${
           isOpen ? 'bg-red-500 hover:bg-red-600' : 'bg-gradient-to-r from-purple-600 to-cyan-500 hover:scale-110'
         }`}
       >
@@ -621,7 +865,7 @@ function ChatWidget({ onNavigate }) {
 
       {/* Chat Panel */}
       {isOpen && (
-        <div className={`fixed bottom-[7.5rem] right-6 z-50 w-[450px] h-[600px] rounded-2xl shadow-2xl flex flex-col overflow-hidden border transition-all duration-300 ${
+        <div className={`fixed bottom-24 right-6 z-50 w-[450px] h-[650px] rounded-2xl shadow-2xl flex flex-col overflow-hidden border transition-all duration-300 ${
           isDark ? 'bg-gray-900 border-purple-500/30' : 'bg-white border-gray-200'
         }`}>
           {/* Header */}
@@ -719,22 +963,27 @@ function ChatWidget({ onNavigate }) {
           {showSettings && (
             <div className={`p-3 border-b ${isDark ? 'border-gray-800 bg-gray-800/50' : 'border-gray-200 bg-gray-50'}`}>
               <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={voiceEnabled} onChange={e => setVoiceEnabled(e.target.checked)} className="accent-purple-600" />
-                    <span className={`text-sm ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Voice</span>
-                  </label>
-                  {voices.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Mic className="w-4 h-4 text-emerald-400" />
+                    <span className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>PersonaPlex Voice</span>
+                    {voiceActive && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400">Active</span>}
+                  </div>
+                  <div className="flex items-center gap-2">
                     <select
-                      value={selectedVoice?.name || ''}
-                      onChange={e => setSelectedVoice(voices.find(v => v.name === e.target.value))}
-                      className={`flex-1 px-2 py-1 rounded text-sm ${isDark ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'} border`}
+                      value={selectedVoice}
+                      onChange={e => setSelectedVoice(e.target.value)}
+                      disabled={voiceActive}
+                      className={`flex-1 px-2 py-1 rounded text-sm ${isDark ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'} border disabled:opacity-50`}
                     >
-                      {voices.filter(v => v.lang.startsWith('en')).map(v => (
-                        <option key={v.name} value={v.name}>{v.name}</option>
+                      {PERSONAPLEX_VOICES.map(v => (
+                        <option key={v.value} value={v.value}>{v.label}</option>
                       ))}
                     </select>
-                  )}
+                  </div>
+                  <div className={`text-[10px] ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                    Server: <span className="font-mono">{getPersonaPlexServer()}</span>
+                  </div>
                 </div>
                 <div className="pt-2 border-t border-gray-700">
                   <div className="flex items-center justify-between mb-2">
@@ -1197,6 +1446,109 @@ function ChatWidget({ onNavigate }) {
             </div>
           )}
 
+          {/* PersonaPlex Voice Session Banner */}
+          {voiceActive && (
+            <div className={`px-4 py-3 border-t ${isDark ? 'border-emerald-800/50 bg-emerald-900/20' : 'border-emerald-200 bg-emerald-50'}`}>
+              {/* Audio visualizers */}
+              <div className="flex items-center justify-center gap-6 mb-2">
+                <div className="flex flex-col items-center gap-0.5">
+                  <div
+                    className="w-10 h-10 rounded-full border-2 border-emerald-500 flex items-center justify-center transition-all duration-100"
+                    style={{
+                      boxShadow: aiAudioLevel > 0.1 ? `0 0 ${aiAudioLevel * 16}px rgba(16,185,129,${aiAudioLevel * 0.5})` : 'none',
+                      transform: `scale(${1 + aiAudioLevel * 0.12})`,
+                    }}
+                  >
+                    <div className="w-5 h-5 rounded-full bg-emerald-400" style={{ opacity: 0.4 + aiAudioLevel * 0.6 }} />
+                  </div>
+                  <span className="text-[9px] text-emerald-400 font-medium">AI</span>
+                </div>
+                <div className="flex flex-col items-center gap-0.5">
+                  <div
+                    className="w-10 h-10 rounded-full border-2 border-blue-500 flex items-center justify-center transition-all duration-100"
+                    style={{
+                      boxShadow: userAudioLevel > 0.1 ? `0 0 ${userAudioLevel * 16}px rgba(59,130,246,${userAudioLevel * 0.5})` : 'none',
+                      transform: `scale(${1 + userAudioLevel * 0.12})`,
+                    }}
+                  >
+                    <div className="w-5 h-5 rounded-full bg-blue-400" style={{ opacity: 0.4 + userAudioLevel * 0.6 }} />
+                  </div>
+                  <span className="text-[9px] text-blue-400 font-medium">You</span>
+                </div>
+              </div>
+              {/* Live transcript */}
+              {voiceTranscript && (
+                <div className={`text-xs max-h-16 overflow-y-auto rounded-lg p-2 mb-2 ${isDark ? 'bg-gray-800/80 text-gray-300' : 'bg-white text-gray-700'}`}>
+                  {voiceTranscript}
+                </div>
+              )}
+              {/* Mic status + end */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  {micActive ? (
+                    <><Mic className="w-3 h-3 text-emerald-400" /><span className="text-[10px] text-emerald-400">Speak freely</span></>
+                  ) : (
+                    <><MicOff className="w-3 h-3 text-red-400" /><span className="text-[10px] text-red-400">Mic off</span></>
+                  )}
+                </div>
+                <button
+                  onClick={() => { addMessage('system', 'Voice session ended'); disconnectPersonaPlex(); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-500 rounded-lg text-xs text-white font-medium transition-colors"
+                >
+                  <Phone className="w-3 h-3 rotate-[135deg]" />
+                  End
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Voice Setup Panel (shown when mic clicked while disconnected) */}
+          {showVoiceSetup && !voiceActive && (
+            <div className={`px-4 py-3 border-t ${isDark ? 'border-gray-800 bg-gradient-to-r from-emerald-900/20 to-cyan-900/20' : 'border-gray-200 bg-emerald-50'}`}>
+              <div className="flex items-center justify-between mb-2">
+                <span className={`text-xs font-semibold flex items-center gap-1.5 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                  <Mic className="w-3 h-3" /> PersonaPlex Voice
+                </span>
+                <button onClick={() => setShowVoiceSetup(false)} className={`p-1 rounded ${isDark ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-200 text-gray-500'}`}>
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+              <div className="flex items-center gap-2 mb-2">
+                <select
+                  value={selectedVoice}
+                  onChange={e => setSelectedVoice(e.target.value)}
+                  className={`flex-1 px-2 py-1.5 rounded-lg text-sm ${isDark ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'} border`}
+                >
+                  {PERSONAPLEX_VOICES.map(v => (
+                    <option key={v.value} value={v.value}>{v.label}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={connectPersonaPlex}
+                  disabled={voiceConnecting}
+                  className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                    voiceConnecting
+                      ? 'bg-emerald-700 text-white cursor-wait'
+                      : 'bg-emerald-600 text-white hover:bg-emerald-500 active:scale-95'
+                  }`}
+                >
+                  {voiceConnecting ? (
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Connecting
+                    </span>
+                  ) : 'Start'}
+                </button>
+              </div>
+              {voiceError && (
+                <p className="text-[10px] text-red-400 bg-red-400/10 rounded-lg px-2 py-1 mb-1">{voiceError}</p>
+              )}
+              <p className={`text-[10px] ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                Server: <span className="font-mono">{getPersonaPlexServer()}</span> — Full-duplex voice, no turn-taking needed
+              </p>
+            </div>
+          )}
+
           {/* Input */}
           <div className={`p-4 border-t ${isDark ? 'border-gray-800' : 'border-gray-200'}`}>
             <div className="flex items-center gap-2 mb-2">
@@ -1207,18 +1559,22 @@ function ChatWidget({ onNavigate }) {
               <button onClick={isScreenSharing ? stopScreenShare : startScreenShare} className={`p-2 rounded-lg ${isScreenSharing ? 'bg-red-500/20 text-red-500' : isDark ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-600'}`}>
                 {isScreenSharing ? <StopCircle className="w-5 h-5" /> : <Monitor className="w-5 h-5" />}
               </button>
-              {isSpeaking && (
-                <button onClick={() => { window.speechSynthesis.cancel(); setIsSpeaking(false); }} className="p-2 rounded-lg bg-red-500/20 text-red-500">
-                  <VolumeX className="w-5 h-5" />
-                </button>
-              )}
             </div>
             <div className="flex items-center gap-2">
               <button
-                onClick={toggleListening}
-                className={`p-3 rounded-xl transition-all ${isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-purple-600 text-white hover:bg-purple-500'}`}
+                onClick={handleMicButton}
+                className={`p-3 rounded-xl transition-all ${
+                  voiceActive
+                    ? 'bg-emerald-500 text-white animate-pulse'
+                    : voiceConnecting
+                    ? 'bg-yellow-500 text-white animate-pulse'
+                    : showVoiceSetup
+                    ? 'bg-emerald-600 text-white ring-2 ring-emerald-400'
+                    : 'bg-emerald-600 text-white hover:bg-emerald-500'
+                }`}
+                title={voiceActive ? 'End voice session' : 'Start PersonaPlex voice'}
               >
-                {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                {voiceActive ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
               </button>
               <input
                 type="text"
