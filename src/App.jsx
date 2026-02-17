@@ -113,7 +113,7 @@ function AppContent() {
         {renderPage()}
       </main>
 
-      {/* Chat Widget - AI Assistant with Agents and Send to PA */}
+      {/* Chat Widget - AI Assistant with Agents, Voice & Send to PA */}
       <ChatWidget onNavigate={handleNavigate} />
     </div>
   );
