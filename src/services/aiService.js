@@ -7,7 +7,7 @@ import { getAgentKnowledge } from '../data/knowledgebase/index';
 import { API_URL } from '../config';
 
 const BACKEND_URL = API_URL;
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
 // Storage keys
 const STORAGE_KEYS = {
@@ -256,31 +256,29 @@ class AIService {
 
   // Chat with full access to tickets, analyses, agents
   async commanderChat(message) {
-    if (!this.backendConnected) {
-      return { response: 'Backend server not connected. Start the server for full app access.', context: null };
-    }
+    // Try backend first
+    if (this.backendConnected) {
+      try {
+        const response = await fetch(`${BACKEND_URL}/api/commander/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message })
+        });
 
-    try {
-      const response = await fetch(`${BACKEND_URL}/api/commander/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        // Save to conversation history
-        this.addToHistory('user', message);
-        this.addToHistory('assistant', data.response);
-        return data;
-      } else {
-        const error = await response.json();
-        return { response: `Error: ${error.error}`, context: null };
+        if (response.ok) {
+          const data = await response.json();
+          this.addToHistory('user', message);
+          this.addToHistory('assistant', data.response);
+          return data;
+        }
+      } catch (e) {
+        console.warn('Commander backend failed, using Gemini fallback:', e.message);
       }
-    } catch (e) {
-      console.error('Commander chat error:', e);
-      return { response: `Connection error: ${e.message}`, context: null };
     }
+
+    // Gemini fallback for commander chat
+    const result = await this.generateResponse(message);
+    return { response: result.response, context: null, provider: result.provider };
   }
 
   // Get execution plan from all tickets

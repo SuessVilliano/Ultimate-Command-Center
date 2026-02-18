@@ -21,12 +21,26 @@ import {
   File,
   Code,
   Sparkles,
-  Users
+  Users,
+  AlertCircle
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { API_URL } from '../config';
+import { SPECIALIZED_AGENTS, COMMANDER_AGENT } from '../data/agents';
+import { aiService } from '../services/aiService';
 
 const AI_SERVER_URL = API_URL;
+
+// Default agents when backend is unavailable
+const DEFAULT_AGENTS = [
+  { id: 'orchestrator', name: 'Auto (Smart Routing)', specialization: 'Automatically routes to the best agent', avatar_color: '#8B5CF6' },
+  ...SPECIALIZED_AGENTS.slice(0, 8).map(a => ({
+    id: a.id,
+    name: a.name,
+    specialization: a.description?.substring(0, 80) || a.role,
+    avatar_color: a.category === 'support' ? '#F59E0B' : a.category === 'trading' ? '#10B981' : a.category === 'tech' ? '#3B82F6' : '#8B5CF6'
+  }))
+];
 
 function AgentTeam() {
   const { theme } = useTheme();
@@ -43,6 +57,7 @@ function AgentTeam() {
   const [inputMessage, setInputMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [backendConnected, setBackendConnected] = useState(false);
 
   // Knowledge modal state
   const [showKnowledgeModal, setShowKnowledgeModal] = useState(false);
@@ -72,10 +87,25 @@ function AgentTeam() {
       if (response.ok) {
         const data = await response.json();
         setAgents(data.agents || []);
+        setBackendConnected(true);
+        return;
       }
     } catch (e) {
-      console.error('Failed to fetch agents:', e);
+      console.warn('Backend unavailable, using local agents');
     }
+    // Fallback: populate from local data
+    setBackendConnected(false);
+    const localAgents = [COMMANDER_AGENT, ...SPECIALIZED_AGENTS].map(a => ({
+      id: a.id,
+      name: a.name,
+      specialization: a.description,
+      avatar_color: a.id === 'liv8-commander' ? '#8B5CF6' :
+        a.category === 'support' ? '#F59E0B' :
+        a.category === 'finance' ? '#10B981' :
+        a.category === 'dev' ? '#3B82F6' :
+        a.category === 'marketing' ? '#EC4899' : '#6366F1',
+    }));
+    setAgents(localAgents);
   };
 
   const fetchConversations = async () => {
@@ -177,17 +207,66 @@ function AgentTeam() {
           setMessages(prev => [...prev, agentMsg]);
         }
       } else {
-        const error = await response.json();
-        setMessages(prev => [...prev, {
-          role: 'system',
-          content: `Error: ${error.error || 'Failed to get response'}`,
-          created_at: new Date().toISOString()
-        }]);
+        // Try Gemini fallback
+        try {
+          const fallbackResult = await aiService.generateResponse(message, {});
+          setMessages(prev => [...prev, {
+            role: 'agent',
+            content: fallbackResult.response,
+            agent_name: selectedAgent?.name || 'LIV8 Commander',
+            created_at: new Date().toISOString()
+          }]);
+        } catch (fallbackErr) {
+          const error = await response.json().catch(() => ({ error: 'Server error' }));
+          setMessages(prev => [...prev, {
+            role: 'system',
+            content: `Error: ${error.error || 'Failed to get response'}. Try adding a Gemini API key in Chat settings.`,
+            created_at: new Date().toISOString()
+          }]);
+        }
       }
     } catch (e) {
+      // Fallback: try Gemini browser-side
+      const geminiKey = localStorage.getItem('liv8_gemini_api_key');
+      if (geminiKey) {
+        try {
+          const agentContext = selectedAgent && selectedAgent.id !== 'orchestrator'
+            ? `You are ${selectedAgent.name}, an AI agent specialized in: ${selectedAgent.specialization}. Stay in character and respond based on your expertise.`
+            : `You are LIV8 Commander, the main AI orchestrator. Route the question to the best perspective and provide expert advice.`;
+
+          const geminiResponse = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: `${agentContext}\n\nUser message: ${message}` }] }],
+                generationConfig: { temperature: 0.8, maxOutputTokens: 1024 }
+              })
+            }
+          );
+
+          if (geminiResponse.ok) {
+            const geminiData = await geminiResponse.json();
+            const aiText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || 'I had trouble processing that.';
+            setMessages(prev => [...prev, {
+              role: 'agent',
+              content: aiText,
+              agent_name: selectedAgent?.name || 'LIV8 Commander',
+              created_at: new Date().toISOString()
+            }]);
+            setSending(false);
+            return;
+          }
+        } catch (gemErr) {
+          console.warn('Gemini fallback failed:', gemErr);
+        }
+      }
+      // Final fallback
       setMessages(prev => [...prev, {
-        role: 'system',
-        content: `Error: ${e.message}`,
+        role: 'agent',
+        content: `I'm currently running in offline mode. To enable full AI responses:\n\n1. **Quick Setup**: Go to the Chat Widget settings and enter a Gemini API key\n2. **Full Setup**: Start the backend server with API keys configured\n\nIn the meantime, I'm ${selectedAgent?.name || 'your AI team'} and I'm ready to help once connected!`,
+        agent_name: selectedAgent?.name || 'LIV8 Commander',
         created_at: new Date().toISOString()
       }]);
     }
@@ -454,6 +533,15 @@ function AgentTeam() {
             )}
           </div>
         </div>
+
+        {!backendConnected && (
+          <div className={`mx-4 mt-2 p-2 rounded-lg text-xs flex items-center gap-2 ${
+            isDark ? 'bg-yellow-500/10 text-yellow-400' : 'bg-yellow-50 text-yellow-700'
+          }`}>
+            <AlertCircle className="w-3 h-3" />
+            <span>Running in browser mode. Add a Gemini API key in Chat settings for AI responses.</span>
+          </div>
+        )}
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
