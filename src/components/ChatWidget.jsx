@@ -145,6 +145,35 @@ function ChatWidget({ onNavigate }) {
     }
   }, [initialized]);
 
+  // Proactive agent check-in (runs once, 60 seconds after mount)
+  useEffect(() => {
+    const proactiveTimer = setTimeout(() => {
+      // Only show if user hasn't interacted yet (messages <= 2 means just the welcome)
+      if (messages.length <= 2) {
+        const hour = new Date().getHours();
+        const pendingTasks = aiService.getPendingTasks().filter(t => t.status === 'pending');
+        const goals = aiService.getGoals().filter(g => g.status === 'active');
+
+        let proactiveMsg = '';
+        if (hour < 12 && pendingTasks.length > 0) {
+          proactiveMsg = `Hey! You have ${pendingTasks.length} pending task${pendingTasks.length > 1 ? 's' : ''} from before. Want me to help you prioritize them for today?`;
+        } else if (hour < 12 && goals.length > 0) {
+          proactiveMsg = `Good morning! Your active goal${goals.length > 1 ? 's' : ''}: ${goals.map(g => g.text).join(', ')}. What's your first move today?`;
+        } else if (hour >= 17) {
+          proactiveMsg = `End of day check-in: How did today go? Tell me your wins and I'll help you plan tomorrow.`;
+        } else if (pendingTasks.length === 0 && goals.length === 0) {
+          proactiveMsg = `Quick thought: You haven't set any goals yet. What's the ONE thing you want to accomplish this week? Let's make it happen.`;
+        }
+
+        if (proactiveMsg) {
+          addMessage('commander', proactiveMsg, 'liv8-commander');
+        }
+      }
+    }, 60000);
+
+    return () => clearTimeout(proactiveTimer);
+  }, []);
+
   // Update backend status and memory
   const updateBackendStatus = async () => {
     const status = aiService.getBackendStatus();
@@ -421,7 +450,40 @@ function ChatWidget({ onNavigate }) {
                 }
               }
             } catch {
-              addMessage('commander', 'Sorry, I had trouble processing that.', 'liv8-commander');
+              // Try Gemini browser-side fallback for voice
+              const geminiKey = localStorage.getItem('liv8_gemini_api_key');
+              if (geminiKey) {
+                try {
+                  const geminiRes = await fetch(
+                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
+                    {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        contents: [{ parts: [{ text: `${DEFAULT_VOICE_PROMPT}\n\nUser: ${final.trim()}` }] }],
+                        generationConfig: { temperature: 0.8, maxOutputTokens: 512 }
+                      })
+                    }
+                  );
+                  if (geminiRes.ok) {
+                    const geminiData = await geminiRes.json();
+                    const reply = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                    if (reply) {
+                      addMessage('commander', reply, 'liv8-commander');
+                      speakWithVoicebox(reply);
+                    } else {
+                      addMessage('commander', 'Sorry, I had trouble processing that.', 'liv8-commander');
+                    }
+                  } else {
+                    addMessage('commander', 'Sorry, I had trouble processing that.', 'liv8-commander');
+                  }
+                } catch (gemErr) {
+                  console.warn('Gemini voice fallback failed:', gemErr);
+                  addMessage('commander', 'Sorry, I had trouble processing that. Check your Gemini API key.', 'liv8-commander');
+                }
+              } else {
+                addMessage('commander', 'Voice AI needs either the backend server or a Gemini API key. Add one in Chat settings.', 'liv8-commander');
+              }
             }
           }
         };

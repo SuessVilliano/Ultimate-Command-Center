@@ -241,8 +241,37 @@ Keep responses concise for voice — under 3 sentences when possible. Be direct 
         speak(errorMsg);
       }
     } catch (error) {
+      // Try Gemini browser-side fallback
+      const geminiKey = localStorage.getItem('liv8_gemini_api_key');
+      if (geminiKey) {
+        try {
+          const geminiRes = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: `${SYSTEM_PROMPT}\n\nUser: ${command}` }] }],
+                generationConfig: { temperature: 0.8, maxOutputTokens: 512 }
+              })
+            }
+          );
+          if (geminiRes.ok) {
+            const geminiData = await geminiRes.json();
+            const reply = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            if (reply) {
+              setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
+              speak(reply);
+              setIsThinking(false);
+              return;
+            }
+          }
+        } catch (gemErr) {
+          console.warn('Gemini voice fallback failed:', gemErr);
+        }
+      }
       console.error('Voice AI error:', error);
-      const errorMsg = 'Connection error. Please check that the server is running.';
+      const errorMsg = 'Connection error. Please check that the server is running or add a Gemini API key.';
       setMessages(prev => [...prev, { role: 'assistant', content: errorMsg }]);
       speak(errorMsg);
     } finally {

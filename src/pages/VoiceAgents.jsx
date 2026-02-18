@@ -3,7 +3,7 @@ import {
   Mic, MicOff, Phone, PhoneOff, Volume2, VolumeX, Settings,
   Plus, Play, Pause, StopCircle, Save, Trash2, Copy, Users,
   Globe, Zap, Bot, ChevronRight, RefreshCw, ExternalLink,
-  AlertCircle, CheckCircle, Edit3, Headphones, Radio, Wifi
+  AlertCircle, CheckCircle, Edit3, Headphones, Radio, Wifi, Upload
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { API_URL, VOICEBOX_URL } from '../config';
@@ -143,6 +143,13 @@ function VoiceAgents() {
   const [testLoading, setTestLoading] = useState(false);
   const recognitionRef = useRef(null);
   const messagesEndRef = useRef(null);
+
+  // Voice cloning state
+  const [showCloneForm, setShowCloneForm] = useState(false);
+  const [cloneName, setCloneName] = useState('');
+  const [cloneFile, setCloneFile] = useState(null);
+  const [cloneLoading, setCloneLoading] = useState(false);
+  const [cloneError, setCloneError] = useState('');
 
   // Load Voicebox profiles on mount
   useEffect(() => {
@@ -307,6 +314,45 @@ function VoiceAgents() {
     setActiveView('builder');
   };
 
+  const createVoiceProfile = async () => {
+    if (!cloneName.trim() || !cloneFile) return;
+    setCloneLoading(true);
+    setCloneError('');
+    try {
+      const formData = new FormData();
+      formData.append('name', cloneName.trim());
+      formData.append('audio', cloneFile);
+      const res = await fetch(`${VOICEBOX_URL}/profiles`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || errData.message || `Server returned ${res.status}`);
+      }
+      // Refresh profiles and reset form
+      const profiles = await fetchVoiceboxProfiles();
+      setVoiceboxProfiles(profiles);
+      setCloneName('');
+      setCloneFile(null);
+      setShowCloneForm(false);
+    } catch (err) {
+      setCloneError(err.message || 'Failed to create voice profile');
+    } finally {
+      setCloneLoading(false);
+    }
+  };
+
+  const deleteVoiceProfile = async (id) => {
+    try {
+      const res = await fetch(`${VOICEBOX_URL}/profiles/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        const profiles = await fetchVoiceboxProfiles();
+        setVoiceboxProfiles(profiles);
+      }
+    } catch { /* Voicebox server may be offline */ }
+  };
+
   const startTest = () => {
     setIsTesting(true);
     setTestMessages([{ role: 'assistant', content: agentConfig.greeting || 'Hello! How can I help you today?' }]);
@@ -462,6 +508,158 @@ function VoiceAgents() {
               </div>
             </div>
           )}
+
+          {/* Voice Profiles */}
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                Voice Profiles
+              </h2>
+              {voiceboxProfiles.length > 0 || showCloneForm ? (
+                <button
+                  onClick={() => { setShowCloneForm(!showCloneForm); setCloneError(''); }}
+                  className={`flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg ${
+                    showCloneForm
+                      ? isDark ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-900'
+                      : 'bg-purple-600 text-white hover:bg-purple-500'
+                  }`}
+                >
+                  {showCloneForm ? 'Cancel' : <><Mic className="w-3.5 h-3.5" /> Clone Voice</>}
+                </button>
+              ) : null}
+            </div>
+
+            {voiceboxProfiles.length === 0 && !showCloneForm ? (
+              <div className={`p-5 rounded-xl border text-center ${
+                isDark ? 'border-purple-900/30 bg-white/5' : 'border-gray-200 bg-white'
+              }`}>
+                <Mic className={`w-8 h-8 mx-auto mb-2 ${isDark ? 'text-gray-600' : 'text-gray-300'}`} />
+                <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                  {voiceboxProfiles.length === 0
+                    ? 'Start Voicebox server to manage voice profiles'
+                    : 'No voice profiles yet'}
+                </p>
+                <button
+                  onClick={() => { setShowCloneForm(true); setCloneError(''); }}
+                  className="mt-3 flex items-center gap-2 mx-auto px-4 py-2 text-sm rounded-lg bg-purple-600 text-white hover:bg-purple-500"
+                >
+                  <Mic className="w-3.5 h-3.5" />
+                  Clone Voice
+                </button>
+              </div>
+            ) : (
+              <>
+                {/* Clone Form */}
+                {showCloneForm && (
+                  <div className={`p-5 rounded-xl border mb-4 ${
+                    isDark ? 'border-purple-900/30 bg-white/5' : 'border-gray-200 bg-white'
+                  }`}>
+                    <h3 className={`font-semibold mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                      Create Voice Profile
+                    </h3>
+                    <div className="space-y-3">
+                      <div>
+                        <label className={`block text-sm mb-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                          Profile Name
+                        </label>
+                        <input
+                          type="text"
+                          value={cloneName}
+                          onChange={(e) => setCloneName(e.target.value)}
+                          placeholder="e.g., Sarah - Customer Support"
+                          className={`w-full px-3 py-2 rounded-lg border text-sm ${
+                            isDark ? 'bg-white/5 border-purple-900/30 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
+                          }`}
+                        />
+                      </div>
+                      <div>
+                        <label className={`block text-sm mb-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                          Audio Sample
+                        </label>
+                        <label className={`flex items-center justify-center gap-2 w-full px-4 py-3 rounded-lg border-2 border-dashed cursor-pointer transition-colors ${
+                          cloneFile
+                            ? isDark ? 'border-green-500/50 bg-green-500/10' : 'border-green-300 bg-green-50'
+                            : isDark ? 'border-purple-900/30 hover:border-purple-500/50 bg-white/5' : 'border-gray-300 hover:border-purple-300 bg-gray-50'
+                        }`}>
+                          <Upload className={`w-4 h-4 ${cloneFile ? 'text-green-400' : isDark ? 'text-gray-400' : 'text-gray-500'}`} />
+                          <span className={`text-sm ${cloneFile ? 'text-green-400' : isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                            {cloneFile ? cloneFile.name : 'Upload audio file (WAV, MP3, etc.)'}
+                          </span>
+                          <input
+                            type="file"
+                            accept="audio/*"
+                            className="hidden"
+                            onChange={(e) => setCloneFile(e.target.files?.[0] || null)}
+                          />
+                        </label>
+                      </div>
+                      {cloneError && (
+                        <div className="flex items-center gap-2 text-sm text-red-400">
+                          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                          {cloneError}
+                        </div>
+                      )}
+                      <button
+                        onClick={createVoiceProfile}
+                        disabled={!cloneName.trim() || !cloneFile || cloneLoading}
+                        className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium ${
+                          cloneName.trim() && cloneFile && !cloneLoading
+                            ? 'bg-purple-600 text-white hover:bg-purple-500'
+                            : isDark ? 'bg-gray-800 text-gray-500 cursor-not-allowed' : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                        }`}
+                      >
+                        {cloneLoading ? (
+                          <><RefreshCw className="w-4 h-4 animate-spin" /> Creating Profile...</>
+                        ) : (
+                          <><Mic className="w-4 h-4" /> Create Profile</>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Profiles Grid */}
+                {voiceboxProfiles.length > 0 && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {voiceboxProfiles.map(profile => (
+                      <div
+                        key={profile.id}
+                        className={`p-4 rounded-xl border ${
+                          isDark ? 'border-purple-900/30 bg-white/5' : 'border-gray-200 bg-white'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center">
+                              <Mic className="w-5 h-5 text-white" />
+                            </div>
+                            <div>
+                              <h4 className={`font-semibold text-sm ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                                {profile.name}
+                              </h4>
+                              {profile.created_at && (
+                                <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                                  Created {new Date(profile.created_at).toLocaleDateString()}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => deleteVoiceProfile(profile.id)}
+                            className={`p-1.5 rounded-lg ${
+                              isDark ? 'hover:bg-red-500/20 text-gray-500 hover:text-red-400' : 'hover:bg-red-50 text-gray-400 hover:text-red-500'
+                            }`}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
 
           {/* Voicebox Integration Info */}
           <div className={`p-6 rounded-xl border ${

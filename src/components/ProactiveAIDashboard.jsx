@@ -44,6 +44,134 @@ export default function ProactiveAIDashboard({ isDark = true }) {
   const [actionPlan, setActionPlan] = useState(null);
   const [loadingPlan, setLoadingPlan] = useState(false);
 
+  // Generate local insights when backend is unavailable
+  const generateLocalInsights = () => {
+    const hour = new Date().getHours();
+    const detectedIssues = [];
+    const suggestions = [];
+
+    // Check localStorage data
+    const actionItemsRaw = localStorage.getItem('liv8_action_items');
+    const goalsRaw = localStorage.getItem('liv8_user_goals');
+    const reposRaw = localStorage.getItem('liv8_github_repos');
+    const geminiKey = localStorage.getItem('liv8_gemini_api_key');
+    const taskadeKey = localStorage.getItem('liv8_taskade_api_key');
+
+    let actionItems = [];
+    try { actionItems = actionItemsRaw ? JSON.parse(actionItemsRaw) : []; } catch { /* */ }
+
+    let goals = [];
+    try { goals = goalsRaw ? JSON.parse(goalsRaw) : []; } catch { /* */ }
+
+    let repos = [];
+    try { repos = reposRaw ? JSON.parse(reposRaw) : []; } catch { /* */ }
+
+    // Check for stale tasks (older than 3 days)
+    const threeDaysAgo = Date.now() - (3 * 24 * 60 * 60 * 1000);
+    const staleTasks = actionItems.filter(item => {
+      const created = new Date(item.createdAt || item.created || item.date || 0).getTime();
+      return created > 0 && created < threeDaysAgo && item.status !== 'completed' && item.status !== 'done';
+    });
+
+    if (staleTasks.length > 0) {
+      detectedIssues.push({
+        type: 'stale_tasks',
+        platform: 'local',
+        priority: 'medium',
+        message: `${staleTasks.length} action item${staleTasks.length > 1 ? 's are' : ' is'} overdue (older than 3 days)`
+      });
+    }
+
+    // Check for missing integrations
+    if (!geminiKey) {
+      detectedIssues.push({
+        type: 'missing_integration',
+        platform: 'local',
+        priority: 'high',
+        message: 'No Gemini API key configured - AI features limited'
+      });
+    }
+
+    if (!taskadeKey) {
+      detectedIssues.push({
+        type: 'missing_integration',
+        platform: 'local',
+        priority: 'low',
+        message: 'No Taskade API key configured - task sync unavailable'
+      });
+    }
+
+    // Pending action items suggestion
+    const pendingItems = actionItems.filter(item => item.status !== 'completed' && item.status !== 'done');
+    if (pendingItems.length > 0) {
+      suggestions.push({
+        title: `Review your ${pendingItems.length} pending action item${pendingItems.length > 1 ? 's' : ''}`,
+        description: 'Stay on top of your tasks by reviewing and prioritizing pending items.',
+        type: 'productivity',
+        priority: 'medium',
+        autoExecutable: false
+      });
+    }
+
+    // Time-based suggestions
+    if (hour < 12) {
+      suggestions.push({
+        title: "It's morning - set your top 3 priorities for today",
+        description: 'Starting with clear priorities helps you focus on what matters most.',
+        type: 'planning',
+        priority: 'medium',
+        autoExecutable: false
+      });
+    } else if (hour >= 12 && hour < 17) {
+      suggestions.push({
+        title: 'Afternoon check-in - review your progress',
+        description: 'Take a moment to assess what you have accomplished and adjust your plan.',
+        type: 'productivity',
+        priority: 'low',
+        autoExecutable: false
+      });
+    } else if (hour >= 17) {
+      suggestions.push({
+        title: 'End of day - review what you accomplished and plan tomorrow',
+        description: 'Reflect on your wins and set yourself up for a productive morning.',
+        type: 'review',
+        priority: 'medium',
+        autoExecutable: false
+      });
+    }
+
+    // GitHub repos suggestion
+    if (repos.length > 0) {
+      suggestions.push({
+        title: `You have ${repos.length} GitHub repo${repos.length > 1 ? 's' : ''} - check for any that need attention`,
+        description: 'Review open issues, pull requests, and recent activity across your repositories.',
+        type: 'code',
+        priority: 'low',
+        autoExecutable: false
+      });
+    }
+
+    // Active goals suggestion
+    const activeGoals = goals.filter(g => g.status === 'active');
+    if (activeGoals.length > 0) {
+      suggestions.push({
+        title: `You have ${activeGoals.length} active goal${activeGoals.length > 1 ? 's' : ''} - track your progress`,
+        description: activeGoals.map(g => g.text || g.name || g.title).join(', '),
+        type: 'planning',
+        priority: 'medium',
+        autoExecutable: false
+      });
+    }
+
+    return {
+      isRunning: false,
+      lastCheck: new Date().toISOString(),
+      detectedIssues,
+      suggestions,
+      source: 'local'
+    };
+  };
+
   // Fetch all data
   const fetchData = useCallback(async () => {
     try {
@@ -65,6 +193,10 @@ export default function ProactiveAIDashboard({ isDark = true }) {
       }
     } catch (error) {
       console.error('Failed to fetch proactive data:', error);
+      // Backend unavailable - generate local insights instead
+      const localState = generateLocalInsights();
+      setProactiveState(localState);
+      setLoading(false);
     } finally {
       setLoading(false);
     }
