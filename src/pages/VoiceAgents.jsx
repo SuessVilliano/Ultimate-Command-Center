@@ -6,7 +6,28 @@ import {
   AlertCircle, CheckCircle, Edit3, Headphones, Radio, Wifi
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
-import { API_URL } from '../config';
+import { API_URL, VOICEBOX_URL } from '../config';
+
+// ── Voicebox helpers ──────────────────────────────────────────────
+async function fetchVoiceboxProfiles() {
+  try {
+    const res = await fetch(`${VOICEBOX_URL}/profiles`);
+    if (res.ok) return await res.json();
+  } catch { /* Voicebox server may be offline */ }
+  return [];
+}
+
+async function generateVoiceboxSpeech(text, profileId) {
+  try {
+    const res = await fetch(`${VOICEBOX_URL}/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile_id: profileId, text, language: 'en' }),
+    });
+    if (res.ok) return await res.json();
+  } catch { /* */ }
+  return null;
+}
 
 // Voice agent templates for different client use cases
 const AGENT_TEMPLATES = [
@@ -17,7 +38,7 @@ const AGENT_TEMPLATES = [
     icon: Phone,
     color: 'blue',
     systemPrompt: 'You are a professional customer support agent. Be helpful, empathetic, and solution-oriented. Ask clarifying questions when needed. If you cannot resolve an issue, offer to escalate to a human agent.',
-    voice: 'NATF0.pt',
+    voiceProfileId: '',
     settings: { temperature: 0.5, maxTokens: 512, language: 'en-US' }
   },
   {
@@ -27,7 +48,7 @@ const AGENT_TEMPLATES = [
     icon: Users,
     color: 'green',
     systemPrompt: 'You are a consultative sales assistant. Understand the prospect\'s needs, explain product benefits clearly, handle objections professionally, and guide towards scheduling a demo or making a purchase. Be persuasive but not pushy.',
-    voice: 'NATM0.pt',
+    voiceProfileId: '',
     settings: { temperature: 0.7, maxTokens: 512, language: 'en-US' }
   },
   {
@@ -37,7 +58,7 @@ const AGENT_TEMPLATES = [
     icon: Globe,
     color: 'purple',
     systemPrompt: 'You are an appointment scheduling assistant. Help callers book, reschedule, or cancel appointments. Confirm all details clearly: date, time, service type, and contact information. Be efficient and courteous.',
-    voice: 'NATF1.pt',
+    voiceProfileId: '',
     settings: { temperature: 0.3, maxTokens: 256, language: 'en-US' }
   },
   {
@@ -47,7 +68,7 @@ const AGENT_TEMPLATES = [
     icon: Zap,
     color: 'cyan',
     systemPrompt: 'You are a trading advisor assistant for Hybrid Funding. Provide market analysis, discuss trade setups, explain risk management strategies, and help traders understand challenge rules. Always include risk disclaimers. Never give specific financial advice.',
-    voice: 'NATM1.pt',
+    voiceProfileId: '',
     settings: { temperature: 0.6, maxTokens: 1024, language: 'en-US' }
   },
   {
@@ -57,7 +78,7 @@ const AGENT_TEMPLATES = [
     icon: Headphones,
     color: 'pink',
     systemPrompt: 'You are a health and wellness product advisor for LIV8 Health. Help customers find the right supplements and health products. Ask about their goals, any allergies or conditions, and recommend products. Always remind them to consult a healthcare provider.',
-    voice: 'NATF2.pt',
+    voiceProfileId: '',
     settings: { temperature: 0.5, maxTokens: 512, language: 'en-US' }
   },
   {
@@ -67,24 +88,9 @@ const AGENT_TEMPLATES = [
     icon: Bot,
     color: 'orange',
     systemPrompt: '',
-    voice: 'NATF0.pt',
+    voiceProfileId: '',
     settings: { temperature: 0.7, maxTokens: 512, language: 'en-US' }
   }
-];
-
-const AVAILABLE_VOICES = [
-  { value: 'NATF0.pt', label: 'Natural Female 1', gender: 'female' },
-  { value: 'NATF1.pt', label: 'Natural Female 2', gender: 'female' },
-  { value: 'NATF2.pt', label: 'Natural Female 3', gender: 'female' },
-  { value: 'NATF3.pt', label: 'Natural Female 4', gender: 'female' },
-  { value: 'NATM0.pt', label: 'Natural Male 1', gender: 'male' },
-  { value: 'NATM1.pt', label: 'Natural Male 2', gender: 'male' },
-  { value: 'NATM2.pt', label: 'Natural Male 3', gender: 'male' },
-  { value: 'NATM3.pt', label: 'Natural Male 4', gender: 'male' },
-  { value: 'VARF0.pt', label: 'Varied Female 1', gender: 'female' },
-  { value: 'VARF1.pt', label: 'Varied Female 2', gender: 'female' },
-  { value: 'VARM0.pt', label: 'Varied Male 1', gender: 'male' },
-  { value: 'VARM1.pt', label: 'Varied Male 2', gender: 'male' },
 ];
 
 const SUPPORTED_LANGUAGES = [
@@ -110,11 +116,12 @@ function VoiceAgents() {
     } catch { return []; }
   });
   const [selectedTemplate, setSelectedTemplate] = useState(null);
+  const [voiceboxProfiles, setVoiceboxProfiles] = useState([]);
   const [agentConfig, setAgentConfig] = useState({
     name: '',
     description: '',
     systemPrompt: '',
-    voice: 'NATF0.pt',
+    voiceProfileId: '',
     greeting: 'Hello! How can I help you today?',
     language: 'en-US',
     temperature: 0.7,
@@ -136,6 +143,13 @@ function VoiceAgents() {
   const [testLoading, setTestLoading] = useState(false);
   const recognitionRef = useRef(null);
   const messagesEndRef = useRef(null);
+
+  // Load Voicebox profiles on mount
+  useEffect(() => {
+    fetchVoiceboxProfiles().then(profiles => {
+      setVoiceboxProfiles(profiles);
+    });
+  }, []);
 
   // Initialize speech recognition
   useEffect(() => {
@@ -166,19 +180,38 @@ function VoiceAgents() {
     localStorage.setItem('voice_agents', JSON.stringify(savedAgents));
   }, [savedAgents]);
 
-  const speak = (text) => {
-    if (!('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    const voices = window.speechSynthesis.getVoices();
-    const langVoices = voices.filter(v => v.lang.startsWith(agentConfig.language.split('-')[0]));
-    if (langVoices.length > 0) utterance.voice = langVoices[0];
-    utterance.rate = 1;
-    utterance.pitch = 1;
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
-    window.speechSynthesis.speak(utterance);
+  const speak = async (text) => {
+    setIsSpeaking(true);
+
+    // Try Voicebox cloned voice first
+    if (agentConfig.voiceProfileId) {
+      try {
+        const gen = await generateVoiceboxSpeech(text, agentConfig.voiceProfileId);
+        if (gen?.id) {
+          const audio = new Audio(`${VOICEBOX_URL}/audio/${gen.id}`);
+          audio.onended = () => setIsSpeaking(false);
+          audio.onerror = () => setIsSpeaking(false);
+          await audio.play().catch(() => setIsSpeaking(false));
+          return;
+        }
+      } catch { /* fall through to browser TTS */ }
+    }
+
+    // Browser TTS fallback
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      const voices = window.speechSynthesis.getVoices();
+      const langVoices = voices.filter(v => v.lang.startsWith(agentConfig.language.split('-')[0]));
+      if (langVoices.length > 0) utterance.voice = langVoices[0];
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      utterance.onend = () => setIsSpeaking(false);
+      utterance.onerror = () => setIsSpeaking(false);
+      window.speechSynthesis.speak(utterance);
+    } else {
+      setIsSpeaking(false);
+    }
   };
 
   const handleTestMessage = async (text) => {
@@ -245,7 +278,7 @@ function VoiceAgents() {
       name: template.id === 'custom' ? '' : template.name,
       description: template.description,
       systemPrompt: template.systemPrompt,
-      voice: template.voice,
+      voiceProfileId: template.voiceProfileId || (voiceboxProfiles.length > 0 ? voiceboxProfiles[0].id : ''),
       temperature: template.settings.temperature,
       maxTokens: template.settings.maxTokens,
       language: template.settings.language,
@@ -430,7 +463,7 @@ function VoiceAgents() {
             </div>
           )}
 
-          {/* NVIDIA Integration Info */}
+          {/* Voicebox Integration Info */}
           <div className={`p-6 rounded-xl border ${
             isDark
               ? 'border-green-500/30 bg-gradient-to-br from-green-900/20 to-cyan-900/20'
@@ -442,27 +475,30 @@ function VoiceAgents() {
               </div>
               <div>
                 <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Powered by NVIDIA NIM + PersonaPlex
+                  Powered by Voicebox Voice Cloning
                 </h3>
                 <p className={`text-sm mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                  Voice agents use NVIDIA Nemotron LLM for intelligent responses and PersonaPlex for real-time
-                  voice synthesis. Agents support full-duplex conversation, multiple languages, and can be
-                  deployed as phone bots, web widgets, or API endpoints.
+                  Voice agents use Voicebox for voice cloning and TTS — clone any voice from audio samples
+                  and use it for your agents. Supports Qwen3-TTS model for high-quality synthesis.
+                  Agents can be deployed as phone bots, web widgets, or API endpoints.
                 </p>
                 <div className="flex items-center gap-4 mt-3">
                   <span className={`flex items-center gap-1 text-xs ${isDark ? 'text-green-400' : 'text-green-600'}`}>
-                    <CheckCircle className="w-3 h-3" /> Nemotron 70B
+                    <CheckCircle className="w-3 h-3" /> Voice Cloning
                   </span>
                   <span className={`flex items-center gap-1 text-xs ${isDark ? 'text-green-400' : 'text-green-600'}`}>
-                    <CheckCircle className="w-3 h-3" /> PersonaPlex Voice
+                    <CheckCircle className="w-3 h-3" /> Voicebox TTS
                   </span>
                   <span className={`flex items-center gap-1 text-xs ${isDark ? 'text-green-400' : 'text-green-600'}`}>
                     <CheckCircle className="w-3 h-3" /> Multi-language
                   </span>
                   <span className={`flex items-center gap-1 text-xs ${isDark ? 'text-green-400' : 'text-green-600'}`}>
-                    <CheckCircle className="w-3 h-3" /> Auto-fallback
+                    <CheckCircle className="w-3 h-3" /> Browser Fallback
                   </span>
                 </div>
+                <p className={`text-xs mt-2 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                  Server: <span className="font-mono">{VOICEBOX_URL}</span> — {voiceboxProfiles.length} voice profile{voiceboxProfiles.length !== 1 ? 's' : ''} loaded
+                </p>
               </div>
             </div>
           </div>
@@ -491,18 +527,24 @@ function VoiceAgents() {
                   />
                 </div>
                 <div>
-                  <label className={`block text-sm mb-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Voice</label>
+                  <label className={`block text-sm mb-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Voice (Voicebox)</label>
                   <select
-                    value={agentConfig.voice}
-                    onChange={(e) => setAgentConfig(prev => ({ ...prev, voice: e.target.value }))}
+                    value={agentConfig.voiceProfileId}
+                    onChange={(e) => setAgentConfig(prev => ({ ...prev, voiceProfileId: e.target.value }))}
                     className={`w-full px-3 py-2 rounded-lg border text-sm ${
                       isDark ? 'bg-white/5 border-purple-900/30 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
                     }`}
                   >
-                    {AVAILABLE_VOICES.map(v => (
-                      <option key={v.value} value={v.value}>{v.label}</option>
+                    <option value="">Browser TTS (default)</option>
+                    {voiceboxProfiles.map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
                     ))}
                   </select>
+                  {voiceboxProfiles.length === 0 && (
+                    <p className={`text-xs mt-1 ${isDark ? 'text-yellow-500' : 'text-yellow-600'}`}>
+                      Start Voicebox server to use cloned voices
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="mt-4">
@@ -669,7 +711,9 @@ function VoiceAgents() {
                 <div className={`flex justify-between ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                   <span>Voice:</span>
                   <span className={isDark ? 'text-white' : 'text-gray-900'}>
-                    {AVAILABLE_VOICES.find(v => v.value === agentConfig.voice)?.label || agentConfig.voice}
+                    {agentConfig.voiceProfileId
+                      ? (voiceboxProfiles.find(p => p.id === agentConfig.voiceProfileId)?.name || 'Voicebox Profile')
+                      : 'Browser TTS'}
                   </span>
                 </div>
                 <div className={`flex justify-between ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>

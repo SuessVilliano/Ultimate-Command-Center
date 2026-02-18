@@ -47,59 +47,44 @@ import { useTheme } from '../context/ThemeContext';
 import { COMMANDER_AGENT, SPECIALIZED_AGENTS, AGENT_CATEGORIES, getAgentById } from '../data/agents';
 import aiService from '../services/aiService';
 import AISettings from './AISettings';
-import { API_URL } from '../config';
+import { API_URL, VOICEBOX_URL } from '../config';
 
-// ── PersonaPlex protocol constants ──────────────────────────────
-const MSG_HANDSHAKE = 0x00;
-const MSG_AUDIO    = 0x01;
-const MSG_TEXT     = 0x02;
-const MSG_CONTROL  = 0x03;
-const MSG_PING     = 0x06;
-const CTRL_START   = 0x00;
-
-function encodeMessage(type, payload) {
-  const typeBuf = new Uint8Array([type]);
-  if (!payload || payload.length === 0) return typeBuf;
-  const merged = new Uint8Array(1 + payload.length);
-  merged[0] = type;
-  merged.set(payload instanceof Uint8Array ? payload : new Uint8Array(payload), 1);
-  return merged;
+// ── Voicebox voice cloning & TTS helpers ──────────────────────────
+async function fetchVoiceboxProfiles() {
+  try {
+    const res = await fetch(`${VOICEBOX_URL}/profiles`);
+    if (res.ok) return await res.json();
+  } catch { /* Voicebox server may be offline */ }
+  return [];
 }
 
-function decodeMessage(data) {
-  const arr = new Uint8Array(data);
-  return { type: arr[0], payload: arr.slice(1) };
+async function generateVoiceboxSpeech(text, profileId, instruct) {
+  try {
+    const res = await fetch(`${VOICEBOX_URL}/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        profile_id: profileId,
+        text,
+        language: 'en',
+        instruct: instruct || undefined,
+      }),
+    });
+    if (res.ok) return await res.json();
+  } catch { /* Voicebox server may be offline */ }
+  return null;
 }
 
-function getPersonaPlexServer() {
-  const params = new URLSearchParams(window.location.search);
-  const fromQuery = params.get('worker_addr');
-  if (fromQuery) return fromQuery;
-  const fromEnv = import.meta.env.VITE_PERSONAPLEX_SERVER;
-  if (fromEnv) return fromEnv;
-  return 'localhost:8998';
+async function playVoiceboxAudio(generationId) {
+  try {
+    const audio = new Audio(`${VOICEBOX_URL}/audio/${generationId}`);
+    return new Promise((resolve) => {
+      audio.onended = resolve;
+      audio.onerror = resolve;
+      audio.play().catch(resolve);
+    });
+  } catch { /* */ }
 }
-
-const PERSONAPLEX_VOICES = [
-  { value: 'NATF0.pt', label: 'Natural Female 1' },
-  { value: 'NATF1.pt', label: 'Natural Female 2' },
-  { value: 'NATF2.pt', label: 'Natural Female 3' },
-  { value: 'NATF3.pt', label: 'Natural Female 4' },
-  { value: 'NATM0.pt', label: 'Natural Male 1' },
-  { value: 'NATM1.pt', label: 'Natural Male 2' },
-  { value: 'NATM2.pt', label: 'Natural Male 3' },
-  { value: 'NATM3.pt', label: 'Natural Male 4' },
-  { value: 'VARF0.pt', label: 'Varied Female 1' },
-  { value: 'VARF1.pt', label: 'Varied Female 2' },
-  { value: 'VARF2.pt', label: 'Varied Female 3' },
-  { value: 'VARF3.pt', label: 'Varied Female 4' },
-  { value: 'VARF4.pt', label: 'Varied Female 5' },
-  { value: 'VARM0.pt', label: 'Varied Male 1' },
-  { value: 'VARM1.pt', label: 'Varied Male 2' },
-  { value: 'VARM2.pt', label: 'Varied Male 3' },
-  { value: 'VARM3.pt', label: 'Varied Male 4' },
-  { value: 'VARM4.pt', label: 'Varied Male 5' },
-];
 
 const DEFAULT_VOICE_PROMPT =
   `You are an AI assistant integrated into LIV8 Command Center — a voice-enabled operations dashboard for managing projects, support tickets, GitHub repos, AI agent teams, domain portfolios, integrations (Freshdesk, ClickUp, GitHub), news monitoring, and automated workflows. You help users navigate the app, find information, manage tasks, troubleshoot issues, and operate the platform hands-free. Be concise and helpful.`;
@@ -189,16 +174,18 @@ function ChatWidget({ onNavigate }) {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedAgents, setSelectedAgents] = useState([]);
 
-  // PersonaPlex voice state
+  // Voicebox voice state
   const [voiceActive, setVoiceActive] = useState(false);
   const [voiceConnecting, setVoiceConnecting] = useState(false);
   const [voiceError, setVoiceError] = useState(null);
-  const [selectedVoice, setSelectedVoice] = useState('NATF0.pt');
+  const [voiceboxProfiles, setVoiceboxProfiles] = useState([]);
+  const [selectedProfileId, setSelectedProfileId] = useState('');
   const [showVoiceSetup, setShowVoiceSetup] = useState(false);
   const [voiceTranscript, setVoiceTranscript] = useState('');
   const [aiAudioLevel, setAiAudioLevel] = useState(0);
   const [userAudioLevel, setUserAudioLevel] = useState(0);
   const [micActive, setMicActive] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
 
   // File & screen state
   const [uploadedFiles, setUploadedFiles] = useState([]);
@@ -292,17 +279,19 @@ function ChatWidget({ onNavigate }) {
   const fileInputRef = useRef(null);
   const screenStreamRef = useRef(null);
 
-  // PersonaPlex refs
-  const wsRef = useRef(null);
-  const recorderRef = useRef(null);
-  const audioCtxRef = useRef(null);
-  const workletNodeRef = useRef(null);
-  const decoderWorkerRef = useRef(null);
-  const pingIntervalRef = useRef(null);
-  const analyserRef = useRef(null);
+  // Voicebox refs
+  const recognitionRef = useRef(null);
   const micStreamRef = useRef(null);
+  const analyserRef = useRef(null);
   const animFrameRef = useRef(null);
-  const voiceTranscriptRef = useRef('');
+
+  // Load Voicebox profiles on mount
+  useEffect(() => {
+    fetchVoiceboxProfiles().then(profiles => {
+      setVoiceboxProfiles(profiles);
+      if (profiles.length > 0) setSelectedProfileId(profiles[0].id);
+    });
+  }, []);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -310,7 +299,7 @@ function ChatWidget({ onNavigate }) {
       if (screenStreamRef.current) {
         screenStreamRef.current.getTracks().forEach(track => track.stop());
       }
-      disconnectPersonaPlex();
+      disconnectVoicebox();
     };
   }, []);
 
@@ -318,17 +307,16 @@ function ChatWidget({ onNavigate }) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // ── PersonaPlex voice engine ────────────────────────────────────
+  // ── Voicebox voice engine ──────────────────────────────────────
 
   const startLevelMonitoring = useCallback((stream) => {
     try {
-      const ctx = audioCtxRef.current;
-      if (!ctx) return;
-      const src = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
+      const audioCtx = new AudioContext();
+      const src = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
       analyser.fftSize = 256;
       src.connect(analyser);
-      analyserRef.current = analyser;
+      analyserRef.current = { analyser, audioCtx };
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
       const tick = () => {
         analyser.getByteFrequencyData(dataArray);
@@ -340,211 +328,177 @@ function ChatWidget({ onNavigate }) {
     } catch { /* non-critical */ }
   }, []);
 
-  const startMicForPersonaPlex = useCallback(async (ws, audioCtx) => {
+  // Speak text using Voicebox TTS (cloned voice) with browser fallback
+  const speakWithVoicebox = useCallback(async (text) => {
+    if (!text.trim()) return;
+    setIsSpeaking(true);
+    setAiAudioLevel(0.5);
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { sampleRate: 24000, channelCount: 1, echoCancellation: true, noiseSuppression: true },
-      });
-      micStreamRef.current = stream;
-      startLevelMonitoring(stream);
-
-      // Dynamically import opus-recorder so a load failure doesn't crash the whole component
-      const { default: Recorder } = await import('opus-recorder');
-
-      // Create a single MediaStreamSource to share with the recorder
-      const sourceNode = audioCtx.createMediaStreamSource(stream);
-
-      const recorder = new Recorder({
-        encoderPath: '/encoderWorker.min.js',
-        mediaTrackConstraints: { sampleRate: 24000, channelCount: 1 },
-        encoderSampleRate: 24000,
-        encoderFrameSize: 960,
-        encoderApplication: 2049,  // OPUS_APPLICATION_VOIP
-        streamPages: true,
-        sourceNode,
-      });
-
-      recorder.ondataavailable = (opusData) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(encodeMessage(MSG_AUDIO, new Uint8Array(opusData)));
+      if (selectedProfileId) {
+        const gen = await generateVoiceboxSpeech(text, selectedProfileId);
+        if (gen?.id) {
+          await playVoiceboxAudio(gen.id);
+          setIsSpeaking(false);
+          setAiAudioLevel(0);
+          return;
         }
-      };
-
-      await recorder.start();
-      recorderRef.current = recorder;
-      setMicActive(true);
-    } catch (err) {
-      console.error('PersonaPlex mic error:', err);
-      setMicActive(false);
+      }
+    } catch {
+      // Fallback to browser TTS
     }
-  }, [startLevelMonitoring]);
 
-  const connectPersonaPlex = useCallback(async () => {
+    // Browser TTS fallback
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      const voices = window.speechSynthesis.getVoices();
+      const englishVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Google') || v.name.includes('Samantha'))) || voices.find(v => v.lang.startsWith('en')) || voices[0];
+      if (englishVoice) utterance.voice = englishVoice;
+      utterance.onend = () => { setIsSpeaking(false); setAiAudioLevel(0); };
+      utterance.onerror = () => { setIsSpeaking(false); setAiAudioLevel(0); };
+      window.speechSynthesis.speak(utterance);
+    } else {
+      setIsSpeaking(false);
+      setAiAudioLevel(0);
+    }
+  }, [selectedProfileId]);
+
+  const connectVoicebox = useCallback(async () => {
     setVoiceConnecting(true);
     setVoiceError(null);
     setVoiceTranscript('');
-    voiceTranscriptRef.current = '';
-
-    const serverAddr = getPersonaPlexServer();
-    const textSeed = Math.floor(Math.random() * 100000);
-    const audioSeed = Math.floor(Math.random() * 100000);
-
-    const wsUrl =
-      `wss://${serverAddr}/api/chat?` +
-      `text_temperature=0.7&text_topk=25&audio_temperature=0.8&audio_topk=250` +
-      `&pad_mult=0&text_seed=${textSeed}&audio_seed=${audioSeed}` +
-      `&repetition_penalty_context=64&repetition_penalty=1.0` +
-      `&text_prompt=${encodeURIComponent(DEFAULT_VOICE_PROMPT)}` +
-      `&voice_prompt=${encodeURIComponent(selectedVoice)}`;
 
     try {
-      const audioCtx = new AudioContext({ sampleRate: 24000 });
-      audioCtxRef.current = audioCtx;
+      // Check Voicebox server health
+      const healthRes = await fetch(`${VOICEBOX_URL}/health`).catch(() => null);
+      const voiceboxOnline = healthRes?.ok;
 
-      await audioCtx.audioWorklet.addModule('/moshi-processor.js');
-      const workletNode = new AudioWorkletNode(audioCtx, 'moshi-processor');
-      workletNode.connect(audioCtx.destination);
-      workletNodeRef.current = workletNode;
-
-      workletNode.port.onmessage = (e) => {
-        if (e.data && typeof e.data.delay === 'number') {
-          setAiAudioLevel(e.data.delay > 0.05 ? 0.6 + Math.random() * 0.4 : 0);
+      // Refresh profiles
+      if (voiceboxOnline) {
+        const profiles = await fetchVoiceboxProfiles();
+        setVoiceboxProfiles(profiles);
+        if (profiles.length > 0 && !selectedProfileId) {
+          setSelectedProfileId(profiles[0].id);
         }
-      };
+      }
 
-      const decoderWorker = new Worker('/decoderWorker.min.js');
-      decoderWorkerRef.current = decoderWorker;
+      // Set up speech recognition for listening
+      if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
 
-      decoderWorker.onmessage = (e) => {
-        if (e.data && e.data.length) {
-          const pcm = new Float32Array(e.data);
-          workletNode.port.postMessage({ type: 'audio', frame: pcm, micDuration: 0 });
-        }
-      };
-
-      decoderWorker.postMessage({
-        command: 'init',
-        decoderSampleRate: 24000,
-        outputBufferSampleRate: 24000,
-      });
-
-      const ws = new WebSocket(wsUrl);
-      ws.binaryType = 'arraybuffer';
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        setVoiceConnecting(false);
-        setVoiceActive(true);
-        setShowVoiceSetup(false);
-
-        ws.send(encodeMessage(MSG_CONTROL, new Uint8Array([CTRL_START])));
-
-        pingIntervalRef.current = setInterval(() => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(encodeMessage(MSG_PING, null));
+        recognition.onresult = async (event) => {
+          let final = '';
+          let interim = '';
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            if (event.results[i].isFinal) {
+              final += event.results[i][0].transcript;
+            } else {
+              interim += event.results[i][0].transcript;
+            }
           }
-        }, 5000);
-
-        addMessage('system', 'Voice session started — speak freely, the AI can hear and respond in real-time');
-        startMicForPersonaPlex(ws, audioCtx);
-      };
-
-      ws.onmessage = (event) => {
-        const { type, payload } = decodeMessage(event.data);
-        switch (type) {
-          case MSG_AUDIO:
-            decoderWorker.postMessage(
-              { command: 'decode', pages: payload.buffer },
-              [payload.buffer]
-            );
-            break;
-          case MSG_TEXT: {
-            const text = new TextDecoder().decode(payload);
-            voiceTranscriptRef.current += text;
-            setVoiceTranscript((prev) => prev + text);
-            break;
+          setVoiceTranscript(interim || final);
+          if (final) {
+            setVoiceTranscript('');
+            // Process through AI and speak response
+            addMessage('user', final.trim());
+            try {
+              const aiRes = await fetch(`${API_URL}/api/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: final.trim(), systemPrompt: DEFAULT_VOICE_PROMPT }),
+              });
+              if (aiRes.ok) {
+                const data = await aiRes.json();
+                const reply = data.response || data.text || data.message || '';
+                if (reply) {
+                  addMessage('commander', reply, 'liv8-commander');
+                  speakWithVoicebox(reply);
+                }
+              }
+            } catch {
+              addMessage('commander', 'Sorry, I had trouble processing that.', 'liv8-commander');
+            }
           }
-          default:
-            break;
-        }
-      };
+        };
 
-      ws.onerror = () => {
-        setVoiceConnecting(false);
-        setVoiceError('Connection failed. Is the PersonaPlex server running?');
-      };
+        recognition.onend = () => {
+          // Auto-restart if still in voice mode
+          if (recognitionRef.current?._shouldContinue) {
+            try { recognition.start(); } catch { /* */ }
+          }
+        };
 
-      ws.onclose = () => {
-        setVoiceActive(false);
-        setVoiceConnecting(false);
-        cleanupVoicePing();
-      };
-    } catch (err) {
-      console.error('PersonaPlex connect error:', err);
+        recognition.onerror = (event) => {
+          if (event.error !== 'no-speech' && event.error !== 'aborted') {
+            console.error('Voice recognition error:', event.error);
+          }
+        };
+
+        recognitionRef.current = recognition;
+        recognition._shouldContinue = true;
+        recognition.start();
+      }
+
+      // Start mic level monitoring
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micStreamRef.current = stream;
+      startLevelMonitoring(stream);
+
       setVoiceConnecting(false);
-      setVoiceError('Failed to initialize audio. Check browser permissions.');
+      setVoiceActive(true);
+      setMicActive(true);
+      setShowVoiceSetup(false);
+
+      addMessage('system', voiceboxOnline
+        ? `Voice session started with Voicebox${selectedProfileId ? ' (cloned voice)' : ''} — speak freely`
+        : 'Voice session started (browser TTS fallback — start Voicebox server for cloned voices)'
+      );
+
+    } catch (err) {
+      console.error('Voicebox connect error:', err);
+      setVoiceConnecting(false);
+      setVoiceError('Failed to start voice session. Check mic permissions.');
     }
-  }, [selectedVoice, startMicForPersonaPlex]);
+  }, [selectedProfileId, startLevelMonitoring, speakWithVoicebox]);
 
-  const disconnectPersonaPlex = useCallback(() => {
-    cleanupVoicePing();
-
+  const disconnectVoicebox = useCallback(() => {
     if (animFrameRef.current) {
       cancelAnimationFrame(animFrameRef.current);
       animFrameRef.current = null;
     }
-    if (recorderRef.current) {
-      try { recorderRef.current.stop(); } catch { /* */ }
-      recorderRef.current = null;
+    if (recognitionRef.current) {
+      recognitionRef.current._shouldContinue = false;
+      try { recognitionRef.current.stop(); } catch { /* */ }
+      recognitionRef.current = null;
     }
     if (micStreamRef.current) {
-      micStreamRef.current.getTracks().forEach((t) => t.stop());
+      micStreamRef.current.getTracks().forEach(t => t.stop());
       micStreamRef.current = null;
     }
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
+    if (analyserRef.current?.audioCtx) {
+      analyserRef.current.audioCtx.close().catch(() => {});
+      analyserRef.current = null;
     }
-    if (decoderWorkerRef.current) {
-      decoderWorkerRef.current.terminate();
-      decoderWorkerRef.current = null;
-    }
-    if (workletNodeRef.current) {
-      workletNodeRef.current.port.postMessage({ type: 'reset' });
-      workletNodeRef.current.disconnect();
-      workletNodeRef.current = null;
-    }
-    if (audioCtxRef.current) {
-      audioCtxRef.current.close().catch(() => {});
-      audioCtxRef.current = null;
-    }
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
 
-    // Flush transcript to chat as a message (read from ref, not inside a state updater)
-    const finalTranscript = voiceTranscriptRef.current.trim();
-    if (finalTranscript) {
-      addMessage('commander', finalTranscript, 'liv8-commander');
-    }
-    voiceTranscriptRef.current = '';
     setVoiceTranscript('');
-
     setMicActive(false);
     setAiAudioLevel(0);
     setUserAudioLevel(0);
     setVoiceActive(false);
     setVoiceConnecting(false);
+    setIsSpeaking(false);
   }, []);
-
-  const cleanupVoicePing = () => {
-    if (pingIntervalRef.current) {
-      clearInterval(pingIntervalRef.current);
-      pingIntervalRef.current = null;
-    }
-  };
 
   const handleMicButton = () => {
     if (voiceActive) {
       addMessage('system', 'Voice session ended');
-      disconnectPersonaPlex();
+      disconnectVoicebox();
     } else if (voiceConnecting) {
       // Already connecting, do nothing
     } else {
@@ -974,23 +928,24 @@ function ChatWidget({ onNavigate }) {
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
                     <Mic className="w-4 h-4 text-emerald-400" />
-                    <span className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>PersonaPlex Voice</span>
+                    <span className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Voicebox Voice</span>
                     {voiceActive && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400">Active</span>}
                   </div>
                   <div className="flex items-center gap-2">
                     <select
-                      value={selectedVoice}
-                      onChange={e => setSelectedVoice(e.target.value)}
+                      value={selectedProfileId}
+                      onChange={e => setSelectedProfileId(e.target.value)}
                       disabled={voiceActive}
                       className={`flex-1 px-2 py-1 rounded text-sm ${isDark ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'} border disabled:opacity-50`}
                     >
-                      {PERSONAPLEX_VOICES.map(v => (
-                        <option key={v.value} value={v.value}>{v.label}</option>
+                      <option value="">Browser TTS (fallback)</option>
+                      {voiceboxProfiles.map(p => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
                       ))}
                     </select>
                   </div>
                   <div className={`text-[10px] ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                    Server: <span className="font-mono">{getPersonaPlexServer()}</span>
+                    Server: <span className="font-mono">{VOICEBOX_URL}</span>
                   </div>
                 </div>
                 <div className="pt-2 border-t border-gray-700">
@@ -1454,7 +1409,7 @@ function ChatWidget({ onNavigate }) {
             </div>
           )}
 
-          {/* PersonaPlex Voice Session Banner */}
+          {/* Voicebox Voice Session Banner */}
           {voiceActive && (
             <div className={`px-4 py-3 border-t ${isDark ? 'border-emerald-800/50 bg-emerald-900/20' : 'border-emerald-200 bg-emerald-50'}`}>
               {/* Audio visualizers */}
@@ -1500,7 +1455,7 @@ function ChatWidget({ onNavigate }) {
                   )}
                 </div>
                 <button
-                  onClick={() => { addMessage('system', 'Voice session ended'); disconnectPersonaPlex(); }}
+                  onClick={() => { addMessage('system', 'Voice session ended'); disconnectVoicebox(); }}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-500 rounded-lg text-xs text-white font-medium transition-colors"
                 >
                   <Phone className="w-3 h-3 rotate-[135deg]" />
@@ -1515,7 +1470,7 @@ function ChatWidget({ onNavigate }) {
             <div className={`px-4 py-3 border-t ${isDark ? 'border-gray-800 bg-gradient-to-r from-emerald-900/20 to-cyan-900/20' : 'border-gray-200 bg-emerald-50'}`}>
               <div className="flex items-center justify-between mb-2">
                 <span className={`text-xs font-semibold flex items-center gap-1.5 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>
-                  <Mic className="w-3 h-3" /> PersonaPlex Voice
+                  <Mic className="w-3 h-3" /> Voicebox Voice
                 </span>
                 <button onClick={() => setShowVoiceSetup(false)} className={`p-1 rounded ${isDark ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-200 text-gray-500'}`}>
                   <X className="w-3 h-3" />
@@ -1523,16 +1478,17 @@ function ChatWidget({ onNavigate }) {
               </div>
               <div className="flex items-center gap-2 mb-2">
                 <select
-                  value={selectedVoice}
-                  onChange={e => setSelectedVoice(e.target.value)}
+                  value={selectedProfileId}
+                  onChange={e => setSelectedProfileId(e.target.value)}
                   className={`flex-1 px-2 py-1.5 rounded-lg text-sm ${isDark ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'} border`}
                 >
-                  {PERSONAPLEX_VOICES.map(v => (
-                    <option key={v.value} value={v.value}>{v.label}</option>
+                  <option value="">Browser TTS (fallback)</option>
+                  {voiceboxProfiles.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
                 <button
-                  onClick={connectPersonaPlex}
+                  onClick={connectVoicebox}
                   disabled={voiceConnecting}
                   className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
                     voiceConnecting
@@ -1552,7 +1508,7 @@ function ChatWidget({ onNavigate }) {
                 <p className="text-[10px] text-red-400 bg-red-400/10 rounded-lg px-2 py-1 mb-1">{voiceError}</p>
               )}
               <p className={`text-[10px] ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                Server: <span className="font-mono">{getPersonaPlexServer()}</span> — Full-duplex voice, no turn-taking needed
+                Server: <span className="font-mono">{VOICEBOX_URL}</span> — Voice cloning TTS with browser STT
               </p>
             </div>
           )}
@@ -1580,7 +1536,7 @@ function ChatWidget({ onNavigate }) {
                     ? 'bg-emerald-600 text-white ring-2 ring-emerald-400'
                     : 'bg-emerald-600 text-white hover:bg-emerald-500'
                 }`}
-                title={voiceActive ? 'End voice session' : 'Start PersonaPlex voice'}
+                title={voiceActive ? 'End voice session' : 'Start Voicebox voice'}
               >
                 {voiceActive ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
               </button>

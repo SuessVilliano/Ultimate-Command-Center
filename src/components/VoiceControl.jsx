@@ -11,7 +11,7 @@ import {
   AlertCircle,
   Loader2
 } from 'lucide-react';
-import { API_URL } from '../config';
+import { API_URL, VOICEBOX_URL } from '../config';
 
 // Navigation commands still handled locally for instant response
 const NAV_COMMANDS = {
@@ -44,6 +44,8 @@ function VoiceControl({ onNavigate, isOpen, onClose }) {
   const [voiceSettings, setVoiceSettings] = useState({
     rate: 1, pitch: 1, volume: 1
   });
+  const [voiceboxProfiles, setVoiceboxProfiles] = useState([]);
+  const [selectedProfileId, setSelectedProfileId] = useState('');
 
   // Feature support
   const [speechSupported, setSpeechSupported] = useState(false);
@@ -66,6 +68,14 @@ You are integrated into a business operations dashboard for Hybrid Holdings LLC,
 The Command Center has these sections: Dashboard, Agent Team (12 AI agents on Taskade), News & Markets (live crypto/stock data), Trading (live market data), Voice Agents (build voice AI for clients), API Builder (MCP connections), Projects, Integrations (Freshdesk, ClickUp, GoHighLevel, TaskMagic, GitHub), Valuation, Domains, and GitHub.
 
 Keep responses concise for voice — under 3 sentences when possible. Be direct and helpful.`;
+
+  // Load Voicebox profiles
+  useEffect(() => {
+    fetch(`${VOICEBOX_URL}/profiles`).then(r => r.ok ? r.json() : []).then(profiles => {
+      setVoiceboxProfiles(profiles);
+      if (profiles.length > 0) setSelectedProfileId(profiles[0].id);
+    }).catch(() => {});
+  }, []);
 
   // Check for browser support and load voices
   useEffect(() => {
@@ -127,18 +137,44 @@ Keep responses concise for voice — under 3 sentences when possible. Be direct 
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const speak = (text) => {
-    if (!speechSupported || voices.length === 0) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    if (selectedVoice) utterance.voice = selectedVoice;
-    utterance.rate = voiceSettings.rate;
-    utterance.pitch = voiceSettings.pitch;
-    utterance.volume = voiceSettings.volume;
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
-    window.speechSynthesis.speak(utterance);
+  const speak = async (text) => {
+    setIsSpeaking(true);
+
+    // Try Voicebox cloned voice first
+    if (selectedProfileId) {
+      try {
+        const res = await fetch(`${VOICEBOX_URL}/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ profile_id: selectedProfileId, text, language: 'en' }),
+        });
+        if (res.ok) {
+          const gen = await res.json();
+          if (gen?.id) {
+            const audio = new Audio(`${VOICEBOX_URL}/audio/${gen.id}`);
+            audio.onended = () => setIsSpeaking(false);
+            audio.onerror = () => setIsSpeaking(false);
+            await audio.play().catch(() => setIsSpeaking(false));
+            return;
+          }
+        }
+      } catch { /* fall through to browser TTS */ }
+    }
+
+    // Browser TTS fallback
+    if (speechSupported && voices.length > 0) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      if (selectedVoice) utterance.voice = selectedVoice;
+      utterance.rate = voiceSettings.rate;
+      utterance.pitch = voiceSettings.pitch;
+      utterance.volume = voiceSettings.volume;
+      utterance.onend = () => setIsSpeaking(false);
+      utterance.onerror = () => setIsSpeaking(false);
+      window.speechSynthesis.speak(utterance);
+    } else {
+      setIsSpeaking(false);
+    }
   };
 
   const processCommand = async (command) => {
@@ -279,6 +315,24 @@ Keep responses concise for voice — under 3 sentences when possible. Be direct 
         {showSettings && (
           <div className="p-4 border-b border-purple-500/20 bg-gray-800/50">
             <h3 className="text-sm font-semibold text-white mb-3">Voice Settings</h3>
+            {/* Voicebox Profile Selector */}
+            <div className="mb-4">
+              <label className="block text-xs text-gray-400 mb-2">Voicebox Voice (cloned)</label>
+              <select
+                value={selectedProfileId}
+                onChange={(e) => setSelectedProfileId(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg bg-gray-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-purple-500"
+              >
+                <option value="">Browser TTS only</option>
+                {voiceboxProfiles.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+              {voiceboxProfiles.length === 0 && (
+                <p className="text-xs text-yellow-400 mt-1">Start Voicebox server for cloned voices</p>
+              )}
+            </div>
+            {/* Browser TTS Settings (fallback) */}
             {voices.length > 0 ? (
               <div className="grid grid-cols-2 gap-4">
                 <div>
