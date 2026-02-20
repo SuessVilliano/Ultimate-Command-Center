@@ -195,6 +195,34 @@ async function runProactiveCheck() {
       await executeAutoActions(detectedIssues);
     }
 
+    // Auto-draft responses for any open tickets missing drafts
+    let autoDraftCount = 0;
+    try {
+      const openTickets = platformData.tickets.filter(t => [2, 3, 6, 7].includes(t.status));
+      if (openTickets.length > 0) {
+        const pipeline = await import('./ticket-pipeline.js');
+        for (const ticket of openTickets) {
+          try {
+            const existingDrafts = db.getAllDrafts({ ticket_id: ticket.id, limit: 1 });
+            if (!existingDrafts || existingDrafts.length === 0) {
+              console.log(`  Proactive: Auto-drafting for ticket #${ticket.id}: ${(ticket.subject || '').substring(0, 40)}...`);
+              await pipeline.processTicket(ticket.id, { skipQA: false });
+              autoDraftCount++;
+              // Rate limit between drafts
+              await new Promise(r => setTimeout(r, 800));
+            }
+          } catch (e) {
+            console.log(`  Proactive: Draft failed for #${ticket.id}: ${e.message}`);
+          }
+        }
+        if (autoDraftCount > 0) {
+          console.log(`  Proactive: Generated ${autoDraftCount} new draft responses`);
+        }
+      }
+    } catch (e) {
+      console.log('  Proactive auto-draft skipped:', e.message);
+    }
+
     // Store results
     proactiveState.detectedIssues = detectedIssues;
     proactiveState.suggestions = suggestions;
@@ -203,13 +231,15 @@ async function runProactiveCheck() {
     emitProactiveEvent('check_complete', {
       issueCount: detectedIssues.length,
       suggestionCount: suggestions.length,
+      autoDraftCount,
       timestamp: proactiveState.lastCheck
     });
 
     return {
       success: true,
       issues: detectedIssues,
-      suggestions
+      suggestions,
+      autoDraftCount
     };
 
   } catch (error) {
@@ -535,6 +565,7 @@ async function notifyAndEscalate(issue) {
 
 /**
  * Immediate escalation for critical issues
+ * Now also auto-generates a draft response for the ticket
  */
 async function immediateEscalation(issue) {
   const message = `CRITICAL: ${issue.message}\n\nSource: ${issue.platform}\nDetected: ${new Date().toISOString()}`;
@@ -547,6 +578,21 @@ async function immediateEscalation(issue) {
       item: issue.item
     });
   } catch (e) {}
+
+  // Auto-generate draft response for urgent tickets
+  if (issue.platform === 'freshdesk' && issue.item?.id) {
+    try {
+      const pipeline = await import('./ticket-pipeline.js');
+      const existingDrafts = db.getAllDrafts({ ticket_id: issue.item.id, limit: 1 });
+      if (!existingDrafts || existingDrafts.length === 0) {
+        console.log(`  Proactive: Auto-drafting response for urgent ticket #${issue.item.id}...`);
+        await pipeline.processTicket(issue.item.id, { skipQA: false });
+        console.log(`  Proactive: Draft generated for urgent ticket #${issue.item.id}`);
+      }
+    } catch (e) {
+      console.log(`  Proactive: Could not auto-draft for ticket #${issue.item.id}: ${e.message}`);
+    }
+  }
 
   return {
     type: 'immediate_escalation',

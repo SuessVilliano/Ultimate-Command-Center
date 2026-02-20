@@ -5,10 +5,11 @@ import { API_URL } from '../config';
 const BACKEND_URL = API_URL;
 
 const PROVIDERS = [
-  { id: 'gemini', name: 'Gemini', icon: '🌟', color: 'blue' },
-  { id: 'claude', name: 'Claude', icon: '🤖', color: 'purple' },
-  { id: 'openai', name: 'OpenAI', icon: '🧠', color: 'green' },
-  { id: 'kimi', name: 'NVIDIA/Kimi', icon: '🔷', color: 'emerald' }
+  { id: 'groq', name: 'Groq (Free)', icon: '⚡', color: 'orange', description: 'Free Llama 3.3/Mixtral - Best for bulk ticket drafts' },
+  { id: 'gemini', name: 'Gemini', icon: '🌟', color: 'blue', description: 'Free tier available' },
+  { id: 'claude', name: 'Claude', icon: '🤖', color: 'purple', description: 'Most capable, higher cost' },
+  { id: 'openai', name: 'OpenAI', icon: '🧠', color: 'green', description: 'GPT-4o' },
+  { id: 'kimi', name: 'NVIDIA/Kimi', icon: '🔷', color: 'emerald', description: 'Nemotron/Mixtral' }
 ];
 
 export default function AISettings({ isDark = true, onClose, onProviderChange }) {
@@ -17,12 +18,13 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
   const [providerStatus, setProviderStatus] = useState({
     provider: 'gemini',
     model: 'gemini-2.0-flash',
-    available: { claude: false, openai: false, gemini: false, kimi: false },
-    hasKeys: { claude: false, openai: false, gemini: false, kimi: false },
+    available: { claude: false, openai: false, gemini: false, kimi: false, groq: false },
+    hasKeys: { claude: false, openai: false, gemini: false, kimi: false, groq: false },
     models: {}
   });
 
   const [apiKeys, setApiKeys] = useState({
+    groq: '',
     gemini: '',
     claude: '',
     openai: '',
@@ -30,6 +32,7 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
   });
 
   const [showKeys, setShowKeys] = useState({
+    groq: false,
     gemini: false,
     claude: false,
     openai: false,
@@ -139,6 +142,7 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
 
   const getKeyLink = (providerId) => {
     switch (providerId) {
+      case 'groq': return 'https://console.groq.com/keys';
       case 'gemini': return 'https://aistudio.google.com/app/apikey';
       case 'claude': return 'https://console.anthropic.com/settings/keys';
       case 'openai': return 'https://platform.openai.com/api-keys';
@@ -182,7 +186,7 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
         <label className={`text-xs font-medium ${isDark ? 'text-gray-400' : 'text-gray-500'} mb-2 block`}>
           Active Provider
         </label>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
           {PROVIDERS.map(provider => (
             <button
               key={provider.id}

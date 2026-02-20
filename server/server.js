@@ -97,6 +97,7 @@ const aiStatus = ai.initAIProviders({
   openaiKey: process.env.OPENAI_API_KEY,
   geminiKey: process.env.GEMINI_API_KEY,
   kimiKey: process.env.KIMI_API_KEY || process.env.NVIDIA_API_KEY,
+  groqKey: process.env.GROQ_API_KEY,
   provider: process.env.AI_PROVIDER || 'gemini'
 });
 console.log('AI Providers:', aiStatus);
@@ -231,6 +232,9 @@ app.post('/api/ai/key', (req, res) => {
         rag.initLangChain({ openaiKey: apiKey });
       } else if (provider === 'gemini' || provider === 'google') {
         rag.initLangChain({ geminiKey: apiKey });
+      } else if (provider === 'groq') {
+        // Groq uses its own API, no LangChain re-init needed
+        console.log('Groq key saved - Llama/Qwen models now available for cost-effective operations');
       }
       console.log(`API key updated for provider: ${provider}`);
     }
