@@ -29,7 +29,12 @@ function Actions() {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
 
-  const [items, setItems] = useState([]);
+  const [items, setItems] = useState(() => {
+    try {
+      const stored = localStorage.getItem('liv8_action_items');
+      return stored ? JSON.parse(stored) : [];
+    } catch { return []; }
+  });
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
@@ -48,6 +53,13 @@ function Actions() {
     notes: ''
   });
 
+  // Persist items to localStorage whenever they change
+  useEffect(() => {
+    if (items.length > 0) {
+      localStorage.setItem('liv8_action_items', JSON.stringify(items));
+    }
+  }, [items]);
+
   useEffect(() => {
     loadItems();
   }, []);
@@ -58,10 +70,13 @@ function Actions() {
       const response = await fetch(`${API_URL}/api/action-items`);
       if (response.ok) {
         const data = await response.json();
-        setItems(data.items || []);
+        const serverItems = data.items || [];
+        if (serverItems.length > 0) {
+          setItems(serverItems);
+        }
       }
     } catch (e) {
-      console.log('Failed to load action items');
+      console.log('Backend offline - using local action items');
     }
     setLoading(false);
   };
@@ -110,14 +125,43 @@ function Actions() {
   const handleAssignToAgent = async (item, agent) => {
     const updates = { assignedTo: agent.name, assignedAgentId: agent.id, status: 'assigned' };
     await handleUpdateItem(item.id, updates);
-    if (agent.platform === 'Taskade') {
+
+    // Try creating task in Taskade
+    const taskadeKey = localStorage.getItem('liv8_taskade_api_key');
+    if (agent.platform === 'Taskade' || taskadeKey) {
+      // Try server-side first
       try {
-        await fetch(`${API_URL}/api/taskade/tasks`, {
+        const resp = await fetch(`${API_URL}/api/taskade/tasks`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ title: item.title, description: item.description, priority: item.priority })
         });
+        if (resp.ok) {
+          setShowAssignModal(null);
+          return;
+        }
       } catch (e) {}
+
+      // Try browser-side Taskade API
+      if (taskadeKey) {
+        const taskadeProjectId = localStorage.getItem('liv8_taskade_default_project');
+        if (taskadeProjectId) {
+          try {
+            await fetch(`https://www.taskade.com/api/v1/projects/${taskadeProjectId}/tasks`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${taskadeKey}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                tasks: [{ content: `[${item.priority?.toUpperCase()}] ${item.title}${item.description ? ' - ' + item.description : ''}` }]
+              })
+            });
+          } catch (e) {
+            console.warn('Browser-side Taskade API failed:', e);
+          }
+        }
+      }
     }
     setShowAssignModal(null);
   };

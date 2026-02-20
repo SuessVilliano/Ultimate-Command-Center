@@ -21,7 +21,10 @@ import {
   Plug,
   Inbox,
   X,
-  Menu
+  Menu,
+  Mic,
+  BarChart3,
+  Terminal
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -29,6 +32,9 @@ import { useAuth } from '../context/AuthContext';
 const menuItems = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'agent-team', label: 'Agent Team', icon: Bot },
+  { id: 'trading', label: 'Trading & Markets', icon: BarChart3 },
+  { id: 'voice-agents', label: 'Voice Agents', icon: Mic },
+  { id: 'api-builder', label: 'API / MCP Builder', icon: Terminal },
   { id: 'news', label: 'News & Markets', icon: TrendingUp },
   { id: 'inbox', label: 'Team Inbox', icon: MessageSquare },
   { id: 'action-feed', label: 'Action Feed', icon: Inbox },
