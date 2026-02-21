@@ -247,8 +247,40 @@ export async function runScheduledAnalysis(scheduleName = 'manual') {
       }
     }
 
-    // 4. Generate proactive analysis summary
-    console.log('\n4. Generating proactive summary...');
+    // 4. AUTO-GENERATE DRAFT RESPONSES for open tickets that don't already have drafts
+    console.log('\n4. Auto-generating draft responses...');
+    let draftsGenerated = 0;
+    try {
+      const pipeline = await import('./ticket-pipeline.js');
+      const openTickets = tickets.filter(t => [2, 3, 6, 7].includes(t.status));
+
+      for (const ticket of openTickets) {
+        try {
+          // Check if a draft already exists for this ticket
+          const existingDrafts = db.getAllDrafts({ ticket_id: ticket.id, limit: 1 });
+          if (existingDrafts && existingDrafts.length > 0) {
+            console.log(`   Ticket #${ticket.id}: Draft already exists, skipping`);
+            continue;
+          }
+
+          console.log(`   Generating draft for ticket #${ticket.id}: ${ticket.subject.substring(0, 50)}...`);
+          await pipeline.processTicket(ticket.id, { skipQA: false });
+          draftsGenerated++;
+
+          // Rate limiting between draft generations
+          await new Promise(resolve => setTimeout(resolve, 800));
+        } catch (e) {
+          console.log(`   Draft generation failed for #${ticket.id}: ${e.message}`);
+        }
+      }
+      console.log(`   Generated ${draftsGenerated} new draft responses`);
+    } catch (e) {
+      console.log('   Auto-draft generation skipped:', e.message);
+    }
+    stats.draftsGenerated = draftsGenerated;
+
+    // 5. Generate proactive analysis summary
+    console.log('\n5. Generating proactive summary...');
     let proactiveSummary;
     try {
       proactiveSummary = await ai.proactiveAnalysis(tickets);
@@ -258,9 +290,9 @@ export async function runScheduledAnalysis(scheduleName = 'manual') {
       proactiveSummary = { summary: `Analyzed ${stats.ticketsAnalyzed} tickets` };
     }
 
-    // 5. Send notifications if configured
+    // 6. Send notifications if configured
     if (notificationConfig.n8nWebhookUrl) {
-      console.log('\n5. Sending notifications...');
+      console.log('\n6. Sending notifications...');
 
       // Send summary notification
       const notificationSent = await sendN8nNotification({
@@ -268,6 +300,7 @@ export async function runScheduledAnalysis(scheduleName = 'manual') {
         totalTickets: tickets.length,
         newTickets: newTickets.length,
         urgentTickets: urgentTickets.length,
+        draftsGenerated,
         summary: proactiveSummary.summary,
         urgentItems: proactiveSummary.urgentItems || [],
         recommendations: (proactiveSummary.recommendations || []).slice(0, 5),
@@ -284,11 +317,11 @@ export async function runScheduledAnalysis(scheduleName = 'manual') {
         console.log('   Notification sent successfully');
       }
     } else {
-      console.log('\n5. Notifications skipped (n8n webhook not configured)');
+      console.log('\n6. Notifications skipped (n8n webhook not configured)');
     }
 
-    // 6. Index resolved tickets to knowledge base
-    console.log('\n6. Indexing resolved tickets to knowledge base...');
+    // 7. Index resolved tickets to knowledge base
+    console.log('\n7. Indexing resolved tickets to knowledge base...');
     try {
       const resolvedTickets = tickets.filter(t => t.status === 4 || t.status === 5);
       for (const ticket of resolvedTickets) {
@@ -301,7 +334,7 @@ export async function runScheduledAnalysis(scheduleName = 'manual') {
     }
 
     // Build summary
-    stats.summary = `${scheduleName}: ${tickets.length} tickets fetched, ${stats.ticketsAnalyzed} analyzed, ${urgentTickets.length} urgent`;
+    stats.summary = `${scheduleName}: ${tickets.length} tickets fetched, ${stats.ticketsAnalyzed} analyzed, ${draftsGenerated} drafts generated, ${urgentTickets.length} urgent`;
 
     console.log(`\nCompleted: ${stats.summary}`);
     console.log('='.repeat(50) + '\n');

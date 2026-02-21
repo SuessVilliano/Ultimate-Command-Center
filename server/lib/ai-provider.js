@@ -1,6 +1,6 @@
 /**
  * LIV8 Command Center - AI Provider Module
- * Supports Claude (Anthropic) and GPT (OpenAI) with easy switching
+ * Supports Claude, GPT, Gemini, Groq (Llama/Qwen), and NVIDIA NIM
  */
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -13,10 +13,11 @@ let anthropicClient = null;
 let openaiClient = null;
 let geminiClient = null;
 let kimiApiKey = null; // NVIDIA NIM API key for Kimi
+let groqApiKey = null; // Groq API key for Llama/Qwen (free tier available)
 
 // Current configuration
 let currentProvider = 'gemini';
-let storedKeys = { anthropic: null, openai: null, gemini: null, kimi: null };
+let storedKeys = { anthropic: null, openai: null, gemini: null, kimi: null, groq: null };
 let currentModel = null;
 
 /**
@@ -34,8 +35,11 @@ export function initAIProviders(config = {}) {
     persistedOpenaiKey = getSetting('openai_api_key', null);
     persistedGeminiKey = getSetting('gemini_api_key', null);
     persistedKimiKey = getSetting('kimi_api_key', null);
+    var persistedGroqKey = null;
+    try { persistedGroqKey = getSetting('groq_api_key', null); } catch (e) {}
   } catch (e) {
     // Database might not be ready yet
+    var persistedGroqKey = null;
   }
 
   // Priority: config > persisted > env var
@@ -43,8 +47,9 @@ export function initAIProviders(config = {}) {
   const openaiKey = config.openaiKey || persistedOpenaiKey || process.env.OPENAI_API_KEY;
   const geminiKey = config.geminiKey || persistedGeminiKey || process.env.GEMINI_API_KEY;
   const kimiKey = config.kimiKey || persistedKimiKey || process.env.KIMI_API_KEY || process.env.NVIDIA_API_KEY;
+  const groqKey = config.groqKey || persistedGroqKey || process.env.GROQ_API_KEY;
 
-  storedKeys = { anthropic: anthropicKey || null, openai: openaiKey || null, gemini: geminiKey || null, kimi: kimiKey || null };
+  storedKeys = { anthropic: anthropicKey || null, openai: openaiKey || null, gemini: geminiKey || null, kimi: kimiKey || null, groq: groqKey || null };
 
   if (anthropicKey) {
     anthropicClient = new Anthropic({ apiKey: anthropicKey });
@@ -66,19 +71,25 @@ export function initAIProviders(config = {}) {
     console.log('NVIDIA (Kimi) API key configured');
   }
 
+  if (groqKey) {
+    groqApiKey = groqKey;
+    console.log('Groq API key configured (Llama/Qwen available)');
+  }
+
   // Set default provider
   let savedProvider = null;
   try { savedProvider = getSetting('ai_provider', null); } catch (e) {}
   currentProvider = savedProvider || config.provider || process.env.AI_PROVIDER || 'gemini';
   currentModel = getDefaultModel(currentProvider);
 
-  console.log(`AI Provider initialized: ${currentProvider} (Claude: ${!!anthropicClient}, OpenAI: ${!!openaiClient}, Gemini: ${!!geminiClient}, Kimi: ${!!kimiApiKey})`);
+  console.log(`AI Provider initialized: ${currentProvider} (Claude: ${!!anthropicClient}, OpenAI: ${!!openaiClient}, Gemini: ${!!geminiClient}, Kimi: ${!!kimiApiKey}, Groq: ${!!groqApiKey})`);
 
   return {
     claude: !!anthropicClient,
     openai: !!openaiClient,
     gemini: !!geminiClient,
     kimi: !!kimiApiKey,
+    groq: !!groqApiKey,
     currentProvider,
     currentModel
   };
@@ -93,14 +104,16 @@ function getDefaultModel(provider) {
   }
   if (provider === 'gemini') return process.env.GEMINI_MODEL || 'gemini-2.5-flash-preview-05-20';
   if (provider === 'kimi') return process.env.KIMI_MODEL || 'nvidia/llama-3.1-nemotron-70b-instruct';
+  if (provider === 'groq') return process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
   return process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
 }
 
 /**
  * Get the cheapest available provider for bulk/routine operations.
- * Priority: Gemini (free/cheap) > Kimi (free tier) > OpenAI > Claude (most expensive)
+ * Priority: Groq (free tier Llama/Qwen) > Gemini (free/cheap) > Kimi (free tier) > OpenAI > Claude (most expensive)
  */
 export function getCostEffectiveProvider() {
+  if (groqApiKey) return { provider: 'groq', model: getDefaultModel('groq') };
   if (geminiClient) return { provider: 'gemini', model: getDefaultModel('gemini') };
   if (kimiApiKey) return { provider: 'kimi', model: getDefaultModel('kimi') };
   if (openaiClient) return { provider: 'openai', model: getDefaultModel('openai') };
@@ -123,6 +136,9 @@ export function switchProvider(provider, model = null) {
   }
   if (provider === 'kimi' && !kimiApiKey) {
     throw new Error('Kimi/NVIDIA API key not configured');
+  }
+  if (provider === 'groq' && !groqApiKey) {
+    throw new Error('Groq API key not configured. Get a free key at console.groq.com');
   }
 
   currentProvider = provider;
@@ -150,15 +166,23 @@ export function getCurrentProvider() {
       claude: !!anthropicClient,
       openai: !!openaiClient,
       gemini: !!geminiClient,
-      kimi: !!kimiApiKey
+      kimi: !!kimiApiKey,
+      groq: !!groqApiKey
     },
     hasKeys: {
       claude: !!storedKeys.anthropic,
       openai: !!storedKeys.openai,
       gemini: !!storedKeys.gemini,
-      kimi: !!storedKeys.kimi
+      kimi: !!storedKeys.kimi,
+      groq: !!storedKeys.groq
     },
     models: {
+      groq: [
+        { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B (Free)', default: true },
+        { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant (Free)' },
+        { id: 'gemma2-9b-it', name: 'Gemma 2 9B (Free)' },
+        { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B (Free)' }
+      ],
       gemini: [
         { id: 'gemini-2.5-flash-preview-05-20', name: 'Gemini 2.5 Flash', default: true },
         { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
@@ -239,6 +263,19 @@ export function updateApiKey(provider, apiKey) {
     return true;
   }
 
+  if (provider === 'groq') {
+    groqApiKey = apiKey;
+    storedKeys.groq = apiKey;
+    // Persist to database
+    try {
+      setSetting('groq_api_key', apiKey);
+    } catch (e) {
+      console.log('Could not persist Groq key to database');
+    }
+    console.log('Groq API key updated (Llama/Qwen now available)');
+    return true;
+  }
+
   return false;
 }
 
@@ -297,8 +334,8 @@ function parseProviderError(provider, error) {
  * Get fallback provider order (excluding the failed one)
  */
 function getFallbackProviders(failedProvider) {
-  const allProviders = ['claude', 'openai', 'gemini', 'kimi'];
-  const availableMap = { claude: !!anthropicClient, openai: !!openaiClient, gemini: !!geminiClient, kimi: !!kimiApiKey };
+  const allProviders = ['groq', 'gemini', 'claude', 'openai', 'kimi'];
+  const availableMap = { claude: !!anthropicClient, openai: !!openaiClient, gemini: !!geminiClient, kimi: !!kimiApiKey, groq: !!groqApiKey };
   return allProviders.filter(p => p !== failedProvider && availableMap[p]);
 }
 
@@ -314,6 +351,9 @@ async function callProvider(provider, messages, options) {
     return { text: response.text || '', usage: response.usage || null };
   } else if (provider === 'kimi') {
     const response = await chatWithKimi(messages, { ...options, model: options.model || getDefaultModel('kimi') });
+    return { text: response.text || '', usage: response.usage || null };
+  } else if (provider === 'groq') {
+    const response = await chatWithGroq(messages, { ...options, model: options.model || getDefaultModel('groq') });
     return { text: response.text || '', usage: response.usage || null };
   } else {
     const response = await chatWithClaude(messages, { ...options, model: options.model || getDefaultModel('claude') });
@@ -583,6 +623,66 @@ async function chatWithKimi(messages, options) {
     };
   } catch (error) {
     console.error('Kimi/NVIDIA chat error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Chat with Groq API (Llama 3, Qwen, Mixtral, Gemma - free tier available)
+ * Uses OpenAI-compatible API endpoint at api.groq.com
+ */
+async function chatWithGroq(messages, options) {
+  if (!groqApiKey) {
+    throw new Error('Groq API key not initialized. Get a free key at console.groq.com and add GROQ_API_KEY to .env');
+  }
+
+  const formattedMessages = [];
+
+  // Add system prompt if provided
+  if (options.systemPrompt) {
+    formattedMessages.push({
+      role: 'system',
+      content: options.systemPrompt
+    });
+  }
+
+  // Add conversation messages
+  for (const m of messages) {
+    formattedMessages.push({
+      role: m.role,
+      content: m.content
+    });
+  }
+
+  try {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${groqApiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: options.model || 'llama-3.3-70b-versatile',
+        messages: formattedMessages,
+        max_tokens: options.maxTokens || 1024,
+        temperature: options.temperature || 0.7,
+        stream: false
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Groq API error: ${response.status} - ${error}`);
+    }
+
+    const data = await response.json();
+
+    return {
+      text: data.choices?.[0]?.message?.content || '',
+      usage: data.usage || null
+    };
+  } catch (error) {
+    console.error('Groq chat error:', error);
     throw error;
   }
 }
