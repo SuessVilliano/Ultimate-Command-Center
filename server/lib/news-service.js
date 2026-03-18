@@ -476,11 +476,190 @@ export async function createNewsSummary(news) {
   };
 }
 
+// ============================================
+// FRED Economic Data (Federal Reserve)
+// https://fred.stlouisfed.org/docs/api/fred/
+// ============================================
+
+const FRED_INDICATORS = [
+  { id: 'GDP', name: 'Gross Domestic Product', description: 'Total US economic output', frequency: 'Quarterly' },
+  { id: 'UNRATE', name: 'Unemployment Rate', description: 'Civilian unemployment rate', frequency: 'Monthly' },
+  { id: 'CPIAUCSL', name: 'Consumer Price Index', description: 'Inflation measure for all urban consumers', frequency: 'Monthly' },
+  { id: 'FEDFUNDS', name: 'Federal Funds Rate', description: 'Interest rate banks charge each other overnight', frequency: 'Monthly' },
+  { id: 'DGS10', name: '10-Year Treasury Yield', description: 'Benchmark long-term interest rate', frequency: 'Daily' },
+  { id: 'DGS2', name: '2-Year Treasury Yield', description: 'Short-term interest rate benchmark', frequency: 'Daily' },
+  { id: 'MORTGAGE30US', name: '30-Year Mortgage Rate', description: 'Average fixed mortgage rate', frequency: 'Weekly' },
+  { id: 'UMCSENT', name: 'Consumer Sentiment', description: 'University of Michigan consumer confidence', frequency: 'Monthly' },
+  { id: 'PAYEMS', name: 'Nonfarm Payrolls', description: 'Total nonfarm employment', frequency: 'Monthly' },
+  { id: 'DEXUSEU', name: 'EUR/USD Exchange Rate', description: 'US dollars per euro', frequency: 'Daily' }
+];
+
+/**
+ * Fetch economic indicators from FRED
+ */
+export async function getEconomicIndicators() {
+  const apiKey = process.env.FRED_API_KEY;
+  if (!apiKey) return { indicators: [], source: 'fred', configured: false };
+
+  const indicators = [];
+
+  for (const indicator of FRED_INDICATORS) {
+    try {
+      const response = await fetch(
+        `https://api.stlouisfed.org/fred/series/observations?series_id=${indicator.id}&api_key=${apiKey}&file_type=json&sort_order=desc&limit=2`
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        const observations = data.observations || [];
+
+        if (observations.length > 0) {
+          const latest = observations[0];
+          const previous = observations[1] || null;
+
+          // Also fetch series metadata for units
+          let units = '';
+          try {
+            const metaResp = await fetch(
+              `https://api.stlouisfed.org/fred/series?series_id=${indicator.id}&api_key=${apiKey}&file_type=json`
+            );
+            if (metaResp.ok) {
+              const meta = await metaResp.json();
+              units = meta.seriess?.[0]?.units || '';
+            }
+          } catch (e) {}
+
+          indicators.push({
+            ...indicator,
+            value: latest.value !== '.' ? parseFloat(latest.value) : null,
+            previousValue: previous && previous.value !== '.' ? parseFloat(previous.value) : null,
+            date: latest.date,
+            previousDate: previous?.date || null,
+            units
+          });
+        }
+      }
+    } catch (e) {
+      console.log(`FRED fetch failed for ${indicator.id}:`, e.message);
+    }
+  }
+
+  return {
+    indicators,
+    source: 'fred',
+    configured: true,
+    fetchedAt: new Date().toISOString()
+  };
+}
+
+// ============================================
+// FINNHUB Enhanced Features
+// ============================================
+
+/**
+ * Fetch market sentiment from Finnhub
+ */
+export async function getMarketSentiment() {
+  const apiKey = process.env.FINNHUB_API_KEY;
+  if (!apiKey) return { configured: false };
+
+  const result = {
+    sentiment: null,
+    buzz: null,
+    sectorSentiment: [],
+    configured: true,
+    source: 'finnhub'
+  };
+
+  try {
+    // Overall market news sentiment
+    const sentimentResp = await fetch(
+      `https://finnhub.io/api/v1/news-sentiment?symbol=SPY&token=${apiKey}`
+    );
+    if (sentimentResp.ok) {
+      const data = await sentimentResp.json();
+      result.sentiment = data.sentiment || null;
+      result.buzz = data.buzz || null;
+    }
+  } catch (e) {
+    console.log('Finnhub sentiment failed:', e.message);
+  }
+
+  // Sector sentiment from multiple ETFs
+  const sectorETFs = [
+    { symbol: 'XLK', sector: 'Technology' },
+    { symbol: 'XLF', sector: 'Financials' },
+    { symbol: 'XLE', sector: 'Energy' },
+    { symbol: 'XLV', sector: 'Healthcare' }
+  ];
+
+  for (const etf of sectorETFs) {
+    try {
+      const resp = await fetch(
+        `https://finnhub.io/api/v1/news-sentiment?symbol=${etf.symbol}&token=${apiKey}`
+      );
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.sentiment) {
+          result.sectorSentiment.push({
+            sector: etf.sector,
+            symbol: etf.symbol,
+            sentiment: data.sentiment.bearishPercent ? (data.sentiment.bullishPercent - data.sentiment.bearishPercent) / 100 : 0,
+            bullishPercent: data.sentiment.bullishPercent || 0,
+            bearishPercent: data.sentiment.bearishPercent || 0
+          });
+        }
+      }
+    } catch (e) {}
+  }
+
+  result.fetchedAt = new Date().toISOString();
+  return result;
+}
+
+/**
+ * Fetch company news from Finnhub
+ */
+export async function getCompanyNews(symbol = 'AAPL', daysBack = 7) {
+  const apiKey = process.env.FINNHUB_API_KEY;
+  if (!apiKey) return [];
+
+  try {
+    const to = new Date().toISOString().split('T')[0];
+    const from = new Date(Date.now() - daysBack * 86400000).toISOString().split('T')[0];
+
+    const response = await fetch(
+      `https://finnhub.io/api/v1/company-news?symbol=${symbol}&from=${from}&to=${to}&token=${apiKey}`
+    );
+
+    if (response.ok) {
+      const data = await response.json();
+      return (data || []).slice(0, 20).map(item => ({
+        id: `finnhub-co-${item.id}`,
+        title: item.headline,
+        description: item.summary,
+        source: item.source,
+        category: item.category,
+        publishedAt: new Date(item.datetime * 1000).toISOString(),
+        url: item.url,
+        image: item.image,
+        symbol
+      }));
+    }
+  } catch (e) {
+    console.log('Finnhub company news failed:', e.message);
+  }
+  return [];
+}
+
 export default {
   fetchFinancialNews,
   getPersonalUpdates,
   getCachedFinancialNews,
   getMarketSummary,
   createNewsSummary,
+  getEconomicIndicators,
+  getMarketSentiment,
+  getCompanyNews,
   FINANCIAL_TOPICS
 };

@@ -20,7 +20,9 @@ import {
   AlertCircle,
   BookOpen,
   Maximize2,
-  X
+  X,
+  BarChart3,
+  Landmark
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 
@@ -45,7 +47,7 @@ class ErrorBoundary extends React.Component {
           <div className="text-center p-8">
             <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
             <h2 className="text-xl font-bold text-white mb-2">Something went wrong</h2>
-            <p className="text-gray-400 mb-4">The News page encountered an error.</p>
+            <p className="text-gray-400 mb-4">The Hybrid Zone encountered an error.</p>
             <button
               onClick={() => {
                 this.setState({ hasError: false, error: null });
@@ -84,6 +86,9 @@ function News() {
   const [selectedTopics, setSelectedTopics] = useState(['NASDAQ', 'CRYPTO_BTC', 'CRYPTO_SOL']);
   const [lastUpdate, setLastUpdate] = useState(null);
   const [journalFullscreen, setJournalFullscreen] = useState(false);
+  const [economicData, setEconomicData] = useState(null);
+  const [companyNews, setCompanyNews] = useState([]);
+  const [marketSentiment, setMarketSentiment] = useState(null);
 
   // Load data on mount
   useEffect(() => {
@@ -100,7 +105,9 @@ function News() {
       await Promise.all([
         fetchFinancialNews(),
         fetchPersonalUpdates(),
-        fetchMarketData()
+        fetchMarketData(),
+        fetchEconomicData(),
+        fetchMarketSentiment()
       ]);
       setLastUpdate(new Date());
     } catch (err) {
@@ -178,6 +185,44 @@ function News() {
     }
   };
 
+  const fetchEconomicData = async () => {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+      const response = await fetch(`${AI_SERVER_URL}/api/market/economic`, {
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        setEconomicData(data);
+      }
+    } catch (e) {
+      console.log('Could not fetch economic data:', e.message);
+    }
+  };
+
+  const fetchMarketSentiment = async () => {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      const response = await fetch(`${AI_SERVER_URL}/api/market/sentiment`, {
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        setMarketSentiment(data);
+      }
+    } catch (e) {
+      console.log('Could not fetch market sentiment:', e.message);
+    }
+  };
+
   const formatPrice = (price) => {
     if (!price || isNaN(price)) return '$0.00';
     try {
@@ -246,7 +291,7 @@ function News() {
       {isInitialLoad && (
         <div className="flex items-center justify-center py-8">
           <RefreshCw className="w-6 h-6 animate-spin text-purple-500 mr-3" />
-          <span className={isDark ? 'text-gray-400' : 'text-gray-500'}>Loading News & Markets...</span>
+          <span className={isDark ? 'text-gray-400' : 'text-gray-500'}>Loading Hybrid Zone...</span>
         </div>
       )}
 
@@ -265,10 +310,10 @@ function News() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-            News & Markets
+            Hybrid Zone
           </h1>
           <p className={`mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-            Financial markets, crypto, trade journal, and activity
+            Markets, economic data, trade journal, and activity
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -346,6 +391,7 @@ function News() {
       <div className={`flex gap-2 border-b ${isDark ? 'border-purple-900/30' : 'border-gray-200'} pb-2`}>
         {[
           { id: 'financial', label: 'Financial News', icon: TrendingUp },
+          { id: 'economic', label: 'Economic Data', icon: Landmark },
           { id: 'journal', label: 'Trade Journal', icon: BookOpen },
           { id: 'personal', label: 'My Updates', icon: Bell }
         ].map(tab => {
@@ -356,7 +402,7 @@ function News() {
               onClick={() => setActiveTab(tab.id)}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
                 activeTab === tab.id
-                  ? tab.id === 'journal' ? 'bg-cyan-600 text-white' : 'bg-purple-600 text-white'
+                  ? tab.id === 'journal' ? 'bg-cyan-600 text-white' : tab.id === 'economic' ? 'bg-emerald-600 text-white' : 'bg-purple-600 text-white'
                   : isDark ? 'text-gray-400 hover:bg-white/10' : 'text-gray-600 hover:bg-gray-100'
               }`}
             >
@@ -368,7 +414,173 @@ function News() {
       </div>
 
       {/* Content */}
-      {activeTab === 'journal' ? (
+      {activeTab === 'economic' ? (
+        /* Economic Data Tab - FRED + Finnhub Sentiment */
+        <div className="space-y-6">
+          {/* Market Sentiment from Finnhub */}
+          {marketSentiment && (
+            <div className={`p-6 rounded-xl border ${isDark ? 'border-emerald-500/30 bg-gradient-to-br from-emerald-900/20 to-cyan-900/10' : 'border-emerald-200 bg-gradient-to-br from-emerald-50 to-cyan-50'}`}>
+              <div className="flex items-center gap-2 mb-4">
+                <BarChart3 className="w-5 h-5 text-emerald-400" />
+                <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>Market Sentiment</h3>
+                <span className={`text-xs px-2 py-0.5 rounded-full ${isDark ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-100 text-emerald-700'}`}>Finnhub</span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {marketSentiment.sentiment && (
+                  <div className={`p-4 rounded-lg ${isDark ? 'bg-white/5' : 'bg-white'}`}>
+                    <p className={`text-xs mb-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>Overall Sentiment</p>
+                    <p className={`text-xl font-bold ${
+                      (marketSentiment.sentiment.bullishPercent || 0) > 50 ? 'text-green-400' : 'text-red-400'
+                    }`}>
+                      {(marketSentiment.sentiment.bullishPercent || 0) > 50 ? 'Bullish' : 'Bearish'}
+                    </p>
+                    <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                      {marketSentiment.sentiment.bullishPercent?.toFixed(0) || 0}% bullish
+                    </p>
+                  </div>
+                )}
+                {marketSentiment.buzz && (
+                  <div className={`p-4 rounded-lg ${isDark ? 'bg-white/5' : 'bg-white'}`}>
+                    <p className={`text-xs mb-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>News Buzz</p>
+                    <p className={`text-xl font-bold ${isDark ? 'text-cyan-400' : 'text-cyan-600'}`}>
+                      {marketSentiment.buzz.articlesInLastWeek || 0}
+                    </p>
+                    <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                      articles this week
+                    </p>
+                  </div>
+                )}
+                {marketSentiment.sectorSentiment && marketSentiment.sectorSentiment.length > 0 && (
+                  <>
+                    {marketSentiment.sectorSentiment.slice(0, 2).map((sector, i) => (
+                      <div key={i} className={`p-4 rounded-lg ${isDark ? 'bg-white/5' : 'bg-white'}`}>
+                        <p className={`text-xs mb-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>{sector.sector}</p>
+                        <p className={`text-xl font-bold ${sector.sentiment > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {sector.sentiment > 0 ? '+' : ''}{(sector.sentiment * 100).toFixed(0)}%
+                        </p>
+                        <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>sentiment score</p>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* FRED Economic Indicators */}
+          <div className={`rounded-xl border ${isDark ? 'border-purple-900/30 bg-white/5' : 'border-gray-200 bg-white'}`}>
+            <div className={`p-4 border-b ${isDark ? 'border-purple-900/30' : 'border-gray-200'}`}>
+              <div className="flex items-center gap-2">
+                <Landmark className="w-5 h-5 text-purple-400" />
+                <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>Key Economic Indicators</h3>
+                <span className={`text-xs px-2 py-0.5 rounded-full ${isDark ? 'bg-purple-500/20 text-purple-400' : 'bg-purple-100 text-purple-700'}`}>FRED</span>
+              </div>
+            </div>
+
+            {economicData?.indicators && economicData.indicators.length > 0 ? (
+              <div className="divide-y divide-purple-900/10">
+                {economicData.indicators.map((indicator, index) => (
+                  <div key={indicator.id || index} className={`p-4 ${isDark ? 'hover:bg-white/5' : 'hover:bg-gray-50'} transition-colors`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`text-xs font-mono px-2 py-0.5 rounded ${isDark ? 'bg-white/10 text-gray-300' : 'bg-gray-100 text-gray-600'}`}>
+                            {indicator.id}
+                          </span>
+                          <span className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                            {indicator.frequency || 'Monthly'}
+                          </span>
+                        </div>
+                        <h4 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                          {indicator.name}
+                        </h4>
+                        {indicator.description && (
+                          <p className={`text-sm mt-0.5 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                            {indicator.description}
+                          </p>
+                        )}
+                      </div>
+                      <div className="text-right ml-4">
+                        <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                          {indicator.value !== undefined ? (
+                            indicator.units?.includes('Percent') ? `${indicator.value}%` :
+                            indicator.units?.includes('Dollar') || indicator.units?.includes('Billions') ?
+                              `$${Number(indicator.value).toLocaleString()}` :
+                              Number(indicator.value).toLocaleString()
+                          ) : '—'}
+                        </p>
+                        {indicator.previousValue !== undefined && indicator.value !== undefined && (
+                          <p className={`text-sm ${
+                            indicator.value > indicator.previousValue ? 'text-green-400' :
+                            indicator.value < indicator.previousValue ? 'text-red-400' :
+                            isDark ? 'text-gray-500' : 'text-gray-400'
+                          }`}>
+                            {indicator.value > indicator.previousValue ? '↑' : indicator.value < indicator.previousValue ? '↓' : '→'}{' '}
+                            from {indicator.units?.includes('Percent') ? `${indicator.previousValue}%` : Number(indicator.previousValue).toLocaleString()}
+                          </p>
+                        )}
+                        {indicator.date && (
+                          <p className={`text-xs mt-1 ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>
+                            {new Date(indicator.date).toLocaleDateString()}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-8 text-center">
+                <Landmark className={`w-8 h-8 mx-auto mb-2 ${isDark ? 'text-gray-600' : 'text-gray-400'}`} />
+                <p className={isDark ? 'text-gray-400' : 'text-gray-500'}>
+                  {loading ? 'Loading economic data...' : 'Add FRED_API_KEY to enable economic indicators'}
+                </p>
+                <a
+                  href="https://fredaccount.stlouisfed.org/apikey"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 mt-2 text-sm text-purple-400 hover:text-purple-300"
+                >
+                  Get a free FRED API key <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+            )}
+          </div>
+
+          {/* Finnhub Company News */}
+          {companyNews.length > 0 && (
+            <div className={`rounded-xl border ${isDark ? 'border-purple-900/30 bg-white/5' : 'border-gray-200 bg-white'}`}>
+              <div className={`p-4 border-b ${isDark ? 'border-purple-900/30' : 'border-gray-200'}`}>
+                <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>Company News</h3>
+              </div>
+              <div className="divide-y divide-purple-900/10 max-h-[400px] overflow-y-auto">
+                {companyNews.map((item, index) => (
+                  <a
+                    key={index}
+                    href={item.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`block p-4 transition-colors ${isDark ? 'hover:bg-white/5' : 'hover:bg-gray-50'}`}
+                  >
+                    <div className="flex items-start gap-3">
+                      {item.image && (
+                        <img src={item.image} alt="" className="w-16 h-12 rounded object-cover flex-shrink-0" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <h4 className={`font-medium line-clamp-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>{item.title}</h4>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>{item.source}</span>
+                          <span className={`text-xs ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>{timeAgo(item.publishedAt)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : activeTab === 'journal' ? (
         /* Trade Journal Tab - Launch Panel (iframe doesn't work due to OAuth) */
         <div className={`rounded-xl border ${isDark ? 'border-cyan-500/30 bg-gradient-to-br from-cyan-900/20 to-purple-900/20' : 'border-cyan-200 bg-gradient-to-br from-cyan-50 to-purple-50'}`}>
           <div className="p-8 text-center">
@@ -656,6 +868,8 @@ function News() {
                 <li>Coinranking (Crypto stats)</li>
                 <li>Binance (Real-time prices)</li>
                 <li>Benzinga (Market news)</li>
+                <li>Finnhub (News & sentiment)</li>
+                <li>FRED (Economic indicators)</li>
                 <li>TradingView (Market movers)</li>
                 <li>Real-Time News (Headlines)</li>
                 <li>Alpha Vantage (Stock quotes)</li>

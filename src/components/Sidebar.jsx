@@ -29,7 +29,7 @@ import { useAuth } from '../context/AuthContext';
 const menuItems = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'agent-team', label: 'Agent Team', icon: Bot },
-  { id: 'news', label: 'News & Markets', icon: TrendingUp },
+  { id: 'news', label: 'Hybrid Zone', icon: TrendingUp },
   { id: 'inbox', label: 'Team Inbox', icon: MessageSquare },
   { id: 'action-feed', label: 'Action Feed', icon: Inbox },
   { id: 'tickets', label: 'GHL', icon: Ticket },

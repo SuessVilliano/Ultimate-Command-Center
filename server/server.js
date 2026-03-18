@@ -1686,6 +1686,44 @@ app.get('/api/market/status', (req, res) => {
 });
 
 // ============================================
+// FRED ECONOMIC DATA & FINNHUB ENHANCED
+// ============================================
+
+// Get economic indicators from FRED
+app.get('/api/market/economic', async (req, res) => {
+  try {
+    const data = await newsService.getEconomicIndicators();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get market sentiment from Finnhub
+app.get('/api/market/sentiment', async (req, res) => {
+  try {
+    const data = await newsService.getMarketSentiment();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get company news from Finnhub
+app.get('/api/market/company-news/:symbol', async (req, res) => {
+  try {
+    const { days } = req.query;
+    const news = await newsService.getCompanyNews(
+      req.params.symbol,
+      parseInt(days) || 7
+    );
+    res.json({ news });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
 // WEBHOOK ENDPOINTS (TaskMagic/n8n)
 // ============================================
 
