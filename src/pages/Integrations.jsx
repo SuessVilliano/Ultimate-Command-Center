@@ -61,6 +61,10 @@ function Integrations() {
   const [selectedTargetProject, setSelectedTargetProject] = useState(null);
   const [syncing, setSyncing] = useState(false);
 
+  // Browser-side API key state
+  const [taskadeKeyInput, setTaskadeKeyInput] = useState(localStorage.getItem('liv8_taskade_api_key') || '');
+  const [taskadeKeySaved, setTaskadeKeySaved] = useState(!!localStorage.getItem('liv8_taskade_api_key'));
+
   useEffect(() => {
     loadIntegrationStatus();
     loadSyncStatus();
@@ -153,7 +157,10 @@ function Integrations() {
   const loadIntegrationStatus = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_URL}/api/integrations/status`);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const response = await fetch(`${API_URL}/api/integrations/status`, { signal: controller.signal });
+      clearTimeout(timeout);
       if (response.ok) {
         const data = await response.json();
         setIntegrationStatus(data);
@@ -180,9 +187,17 @@ function Integrations() {
           // Check MCP status separately
           loadTaskmagicMCPStatus();
         }
+        setLoading(false);
+        return;
       }
     } catch (error) {
-      console.error('Failed to load integration status:', error);
+      console.warn('Backend unavailable:', error.message);
+    }
+    // Fallback: Try loading Taskade with browser-side key
+    const storedTaskadeKey = localStorage.getItem('liv8_taskade_api_key');
+    if (storedTaskadeKey) {
+      setIntegrationStatus(prev => ({ ...prev, taskade: { configured: true } }));
+      loadTaskadeWorkspaces();
     }
     setLoading(false);
   };
@@ -193,14 +208,36 @@ function Integrations() {
 
   const loadTaskadeWorkspaces = async () => {
     setRefreshing(prev => ({ ...prev, taskade: true }));
+    // Try server first
     try {
       const response = await fetch(`${API_URL}/api/taskade/workspaces`);
       if (response.ok) {
         const data = await response.json();
-        setTaskadeWorkspaces(data.items || []);
+        const items = data.items || [];
+        if (items.length > 0) {
+          setTaskadeWorkspaces(items);
+          setRefreshing(prev => ({ ...prev, taskade: false }));
+          return;
+        }
       }
     } catch (error) {
-      console.error('Failed to load Taskade workspaces:', error);
+      console.warn('Server unavailable for Taskade:', error.message);
+    }
+    // Try browser-side with stored API key
+    const storedKey = localStorage.getItem('liv8_taskade_api_key');
+    if (storedKey) {
+      try {
+        const response = await fetch('https://www.taskade.com/api/v1/workspaces', {
+          headers: { 'Authorization': `Bearer ${storedKey}` }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setTaskadeWorkspaces(data.items || []);
+          setTaskadeKeySaved(true);
+        }
+      } catch (e) {
+        console.warn('Browser-side Taskade fetch failed:', e);
+      }
     }
     setRefreshing(prev => ({ ...prev, taskade: false }));
   };
@@ -510,9 +547,38 @@ function Integrations() {
               ))}
             </div>
           ) : (
-            <div className={`text-center py-4 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-              <p className="text-sm">API key not configured</p>
-              <p className="text-xs mt-1">Set TASKADE_API_KEY in server environment</p>
+            <div className="space-y-3">
+              {taskadeKeySaved && (
+                <div className="flex items-center gap-2 text-xs text-green-400">
+                  <CheckCircle2 className="w-3 h-3" />
+                  <span>API key saved locally</span>
+                </div>
+              )}
+              <div className="space-y-2">
+                <input
+                  type="password"
+                  value={taskadeKeyInput}
+                  onChange={(e) => setTaskadeKeyInput(e.target.value)}
+                  placeholder="Enter Taskade API Key"
+                  className={`w-full px-3 py-2 rounded-lg border text-sm ${
+                    isDark ? 'bg-black/30 border-white/10 text-white placeholder-gray-600' : 'bg-gray-50 border-gray-200'
+                  }`}
+                />
+                <button
+                  onClick={() => {
+                    localStorage.setItem('liv8_taskade_api_key', taskadeKeyInput);
+                    setTaskadeKeySaved(true);
+                    loadTaskadeWorkspaces();
+                  }}
+                  disabled={!taskadeKeyInput}
+                  className="w-full px-3 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+                >
+                  Save & Connect
+                </button>
+              </div>
+              <p className={`text-xs ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>
+                Get your API key from Taskade Settings → API
+              </p>
             </div>
           )}
         </div>

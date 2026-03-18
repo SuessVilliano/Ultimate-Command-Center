@@ -8,10 +8,10 @@
 // VITE_API_URL should be a full URL (e.g., https://api.example.com)
 export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3005';
 
-// PersonaPlex Voice AI Server
-// Host:port of the PersonaPlex WebSocket server (no protocol prefix)
-// Can also be overridden via ?worker_addr= query parameter
-export const PERSONAPLEX_SERVER = import.meta.env.VITE_PERSONAPLEX_SERVER || 'localhost:8998';
+// Voicebox Voice Cloning & TTS Server
+// Local-first voice cloning studio (https://github.com/SuessVilliano/voicebox)
+// Runs on port 8000 in production, 17493 in dev mode
+export const VOICEBOX_URL = import.meta.env.VITE_VOICEBOX_URL || 'http://localhost:8000';
 
 // Feature flags
 export const FEATURES = {
@@ -23,6 +23,6 @@ export const FEATURES = {
 
 export default {
   API_URL,
-  PERSONAPLEX_SERVER,
+  VOICEBOX_URL,
   FEATURES
 };

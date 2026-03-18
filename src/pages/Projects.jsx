@@ -348,8 +348,8 @@ ${reportData.content}
 
   // Project Form Modal
   const ProjectFormModal = ({ title, onSubmit, onClose }) => (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className={`w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl ${
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 overflow-y-auto p-8">
+      <div className={`w-full max-w-2xl rounded-xl ${
         isDark ? 'bg-[#0a0a0f] border border-purple-900/30' : 'bg-white border border-gray-200'
       }`}>
         <div className={`p-4 border-b flex items-center justify-between ${isDark ? 'border-purple-900/30' : 'border-gray-200'}`}>
@@ -862,8 +862,8 @@ ${reportData.content}
 
       {/* Portfolio Report Modal */}
       {showReportModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className={`w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-xl ${
+        <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 overflow-y-auto p-8">
+          <div className={`w-full max-w-4xl rounded-xl ${
             isDark ? 'bg-[#0a0a0f] border border-purple-900/30' : 'bg-white border border-gray-200'
           }`}>
             <div className={`p-4 border-b flex items-center justify-between ${isDark ? 'border-purple-900/30' : 'border-gray-200'}`}>

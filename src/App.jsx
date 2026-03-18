@@ -3,6 +3,7 @@ import { ThemeProvider, useTheme } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Sidebar, { MobileMenuButton } from './components/Sidebar';
 import ChatWidget from './components/ChatWidget';
+import VoiceDictation from './components/VoiceDictation';
 import VaultLogin from './components/VaultLogin';
 import Dashboard from './pages/Dashboard';
 import Projects from './pages/Projects';
@@ -18,12 +19,16 @@ import News from './pages/News';
 import AgentTeam from './pages/AgentTeam';
 import Integrations from './pages/Integrations';
 import ActionFeed from './pages/ActionFeed';
+import Trading from './pages/Trading';
+import VoiceAgents from './pages/VoiceAgents';
+import APIBuilder from './pages/APIBuilder';
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
   const { theme } = useTheme();
   const [activePage, setActivePage] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [dictationOpen, setDictationOpen] = useState(false);
   const isDark = theme === 'dark';
 
   // Handle resize to close sidebar on large screens
@@ -88,6 +93,12 @@ function AppContent() {
         return <Integrations />;
       case 'action-feed':
         return <ActionFeed />;
+      case 'trading':
+        return <Trading />;
+      case 'voice-agents':
+        return <VoiceAgents />;
+      case 'api-builder':
+        return <APIBuilder />;
       case 'admin':
         return <AdminPanel />;
       default:
@@ -115,6 +126,20 @@ function AppContent() {
 
       {/* Chat Widget - AI Assistant with Agents, Voice & Send to PA */}
       <ChatWidget onNavigate={handleNavigate} />
+
+      {/* Voice Dictation (Willow-like) - floating button */}
+      <button
+        onClick={() => setDictationOpen(true)}
+        className={`fixed bottom-6 left-6 z-40 p-3 rounded-full shadow-lg transition-all hover:scale-110 ${
+          isDark
+            ? 'bg-gradient-to-br from-green-500 to-cyan-500 text-white hover:shadow-green-500/30'
+            : 'bg-gradient-to-br from-green-500 to-cyan-500 text-white hover:shadow-green-500/30'
+        }`}
+        title="Voice Dictation - Speak & paste anywhere"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+      </button>
+      <VoiceDictation isOpen={dictationOpen} onClose={() => setDictationOpen(false)} />
     </div>
   );
 }

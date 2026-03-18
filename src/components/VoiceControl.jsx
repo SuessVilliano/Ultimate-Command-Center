@@ -8,37 +8,33 @@ import {
   MessageSquare,
   X,
   Send,
-  AlertCircle
+  AlertCircle,
+  Loader2
 } from 'lucide-react';
+import { API_URL, VOICEBOX_URL } from '../config';
 
-// Voice Commands Configuration
-const VOICE_COMMANDS = {
-  'go to dashboard': { action: 'navigate', target: 'dashboard' },
-  'open dashboard': { action: 'navigate', target: 'dashboard' },
-  'go to projects': { action: 'navigate', target: 'projects' },
-  'open projects': { action: 'navigate', target: 'projects' },
-  'go to agents': { action: 'navigate', target: 'agents' },
-  'open agents': { action: 'navigate', target: 'agents' },
-  'go to actions': { action: 'navigate', target: 'actions' },
-  'go to domains': { action: 'navigate', target: 'domains' },
-  'go to valuation': { action: 'navigate', target: 'valuation' },
-  'go to github': { action: 'navigate', target: 'github' },
-  'portfolio value': { action: 'speak', response: 'Your portfolio is valued between 420 thousand and 1.6 million dollars.' },
-  'how many projects': { action: 'speak', response: 'You have 9 software projects in your portfolio.' },
-  'how many agents': { action: 'speak', response: 'You have 12 AI agents deployed across Taskade and Claude Code.' },
-  'readiness score': { action: 'speak', response: 'Your institutional readiness score is 52 percent. Target is 85 percent.' },
-  'critical actions': { action: 'speak', response: 'You have 3 critical actions: File ABATEV patent, push all code to GitHub, and move API credentials to environment variables.' },
-  'hello': { action: 'speak', response: 'Hello! I am your LIV8 Command Center assistant. How can I help you today?' },
-  'help': { action: 'speak', response: 'You can ask me to navigate to pages, check portfolio value, list projects, or get status updates. Try saying go to dashboard or portfolio value.' },
+// Navigation commands still handled locally for instant response
+const NAV_COMMANDS = {
+  'go to dashboard': 'dashboard', 'open dashboard': 'dashboard',
+  'go to projects': 'projects', 'open projects': 'projects',
+  'go to agents': 'agents', 'open agents': 'agents',
+  'go to actions': 'actions', 'go to domains': 'domains',
+  'go to valuation': 'valuation', 'go to github': 'github',
+  'go to trading': 'trading', 'open trading': 'trading',
+  'go to voice agents': 'voice-agents', 'open voice agents': 'voice-agents',
+  'go to api builder': 'api-builder', 'open api builder': 'api-builder',
+  'go to news': 'news', 'open news': 'news',
+  'go to integrations': 'integrations', 'open integrations': 'integrations',
 };
 
 function VoiceControl({ onNavigate, isOpen, onClose }) {
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isThinking, setIsThinking] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [inputText, setInputText] = useState('');
   const [messages, setMessages] = useState([
-    { role: 'assistant', content: 'Hello! I\'m your LIV8 Command Center voice assistant. Type a command or click the mic to speak. Say "help" to see what I can do.' }
+    { role: 'assistant', content: 'Hello! I\'m your LIV8 Command Center voice assistant. Ask me anything — I\'ll give you real answers about your business, markets, projects, or anything else. You can also say "go to [page]" to navigate.' }
   ]);
 
   // Voice settings
@@ -46,10 +42,10 @@ function VoiceControl({ onNavigate, isOpen, onClose }) {
   const [selectedVoice, setSelectedVoice] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [voiceSettings, setVoiceSettings] = useState({
-    rate: 1,
-    pitch: 1,
-    volume: 1
+    rate: 1, pitch: 1, volume: 1
   });
+  const [voiceboxProfiles, setVoiceboxProfiles] = useState([]);
+  const [selectedProfileId, setSelectedProfileId] = useState('');
 
   // Feature support
   const [speechSupported, setSpeechSupported] = useState(false);
@@ -58,37 +54,49 @@ function VoiceControl({ onNavigate, isOpen, onClose }) {
   const recognitionRef = useRef(null);
   const messagesEndRef = useRef(null);
 
+  // System context for the AI
+  const SYSTEM_PROMPT = `You are the LIV8 Command Center AI assistant. You speak conversationally and give real, helpful answers.
+
+You are integrated into a business operations dashboard for Hybrid Holdings LLC, which manages:
+- Hybrid Funding (hybridfunding.co) - proprietary trading firm with challenge programs
+- Trade Hybrid (tradehybrid.co) - trading education platform
+- LIV8 Solar (liv8solar.com) - smart energy consulting
+- LIV8 Health (liv8health.com) - health supplements e-commerce
+- LIV8 AI (liv8ai.com) - AI solutions & machine learning services
+- Smart Life Brokers (smartlifebrokers.com) - insurance & financial services
+
+The Command Center has these sections: Dashboard, Agent Team (12 AI agents on Taskade), News & Markets (live crypto/stock data), Trading (live market data), Voice Agents (build voice AI for clients), API Builder (MCP connections), Projects, Integrations (Freshdesk, ClickUp, GoHighLevel, TaskMagic, GitHub), Valuation, Domains, and GitHub.
+
+Keep responses concise for voice — under 3 sentences when possible. Be direct and helpful.`;
+
+  // Load Voicebox profiles
+  useEffect(() => {
+    fetch(`${VOICEBOX_URL}/profiles`).then(r => r.ok ? r.json() : []).then(profiles => {
+      setVoiceboxProfiles(profiles);
+      if (profiles.length > 0) setSelectedProfileId(profiles[0].id);
+    }).catch(() => {});
+  }, []);
+
   // Check for browser support and load voices
   useEffect(() => {
-    // Check speech synthesis support
     if ('speechSynthesis' in window) {
       setSpeechSupported(true);
-
       const loadVoices = () => {
         const availableVoices = window.speechSynthesis.getVoices();
-        console.log('Available voices:', availableVoices.length);
         setVoices(availableVoices);
-
         if (availableVoices.length > 0) {
-          // Try to find a good English voice
           const englishVoices = availableVoices.filter(v => v.lang.startsWith('en'));
           const preferredVoice = englishVoices.find(v =>
-            v.name.includes('Google') ||
-            v.name.includes('Microsoft') ||
-            v.name.includes('Samantha') ||
-            v.name.includes('Zira') ||
-            v.name.includes('David')
+            v.name.includes('Google') || v.name.includes('Microsoft') ||
+            v.name.includes('Samantha') || v.name.includes('Zira') || v.name.includes('David')
           ) || englishVoices[0] || availableVoices[0];
-
           setSelectedVoice(preferredVoice);
         }
       };
-
       loadVoices();
       window.speechSynthesis.onvoiceschanged = loadVoices;
     }
 
-    // Check speech recognition support
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
       setRecognitionSupported(true);
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -100,7 +108,6 @@ function VoiceControl({ onNavigate, isOpen, onClose }) {
       recognitionRef.current.onresult = (event) => {
         let final = '';
         let interim = '';
-
         for (let i = event.resultIndex; i < event.results.length; i++) {
           if (event.results[i].isFinal) {
             final += event.results[i][0].transcript;
@@ -108,32 +115,20 @@ function VoiceControl({ onNavigate, isOpen, onClose }) {
             interim += event.results[i][0].transcript;
           }
         }
-
         setTranscript(interim || final);
-
         if (final) {
-          processCommand(final.toLowerCase().trim());
+          processCommand(final.trim());
           setTranscript('');
         }
       };
 
-      recognitionRef.current.onend = () => {
-        setIsListening(false);
-      };
-
-      recognitionRef.current.onerror = (event) => {
-        console.error('Speech recognition error:', event.error);
-        setIsListening(false);
-      };
+      recognitionRef.current.onend = () => setIsListening(false);
+      recognitionRef.current.onerror = () => setIsListening(false);
     }
 
     return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.abort();
-      }
-      if (window.speechSynthesis) {
-        window.speechSynthesis.cancel();
-      }
+      if (recognitionRef.current) recognitionRef.current.abort();
+      if (window.speechSynthesis) window.speechSynthesis.cancel();
     };
   }, []);
 
@@ -142,68 +137,150 @@ function VoiceControl({ onNavigate, isOpen, onClose }) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const speak = (text) => {
-    if (!speechSupported || voices.length === 0) {
-      console.log('Speech not available, text:', text);
-      return;
+  const speak = async (text) => {
+    setIsSpeaking(true);
+
+    // Try Voicebox cloned voice first
+    if (selectedProfileId) {
+      try {
+        const res = await fetch(`${VOICEBOX_URL}/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ profile_id: selectedProfileId, text, language: 'en' }),
+        });
+        if (res.ok) {
+          const gen = await res.json();
+          if (gen?.id) {
+            const audio = new Audio(`${VOICEBOX_URL}/audio/${gen.id}`);
+            audio.onended = () => setIsSpeaking(false);
+            audio.onerror = () => setIsSpeaking(false);
+            await audio.play().catch(() => setIsSpeaking(false));
+            return;
+          }
+        }
+      } catch { /* fall through to browser TTS */ }
     }
 
-    window.speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    if (selectedVoice) {
-      utterance.voice = selectedVoice;
+    // Browser TTS fallback
+    if (speechSupported && voices.length > 0) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      if (selectedVoice) utterance.voice = selectedVoice;
+      utterance.rate = voiceSettings.rate;
+      utterance.pitch = voiceSettings.pitch;
+      utterance.volume = voiceSettings.volume;
+      utterance.onend = () => setIsSpeaking(false);
+      utterance.onerror = () => setIsSpeaking(false);
+      window.speechSynthesis.speak(utterance);
+    } else {
+      setIsSpeaking(false);
     }
-    utterance.rate = voiceSettings.rate;
-    utterance.pitch = voiceSettings.pitch;
-    utterance.volume = voiceSettings.volume;
-
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
-
-    window.speechSynthesis.speak(utterance);
   };
 
-  const processCommand = (command) => {
-    // Add user message
+  const processCommand = async (command) => {
+    const lowerCommand = command.toLowerCase();
     setMessages(prev => [...prev, { role: 'user', content: command }]);
 
-    // Find matching command
-    let response = null;
-    let action = null;
-
-    for (const [key, value] of Object.entries(VOICE_COMMANDS)) {
-      if (command.includes(key)) {
-        action = value;
-        break;
+    // Check navigation commands first (instant, no API call needed)
+    for (const [key, target] of Object.entries(NAV_COMMANDS)) {
+      if (lowerCommand.includes(key)) {
+        const response = `Navigating to ${target.replace('-', ' ')}`;
+        setMessages(prev => [...prev, { role: 'assistant', content: response }]);
+        speak(response);
+        setTimeout(() => { onNavigate(target); onClose(); }, 500);
+        return;
       }
     }
 
-    if (action) {
-      if (action.action === 'navigate') {
-        response = `Navigating to ${action.target}`;
-        setMessages(prev => [...prev, { role: 'assistant', content: response }]);
-        speak(response);
-        setTimeout(() => {
-          onNavigate(action.target);
-          onClose();
-        }, 500);
-      } else if (action.action === 'speak') {
-        response = action.response;
-        setMessages(prev => [...prev, { role: 'assistant', content: response }]);
-        speak(response);
+    // For everything else, call the real AI backend
+    setIsThinking(true);
+    try {
+      // Build conversation history for context
+      const conversationHistory = messages.slice(-6).map(m => ({
+        role: m.role, content: m.content
+      }));
+
+      const response = await fetch(`${API_URL}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: command,
+          systemPrompt: SYSTEM_PROMPT,
+          conversationHistory,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const reply = data.response || data.text || data.message || '';
+        if (reply) {
+          setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
+          speak(reply);
+          return;
+        }
       }
-    } else {
-      response = "I didn't understand that. Try saying 'help' to see available commands.";
-      setMessages(prev => [...prev, { role: 'assistant', content: response }]);
-      speak(response);
+
+      // Fallback to commander endpoint
+      const fallbackResponse = await fetch(`${API_URL}/api/commander/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: command,
+          systemPrompt: SYSTEM_PROMPT,
+        }),
+      });
+
+      if (fallbackResponse.ok) {
+        const data = await fallbackResponse.json();
+        const reply = data.response || data.text || 'I received your message but couldn\'t generate a response. Please check the AI settings.';
+        setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
+        speak(reply);
+      } else {
+        const errorMsg = 'I\'m having trouble connecting to the AI backend. Please make sure the server is running and API keys are configured in Settings.';
+        setMessages(prev => [...prev, { role: 'assistant', content: errorMsg }]);
+        speak(errorMsg);
+      }
+    } catch (error) {
+      // Try Gemini browser-side fallback
+      const geminiKey = localStorage.getItem('liv8_gemini_api_key');
+      if (geminiKey) {
+        try {
+          const geminiRes = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: `${SYSTEM_PROMPT}\n\nUser: ${command}` }] }],
+                generationConfig: { temperature: 0.8, maxOutputTokens: 512 }
+              })
+            }
+          );
+          if (geminiRes.ok) {
+            const geminiData = await geminiRes.json();
+            const reply = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            if (reply) {
+              setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
+              speak(reply);
+              setIsThinking(false);
+              return;
+            }
+          }
+        } catch (gemErr) {
+          console.warn('Gemini voice fallback failed:', gemErr);
+        }
+      }
+      console.error('Voice AI error:', error);
+      const errorMsg = 'Connection error. Please check that the server is running or add a Gemini API key.';
+      setMessages(prev => [...prev, { role: 'assistant', content: errorMsg }]);
+      speak(errorMsg);
+    } finally {
+      setIsThinking(false);
     }
   };
 
   const toggleListening = () => {
     if (!recognitionSupported) return;
-
     if (isListening) {
       recognitionRef.current.stop();
       setIsListening(false);
@@ -217,7 +294,7 @@ function VoiceControl({ onNavigate, isOpen, onClose }) {
   const handleSubmit = (e) => {
     e.preventDefault();
     if (inputText.trim()) {
-      processCommand(inputText.toLowerCase().trim());
+      processCommand(inputText.trim());
       setInputText('');
     }
   };
@@ -227,7 +304,6 @@ function VoiceControl({ onNavigate, isOpen, onClose }) {
     setIsSpeaking(false);
   };
 
-  // Don't render if not open
   if (!isOpen) return null;
 
   return (
@@ -242,7 +318,7 @@ function VoiceControl({ onNavigate, isOpen, onClose }) {
             <div>
               <h2 className="text-lg font-semibold text-white">LIV8 Voice Assistant</h2>
               <p className="text-xs text-gray-400">
-                {isListening ? '🎤 Listening...' : isSpeaking ? '🔊 Speaking...' : '✓ Ready'}
+                {isListening ? 'Listening...' : isThinking ? 'Thinking...' : isSpeaking ? 'Speaking...' : 'Ready — ask me anything'}
               </p>
             </div>
           </div>
@@ -268,6 +344,24 @@ function VoiceControl({ onNavigate, isOpen, onClose }) {
         {showSettings && (
           <div className="p-4 border-b border-purple-500/20 bg-gray-800/50">
             <h3 className="text-sm font-semibold text-white mb-3">Voice Settings</h3>
+            {/* Voicebox Profile Selector */}
+            <div className="mb-4">
+              <label className="block text-xs text-gray-400 mb-2">Voicebox Voice (cloned)</label>
+              <select
+                value={selectedProfileId}
+                onChange={(e) => setSelectedProfileId(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg bg-gray-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-purple-500"
+              >
+                <option value="">Browser TTS only</option>
+                {voiceboxProfiles.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+              {voiceboxProfiles.length === 0 && (
+                <p className="text-xs text-yellow-400 mt-1">Start Voicebox server for cloned voices</p>
+              )}
+            </div>
+            {/* Browser TTS Settings (fallback) */}
             {voices.length > 0 ? (
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -278,47 +372,27 @@ function VoiceControl({ onNavigate, isOpen, onClose }) {
                     className="w-full px-3 py-2 rounded-lg bg-gray-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-purple-500"
                   >
                     {voices.filter(v => v.lang.startsWith('en')).map((voice) => (
-                      <option key={voice.name} value={voice.name}>
-                        {voice.name}
-                      </option>
+                      <option key={voice.name} value={voice.name}>{voice.name}</option>
                     ))}
                   </select>
                 </div>
                 <div>
                   <label className="block text-xs text-gray-400 mb-2">Speed: {voiceSettings.rate}x</label>
-                  <input
-                    type="range"
-                    min="0.5"
-                    max="2"
-                    step="0.1"
-                    value={voiceSettings.rate}
+                  <input type="range" min="0.5" max="2" step="0.1" value={voiceSettings.rate}
                     onChange={(e) => setVoiceSettings(prev => ({ ...prev, rate: parseFloat(e.target.value) }))}
-                    className="w-full accent-purple-500"
-                  />
+                    className="w-full accent-purple-500" />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-400 mb-2">Pitch: {voiceSettings.pitch}</label>
-                  <input
-                    type="range"
-                    min="0.5"
-                    max="2"
-                    step="0.1"
-                    value={voiceSettings.pitch}
+                  <input type="range" min="0.5" max="2" step="0.1" value={voiceSettings.pitch}
                     onChange={(e) => setVoiceSettings(prev => ({ ...prev, pitch: parseFloat(e.target.value) }))}
-                    className="w-full accent-purple-500"
-                  />
+                    className="w-full accent-purple-500" />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-400 mb-2">Volume: {Math.round(voiceSettings.volume * 100)}%</label>
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.1"
-                    value={voiceSettings.volume}
+                  <input type="range" min="0" max="1" step="0.1" value={voiceSettings.volume}
                     onChange={(e) => setVoiceSettings(prev => ({ ...prev, volume: parseFloat(e.target.value) }))}
-                    className="w-full accent-purple-500"
-                  />
+                    className="w-full accent-purple-500" />
                 </div>
               </div>
             ) : (
@@ -327,10 +401,8 @@ function VoiceControl({ onNavigate, isOpen, onClose }) {
               </div>
             )}
             {voices.length > 0 && (
-              <button
-                onClick={() => speak('This is a test of the LIV8 voice assistant.')}
-                className="mt-3 px-4 py-2 text-sm rounded-lg bg-purple-600 text-white hover:bg-purple-500 transition-colors"
-              >
+              <button onClick={() => speak('This is a test of the LIV8 voice assistant.')}
+                className="mt-3 px-4 py-2 text-sm rounded-lg bg-purple-600 text-white hover:bg-purple-500 transition-colors">
                 Test Voice
               </button>
             )}
@@ -354,21 +426,26 @@ function VoiceControl({ onNavigate, isOpen, onClose }) {
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-900/50">
           {messages.map((msg, idx) => (
-            <div
-              key={idx}
-              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-            >
-              <div
-                className={`max-w-[80%] px-4 py-3 rounded-2xl ${
-                  msg.role === 'user'
-                    ? 'bg-purple-600 text-white rounded-br-sm'
-                    : 'bg-gray-800 text-gray-200 rounded-bl-sm'
-                }`}
-              >
+            <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[80%] px-4 py-3 rounded-2xl ${
+                msg.role === 'user'
+                  ? 'bg-purple-600 text-white rounded-br-sm'
+                  : 'bg-gray-800 text-gray-200 rounded-bl-sm'
+              }`}>
                 <p className="text-sm">{msg.content}</p>
               </div>
             </div>
           ))}
+          {isThinking && (
+            <div className="flex justify-start">
+              <div className="px-4 py-3 rounded-2xl bg-gray-800 text-gray-400 rounded-bl-sm">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span className="text-sm">Thinking...</span>
+                </div>
+              </div>
+            </div>
+          )}
           {transcript && (
             <div className="flex justify-end">
               <div className="max-w-[80%] px-4 py-3 rounded-2xl bg-purple-600/50 text-white/80 rounded-br-sm">
@@ -382,64 +459,49 @@ function VoiceControl({ onNavigate, isOpen, onClose }) {
         {/* Input Area */}
         <div className="p-4 border-t border-purple-500/20 bg-gray-900">
           <div className="flex items-center gap-3">
-            {/* Mic Button */}
             <button
               onClick={toggleListening}
-              disabled={!recognitionSupported}
+              disabled={!recognitionSupported || isThinking}
               className={`p-4 rounded-full transition-all ${
                 isListening
                   ? 'bg-red-500 text-white animate-pulse'
-                  : recognitionSupported
+                  : recognitionSupported && !isThinking
                     ? 'bg-purple-600 text-white hover:bg-purple-500'
                     : 'bg-gray-700 text-gray-500 cursor-not-allowed'
               }`}
-              title={recognitionSupported ? (isListening ? 'Stop listening' : 'Start listening') : 'Speech recognition not supported'}
             >
               {isListening ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
             </button>
 
-            {/* Stop Speaking Button */}
             {isSpeaking && (
-              <button
-                onClick={stopSpeaking}
-                className="p-4 rounded-full bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
-                title="Stop speaking"
-              >
+              <button onClick={stopSpeaking}
+                className="p-4 rounded-full bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors">
                 <VolumeX className="w-6 h-6" />
               </button>
             )}
 
-            {/* Text Input */}
             <form onSubmit={handleSubmit} className="flex-1 flex gap-2">
               <input
                 type="text"
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                placeholder="Type a command (e.g., 'go to projects', 'help')..."
-                className="flex-1 px-4 py-3 rounded-xl bg-gray-800 border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 transition-colors"
+                placeholder="Ask anything — markets, projects, agents, business..."
+                disabled={isThinking}
+                className="flex-1 px-4 py-3 rounded-xl bg-gray-800 border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 transition-colors disabled:opacity-50"
               />
-              <button
-                type="submit"
-                className="p-3 rounded-xl bg-cyan-600 text-white hover:bg-cyan-500 transition-colors"
-              >
+              <button type="submit" disabled={isThinking || !inputText.trim()}
+                className="p-3 rounded-xl bg-cyan-600 text-white hover:bg-cyan-500 transition-colors disabled:opacity-50">
                 <Send className="w-5 h-5" />
               </button>
             </form>
           </div>
 
-          {/* Listening indicator */}
           {isListening && (
             <div className="mt-3 flex items-center justify-center gap-2">
               <div className="flex items-center gap-1">
                 {[...Array(5)].map((_, i) => (
-                  <div
-                    key={i}
-                    className="w-1 bg-purple-500 rounded-full animate-pulse"
-                    style={{
-                      height: `${12 + Math.random() * 16}px`,
-                      animationDelay: `${i * 0.15}s`
-                    }}
-                  />
+                  <div key={i} className="w-1 bg-purple-500 rounded-full animate-pulse"
+                    style={{ height: `${12 + Math.random() * 16}px`, animationDelay: `${i * 0.15}s` }} />
                 ))}
               </div>
               <span className="text-xs text-purple-400">Listening... speak now</span>

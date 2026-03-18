@@ -138,7 +138,46 @@ When suggesting commands, always format them in code blocks. Be concise but help
       setAiMessages(prev => [...prev, { role: 'assistant', content: data.response }]);
 
     } catch (err) {
-      // Fallback to intelligent local responses
+      // Try Gemini browser-side fallback
+      const geminiKey = localStorage.getItem('liv8_gemini_api_key');
+      if (geminiKey) {
+        try {
+          const repoContext = repos.slice(0, 20).map(r =>
+            `- ${r.name} (${r.language}, ${r.status}, updated ${formatDate(r.updatedAt)})`
+          ).join('\n');
+
+          const selectedContext = selectedRepo
+            ? `\n\nCurrently selected repo: ${selectedRepo.name} - ${selectedRepo.description}`
+            : '';
+
+          const systemPrompt = `You are a GitHub AI Assistant for user ${GITHUB_USERNAME} with ${repos.length} repositories.\n\nKey repositories:\n${repoContext}${selectedContext}\n\nHelp with deploying repos, managing issues/PRs, GitHub CLI commands, and GitHub Pages setup.\nWhen suggesting commands, format them in code blocks. Be concise.`;
+
+          const geminiResponse = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: `${systemPrompt}\n\nUser: ${userMessage}` }] }],
+                generationConfig: { temperature: 0.7, maxOutputTokens: 1024 }
+              })
+            }
+          );
+
+          if (geminiResponse.ok) {
+            const data = await geminiResponse.json();
+            const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            if (aiText) {
+              setAiMessages(prev => [...prev, { role: 'assistant', content: aiText }]);
+              setAiLoading(false);
+              return;
+            }
+          }
+        } catch (gemErr) {
+          console.warn('Gemini fallback failed:', gemErr);
+        }
+      }
+      // Final fallback to local responses
       const fallbackResponse = generateLocalResponse(userMessage, repos, selectedRepo);
       setAiMessages(prev => [...prev, { role: 'assistant', content: fallbackResponse }]);
     } finally {
@@ -411,7 +450,8 @@ When suggesting commands, always format them in code blocks. Be concise but help
     setTerminalOutput(prev => [
       ...prev,
       { type: 'command', content: `$ ${cmd}` },
-      { type: 'info', content: 'Command copied to clipboard. Run in your terminal.' }
+      { type: 'info', content: '\u{1F4CB} Command copied to clipboard. Paste and run in your terminal.' },
+      { type: 'system', content: `\u{2139}\u{FE0F} This command ${cmd.includes('clone') ? 'clones a repository' : cmd.includes('list') ? 'lists repositories' : cmd.includes('auth') ? 'manages GitHub authentication' : cmd.includes('api') ? 'calls the GitHub API' : 'executes a GitHub CLI operation'} using the gh CLI.` }
     ]);
     navigator.clipboard.writeText(cmd);
     setCopiedCmd(cmd);

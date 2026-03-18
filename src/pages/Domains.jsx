@@ -30,6 +30,8 @@ function Domains() {
   const [cloudflareStatus, setCloudflareStatus] = useState({ configured: false, domains: [] });
   const [showAddModal, setShowAddModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [cfApiKey, setCfApiKey] = useState(localStorage.getItem('liv8_cloudflare_api_key') || '');
+  const [cfEmail, setCfEmail] = useState(localStorage.getItem('liv8_cloudflare_email') || '');
 
   const [formData, setFormData] = useState({
     domain: '',
@@ -45,19 +47,70 @@ function Domains() {
   }, []);
 
   const checkCloudflareStatus = async () => {
+    // First try server
     try {
       const response = await fetch(`${API_URL}/api/cloudflare/domains`);
       if (response.ok) {
         const data = await response.json();
         setCloudflareStatus(data);
+        return;
       }
-    } catch (e) {
-      console.log('Cloudflare not configured');
+    } catch (e) {}
+
+    // Try browser-side with stored credentials
+    const storedKey = localStorage.getItem('liv8_cloudflare_api_key');
+    const storedEmail = localStorage.getItem('liv8_cloudflare_email');
+    if (storedKey && storedEmail) {
+      try {
+        const response = await fetch('https://api.cloudflare.com/client/v4/zones', {
+          headers: {
+            'X-Auth-Key': storedKey,
+            'X-Auth-Email': storedEmail,
+            'Content-Type': 'application/json'
+          }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.result) {
+            const cfDomains = data.result.map(zone => ({
+              id: zone.id,
+              name: zone.name,
+              status: zone.status,
+              plan: zone.plan?.name,
+              nameServers: zone.name_servers
+            }));
+            setCloudflareStatus({ configured: true, domains: cfDomains });
+
+            // Merge with existing domains
+            const existingNames = domains.map(d => d.domain);
+            const newDomains = cfDomains
+              .filter(d => !existingNames.includes(d.name))
+              .map(d => ({
+                domain: d.name,
+                purpose: `Cloudflare Zone - ${d.plan || 'Free'}`,
+                status: d.status === 'active' ? 'live' : 'parked',
+                cloudflareId: d.id,
+                nameServers: d.nameServers
+              }));
+
+            if (newDomains.length > 0) {
+              setDomains(prev => [...prev, ...newDomains]);
+            }
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn('Browser-side Cloudflare fetch failed (likely CORS):', e);
+      }
     }
+
+    console.log('Cloudflare not configured');
   };
 
   const syncFromCloudflare = async () => {
     setLoading(true);
+
+    // Try server first
     try {
       const response = await fetch(`${API_URL}/api/cloudflare/domains`);
       if (response.ok) {
@@ -70,17 +123,19 @@ function Domains() {
             cloudflareId: d.id,
             nameServers: d.nameServers
           }));
-
-          // Merge with existing domains
           const existingNames = domains.map(d => d.domain);
           const newDomains = cfDomains.filter(d => !existingNames.includes(d.domain));
           setDomains(prev => [...prev, ...newDomains]);
           setCloudflareSync(true);
+          setLoading(false);
+          return;
         }
       }
-    } catch (e) {
-      console.error('Failed to sync from Cloudflare:', e);
-    }
+    } catch (e) {}
+
+    // Fallback: re-check with browser credentials
+    await checkCloudflareStatus();
+    setCloudflareSync(cloudflareStatus.configured);
     setLoading(false);
   };
 
@@ -107,18 +162,16 @@ function Domains() {
           <p className={isDark ? 'text-gray-400' : 'text-gray-600'}>Digital real estate and web presence management</p>
         </div>
         <div className="flex items-center gap-3">
-          {cloudflareStatus.configured && (
-            <button
-              onClick={syncFromCloudflare}
-              disabled={loading}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg ${
-                isDark ? 'bg-orange-500/20 text-orange-400 hover:bg-orange-500/30' : 'bg-orange-100 text-orange-600 hover:bg-orange-200'
-              }`}
-            >
-              {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Cloud className="w-4 h-4" />}
-              Sync Cloudflare
-            </button>
-          )}
+          <button
+            onClick={syncFromCloudflare}
+            disabled={loading}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg ${
+              isDark ? 'bg-orange-500/20 text-orange-400 hover:bg-orange-500/30' : 'bg-orange-100 text-orange-600 hover:bg-orange-200'
+            }`}
+          >
+            {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Cloud className="w-4 h-4" />}
+            Sync Cloudflare
+          </button>
           <button
             onClick={() => setShowAddModal(true)}
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white"
@@ -154,7 +207,7 @@ function Domains() {
           <AlertCircle className="w-5 h-5 text-yellow-400" />
           <div>
             <p className={`text-sm ${isDark ? 'text-yellow-300' : 'text-yellow-700'}`}>
-              Cloudflare not configured. Add CLOUDFLARE_API_KEY and CLOUDFLARE_EMAIL to enable auto-sync.
+              Cloudflare not configured. Click Settings to enter your Cloudflare credentials, or add CLOUDFLARE_API_KEY and CLOUDFLARE_EMAIL to your server environment.
             </p>
           </div>
         </div>
@@ -430,12 +483,43 @@ function Domains() {
                 </div>
                 <p className={`text-sm mb-3 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                   {cloudflareStatus.configured
-                    ? `Connected - ${cloudflareStatus.domains.length} zones`
-                    : 'Not configured'}
+                    ? `Connected - ${cloudflareStatus.domains?.length || 0} zones`
+                    : 'Not configured. Enter your Cloudflare credentials below.'}
                 </p>
-                <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                  Add CLOUDFLARE_API_KEY and CLOUDFLARE_EMAIL to your server environment to enable.
-                </p>
+                <div className="space-y-3">
+                  <div>
+                    <label className={`block text-xs font-medium mb-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>API Key</label>
+                    <input
+                      type="password"
+                      value={cfApiKey}
+                      onChange={(e) => setCfApiKey(e.target.value)}
+                      className={`w-full p-2 rounded-lg border text-sm ${isDark ? 'bg-black/30 border-white/10 text-white' : 'bg-white border-gray-200'}`}
+                      placeholder="Your Cloudflare Global API Key"
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-xs font-medium mb-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Email</label>
+                    <input
+                      type="email"
+                      value={cfEmail}
+                      onChange={(e) => setCfEmail(e.target.value)}
+                      className={`w-full p-2 rounded-lg border text-sm ${isDark ? 'bg-black/30 border-white/10 text-white' : 'bg-white border-gray-200'}`}
+                      placeholder="your@email.com"
+                    />
+                  </div>
+                  <button
+                    onClick={() => {
+                      localStorage.setItem('liv8_cloudflare_api_key', cfApiKey);
+                      localStorage.setItem('liv8_cloudflare_email', cfEmail);
+                      setShowSettingsModal(false);
+                      checkCloudflareStatus();
+                    }}
+                    disabled={!cfApiKey || !cfEmail}
+                    className="w-full px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-700 text-white text-sm disabled:opacity-50"
+                  >
+                    Save & Connect
+                  </button>
+                </div>
               </div>
               <div className={`p-4 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
                 <div className="flex items-center gap-3 mb-2">
@@ -443,14 +527,9 @@ function Domains() {
                   <span className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Auto-Sync</span>
                 </div>
                 <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                  Automatically sync domains from Cloudflare on page load.
+                  Domains will automatically sync from Cloudflare when credentials are configured.
                 </p>
               </div>
-            </div>
-            <div className={`p-4 border-t ${isDark ? 'border-purple-900/30' : 'border-gray-200'}`}>
-              <button onClick={() => setShowSettingsModal(false)} className={`w-full px-4 py-2 rounded-lg ${isDark ? 'bg-white/10' : 'bg-gray-100'}`}>
-                Close
-              </button>
             </div>
           </div>
         </div>
