@@ -40,7 +40,13 @@ const AGENT_KEYWORDS = {
     'docker', 'container', 'kubernetes', 'aws', 'cloud',
     'database', 'sql', 'mongodb', 'api', 'endpoint',
     'bug', 'debug', 'error', 'fix', 'issue',
-    'ci/cd', 'pipeline', 'build', 'test'
+    'ci/cd', 'pipeline', 'build', 'test',
+    'api key', 'api keys', 'rest api', 'external api', 'api v1',
+    'mcp', 'mcp server', 'model context protocol', 'claude desktop',
+    'cursor', 'windsurf', 'stdio', 'json-rpc',
+    'webhook', 'inbound webhook', 'outbound webhook',
+    'authentication', 'bearer token', 'rate limit', 'scope',
+    'bootstrap key', 'api documentation', 'integration setup'
   ],
   'content-creator': [
     'content', 'copy', 'copywriting', 'write', 'writing',
@@ -124,7 +130,17 @@ export async function aiRouteRequest(message, conversationHistory = []) {
     `- ${a.id}: ${a.name} - ${a.specialization}`
   ).join('\n');
 
-  const prompt = `You are an AI request router. Based on the user's message, determine which specialist agent(s) should handle this request.
+  const prompt = `You are an AI request router for the LIV8 Command Center. Based on the user's message, determine which specialist agent(s) should handle this request.
+
+The Command Center has these platform capabilities:
+- External REST API v1 (authenticated endpoints for tickets, drafts, chat, knowledge, memory, webhooks)
+- MCP Server (15 tools for Claude Desktop, Cursor, custom AI agents)
+- API key auth system (scoped keys: tickets, drafts, chat, knowledge, memory, webhooks, admin)
+- Voice features (STT, TTS, PersonaPlex)
+- Integrations: Freshdesk, GoHighLevel, Taskade, Nifty, Supabase, n8n, TaskMagic
+
+For API/MCP/integration/webhook questions, route to dev-ops agent.
+For GHL-specific integration questions, route to highlevel-specialist.
 
 Available Agents:
 ${agentList}

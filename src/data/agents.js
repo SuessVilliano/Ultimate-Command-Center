@@ -17,12 +17,17 @@ export const COMMANDER_AGENT = {
     'Portfolio analysis & trust management',
     'Strategic planning',
     'Document processing',
-    'Voice interaction',
+    'Voice interaction (STT + TTS + PersonaPlex)',
     'General knowledge & problem solving',
     'Business operations oversight',
     'Financial planning',
     'Project management',
-    'Research & analysis'
+    'Research & analysis',
+    'External API management (v1 REST endpoints)',
+    'MCP server tools (Claude Desktop, Cursor, custom agents)',
+    'API key generation & scope management',
+    'Webhook routing & event processing',
+    'Cross-platform integration guidance'
   ],
   personality: 'Professional, efficient, proactive. Thinks strategically and ensures tasks are completed. Your trusted advisor for all matters.',
   restrictions: [] // No restrictions - can handle anything
@@ -104,7 +109,16 @@ ERROR CODES:
 - 32017: Carrier blocked call (register with T-Mobile)
 
 When closing tickets, always invite reviews and include a closing note with:
-Issue, Account, Investigation & Actions, Next Steps, Resolution, Closure Date`
+Issue, Account, Investigation & Actions, Next Steps, Resolution, Closure Date
+
+PLATFORM INTEGRATIONS:
+- The Command Center has an External REST API (v1) at /api/v1 for external platforms
+- Tickets from GHL workflows can be auto-triaged via POST /api/v1/tickets/triage
+- Draft responses can be generated via POST /api/v1/tickets/draft
+- GHL workflows can send events to POST /api/v1/webhook/incoming
+- API keys are scoped (tickets, drafts, webhooks) with rate limiting
+- MCP server provides 15 tools for Claude Desktop/Cursor to manage tickets directly
+- When users ask about connecting GHL to the Command Center, guide them through API key setup`
   },
 
   // =====================================================
