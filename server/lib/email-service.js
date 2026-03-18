@@ -251,7 +251,7 @@ export async function sendUrgentAlert(tickets, recipientEmail = null) {
           </tbody>
         </table>
         <p style="margin-top: 20px; color: #374151;">
-          <a href="${process.env.FRONTEND_URL || 'https://commandcenter.liv8.co'}/tickets"
+          <a href="${process.env.FRONTEND_URL || 'https://command.liv8.co'}/tickets"
              style="background: #7c3aed; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
             View in Command Center
           </a>
@@ -349,7 +349,7 @@ function buildReportEmailHTML(reportData, date) {
         ` : ''}
 
         <div style="margin-top: 30px; text-align: center;">
-          <a href="${process.env.FRONTEND_URL || 'https://commandcenter.liv8.co'}"
+          <a href="${process.env.FRONTEND_URL || 'https://command.liv8.co'}"
              style="background: #7c3aed; color: white; padding: 12px 30px; text-decoration: none; border-radius: 8px; font-weight: bold;">
             Open Command Center
           </a>
@@ -406,7 +406,7 @@ ${aiAnalysis.summary}
   text += `
 ${'='.repeat(50)}
 Full PDF report attached.
-View online: ${process.env.FRONTEND_URL || 'https://commandcenter.liv8.co'}
+View online: ${process.env.FRONTEND_URL || 'https://command.liv8.co'}
 `;
 
   return text;

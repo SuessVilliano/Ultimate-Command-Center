@@ -225,10 +225,18 @@ function createTables() {
       created_by TEXT DEFAULT 'pipeline',
       reviewed_by TEXT,
       reviewed_at TEXT,
+      sent_at TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // Add sent_at column to existing drafts tables (migration-safe)
+  try {
+    db.exec(`ALTER TABLE drafts ADD COLUMN sent_at TEXT`);
+  } catch (e) {
+    // Column already exists, ignore
+  }
 
   // Create indexes for better query performance
   db.exec(`
@@ -307,6 +315,17 @@ export function upsertTickets(tickets) {
 
   upsertMany(tickets);
   return tickets.length;
+}
+
+/**
+ * Update a ticket's status (used for syncing stale statuses from Freshdesk)
+ */
+export function updateTicketStatus(freshdeskId, newStatus) {
+  const stmt = db.prepare(`
+    UPDATE tickets SET status = ?, synced_at = CURRENT_TIMESTAMP
+    WHERE freshdesk_id = ?
+  `);
+  return stmt.run(newStatus, freshdeskId);
 }
 
 /**
@@ -1077,6 +1096,17 @@ export function getDraftStats() {
 }
 
 /**
+ * Mark a draft as sent to Freshdesk
+ */
+export function markDraftAsSent(id) {
+  const stmt = db.prepare(`
+    UPDATE drafts SET sent_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
+  return stmt.run(id);
+}
+
+/**
  * Delete a draft
  */
 export function deleteDraft(id) {
@@ -1090,6 +1120,7 @@ export default {
   getDb,
   upsertTicket,
   upsertTickets,
+  updateTicketStatus,
   getTicketsByStatus,
   getTicketWithAnalysis,
   getAllTicketsWithAnalysis,
@@ -1124,5 +1155,6 @@ export default {
   updateDraftStatus,
   getAllDrafts,
   getDraftStats,
+  markDraftAsSent,
   deleteDraft
 };

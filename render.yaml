@@ -22,9 +22,9 @@ services:
       - key: OPENAI_API_KEY
         sync: false
       - key: APP_URL
-        value: https://commandcenter.liv8.co
+        value: https://command.liv8.co
       - key: FRONTEND_URL
-        value: https://commandcenter.liv8.co
+        value: https://command.liv8.co
       # Other Integration Secrets - set in Render dashboard
       - key: TASKADE_API_KEY
         sync: false

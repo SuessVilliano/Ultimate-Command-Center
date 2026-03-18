@@ -111,6 +111,63 @@ async function fetchFreshdeskTickets(statuses = [2, 3, 6, 7]) {
 }
 
 /**
+ * Check the current status of a single Freshdesk ticket
+ */
+async function checkFreshdeskTicketStatus(freshdeskId) {
+  if (!freshdeskConfig.domain || !freshdeskConfig.apiKey) {
+    throw new Error('Freshdesk not configured');
+  }
+
+  const baseUrl = `https://${freshdeskConfig.domain}.freshdesk.com/api/v2`;
+  const auth = Buffer.from(`${freshdeskConfig.apiKey}:X`).toString('base64');
+
+  const response = await fetch(`${baseUrl}/tickets/${freshdeskId}`, {
+    headers: {
+      'Authorization': `Basic ${auth}`,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Freshdesk API error: ${response.status}`);
+  }
+
+  const ticket = await response.json();
+  return ticket.status;
+}
+
+/**
+ * Reply to a Freshdesk ticket with a draft response
+ * Used for auto-replying when a draft passes QA with high confidence
+ */
+async function replyToFreshdeskTicket(freshdeskId, responseText) {
+  if (!freshdeskConfig.domain || !freshdeskConfig.apiKey) {
+    throw new Error('Freshdesk not configured');
+  }
+
+  const baseUrl = `https://${freshdeskConfig.domain}.freshdesk.com/api/v2`;
+  const auth = Buffer.from(`${freshdeskConfig.apiKey}:X`).toString('base64');
+
+  const response = await fetch(`${baseUrl}/tickets/${freshdeskId}/reply`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Basic ${auth}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      body: responseText
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Freshdesk reply failed: ${response.status} - ${errorText}`);
+  }
+
+  return await response.json();
+}
+
+/**
  * Send notification via n8n webhook
  */
 async function sendN8nNotification(data) {
@@ -247,9 +304,14 @@ export async function runScheduledAnalysis(scheduleName = 'manual') {
       }
     }
 
-    // 4. AUTO-GENERATE DRAFT RESPONSES for open tickets that don't already have drafts
+    // 4. AUTO-GENERATE DRAFT RESPONSES and AUTO-REPLY for open tickets
     console.log('\n4. Auto-generating draft responses...');
     let draftsGenerated = 0;
+    let autoRepliesSent = 0;
+    const autoReplyEnabled = process.env.AUTO_REPLY_ENABLED !== 'false'; // enabled by default
+    const autoReplyMinScore = parseInt(process.env.AUTO_REPLY_MIN_QA_SCORE || '75', 10);
+    const autoReplyMaxUrgency = parseInt(process.env.AUTO_REPLY_MAX_URGENCY || '7', 10);
+
     try {
       const pipeline = await import('./ticket-pipeline.js');
       const openTickets = tickets.filter(t => [2, 3, 6, 7].includes(t.status));
@@ -259,13 +321,49 @@ export async function runScheduledAnalysis(scheduleName = 'manual') {
           // Check if a draft already exists for this ticket
           const existingDrafts = db.getAllDrafts({ ticket_id: ticket.id, limit: 1 });
           if (existingDrafts && existingDrafts.length > 0) {
-            console.log(`   Ticket #${ticket.id}: Draft already exists, skipping`);
+            const existingDraft = existingDrafts[0];
+            // If there's an approved draft that hasn't been sent yet, try to send it
+            if (autoReplyEnabled && existingDraft.status === 'APPROVED' && !existingDraft.sent_at) {
+              try {
+                await replyToFreshdeskTicket(ticket.id, existingDraft.draft_text);
+                db.markDraftAsSent(existingDraft.id);
+                autoRepliesSent++;
+                console.log(`   Ticket #${ticket.id}: Sent approved draft response`);
+              } catch (replyErr) {
+                console.log(`   Ticket #${ticket.id}: Failed to send approved draft: ${replyErr.message}`);
+              }
+            } else {
+              console.log(`   Ticket #${ticket.id}: Draft already exists (${existingDraft.status}), skipping`);
+            }
             continue;
           }
 
           console.log(`   Generating draft for ticket #${ticket.id}: ${ticket.subject.substring(0, 50)}...`);
-          await pipeline.processTicket(ticket.id, { skipQA: false });
+          const result = await pipeline.processTicket(ticket.id, { skipQA: false });
           draftsGenerated++;
+
+          // AUTO-REPLY: If QA passed with high confidence and urgency is manageable, auto-send
+          if (autoReplyEnabled && result.qaResult && result.status === 'PENDING_REVIEW') {
+            const qaScore = result.qaResult.score || 0;
+            const urgency = result.pipelineResult?.steps?.find(s => s.step === 'triage')?.urgency || 5;
+
+            if (result.qaResult.overall === 'PASS' && qaScore >= autoReplyMinScore && urgency <= autoReplyMaxUrgency) {
+              try {
+                const draft = db.getDraftForTicket(ticket.id);
+                if (draft && draft.draft_text) {
+                  await replyToFreshdeskTicket(ticket.id, draft.draft_text);
+                  db.updateDraftStatus(result.draftId, 'AUTO_SENT', 'system');
+                  db.markDraftAsSent(result.draftId);
+                  autoRepliesSent++;
+                  console.log(`   Ticket #${ticket.id}: AUTO-REPLIED (QA: ${qaScore}, Urgency: ${urgency})`);
+                }
+              } catch (replyErr) {
+                console.log(`   Ticket #${ticket.id}: Auto-reply failed: ${replyErr.message}`);
+              }
+            } else {
+              console.log(`   Ticket #${ticket.id}: Draft needs manual review (QA: ${qaScore}, Urgency: ${urgency})`);
+            }
+          }
 
           // Rate limiting between draft generations
           await new Promise(resolve => setTimeout(resolve, 800));
@@ -273,11 +371,12 @@ export async function runScheduledAnalysis(scheduleName = 'manual') {
           console.log(`   Draft generation failed for #${ticket.id}: ${e.message}`);
         }
       }
-      console.log(`   Generated ${draftsGenerated} new draft responses`);
+      console.log(`   Generated ${draftsGenerated} new drafts, sent ${autoRepliesSent} auto-replies`);
     } catch (e) {
       console.log('   Auto-draft generation skipped:', e.message);
     }
     stats.draftsGenerated = draftsGenerated;
+    stats.autoRepliesSent = autoRepliesSent;
 
     // 5. Generate proactive analysis summary
     console.log('\n5. Generating proactive summary...');
@@ -333,8 +432,39 @@ export async function runScheduledAnalysis(scheduleName = 'manual') {
       console.log('   Knowledge base indexing skipped:', e.message);
     }
 
+    // 8. Sync stale ticket statuses - mark locally "open" tickets as closed if not found in Freshdesk results
+    console.log('\n8. Syncing stale ticket statuses...');
+    try {
+      const fetchedIds = new Set(tickets.map(t => t.id));
+      const localOpenTickets = db.getTicketsByStatus([2, 3, 6, 7]);
+      let staleCount = 0;
+      for (const localTicket of localOpenTickets) {
+        if (!fetchedIds.has(localTicket.freshdesk_id)) {
+          // This ticket is "open" locally but wasn't returned by Freshdesk - check its actual status
+          try {
+            const actualStatus = await checkFreshdeskTicketStatus(localTicket.freshdesk_id);
+            if (actualStatus && actualStatus !== localTicket.status) {
+              db.updateTicketStatus(localTicket.freshdesk_id, actualStatus);
+              staleCount++;
+              console.log(`   Ticket #${localTicket.freshdesk_id}: ${localTicket.status} → ${actualStatus}`);
+            }
+          } catch (e) {
+            // If we can't check individual ticket, mark as closed (5) since Freshdesk didn't return it
+            db.updateTicketStatus(localTicket.freshdesk_id, 5);
+            staleCount++;
+            console.log(`   Ticket #${localTicket.freshdesk_id}: marked as closed (not found in Freshdesk)`);
+          }
+          // Rate limit individual ticket checks
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
+      }
+      console.log(`   Updated ${staleCount} stale ticket statuses`);
+    } catch (e) {
+      console.log('   Stale ticket sync skipped:', e.message);
+    }
+
     // Build summary
-    stats.summary = `${scheduleName}: ${tickets.length} tickets fetched, ${stats.ticketsAnalyzed} analyzed, ${draftsGenerated} drafts generated, ${urgentTickets.length} urgent`;
+    stats.summary = `${scheduleName}: ${tickets.length} tickets fetched, ${stats.ticketsAnalyzed} analyzed, ${draftsGenerated} drafts generated, ${autoRepliesSent} auto-replied, ${urgentTickets.length} urgent`;
 
     console.log(`\nCompleted: ${stats.summary}`);
     console.log('='.repeat(50) + '\n');
