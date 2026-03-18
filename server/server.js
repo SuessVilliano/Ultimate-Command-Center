@@ -33,6 +33,8 @@ import * as emailService from './lib/email-service.js';
 import * as orchestrator from './lib/agent-orchestrator.js';
 import { registerNiftyRoutes } from './routes/nifty-routes.js';
 import { registerScraperRoutes } from './routes/scraper-routes.js';
+import { registerExternalApiRoutes } from './routes/external-api.js';
+import * as apiAuth from './lib/api-auth.js';
 import * as scrapers from './lib/scrapers.js';
 import { taskmagicMCP } from './lib/taskmagic-mcp.js';
 import { unifiedTasks } from './lib/unified-tasks.js';
@@ -82,11 +84,13 @@ try {
   taskSync.initSyncTables();
   briefing.initBriefingTables();
   unifiedInbox.initUnifiedInboxTables();
+  apiAuth.initApiAuthTables();
   console.log('Database: Initialized');
   console.log('Conversation Memory: Initialized');
   console.log('Task Sync: Initialized');
   console.log('Proactive Briefing: Initialized');
   console.log('Unified Inbox: Initialized');
+  console.log('API Auth: Initialized');
 } catch (e) {
   console.error('Database initialization failed:', e.message);
 }
@@ -4452,6 +4456,32 @@ app.post('/api/telegram/command-center', async (req, res) => {
   }
 });
 
+// ============================================
+// EXTERNAL API v1 (Authenticated)
+// ============================================
+
+registerExternalApiRoutes(app);
+
+// Bootstrap: Generate first API key (only works when NO keys exist)
+// Call once to get your admin key, then use that key for all /api/v1 routes
+app.post('/api/bootstrap-key', (req, res) => {
+  try {
+    const existingKeys = apiAuth.listApiKeys();
+    if (existingKeys.length > 0) {
+      return res.status(403).json({
+        error: 'Bootstrap disabled',
+        message: 'API keys already exist. Use an admin key to create more via POST /api/v1/keys'
+      });
+    }
+    const { name } = req.body;
+    const key = apiAuth.generateApiKey(name || 'Admin Master Key', '*', 120);
+    console.log(`\n  *** FIRST API KEY GENERATED: ${key.prefix}... ***\n`);
+    res.status(201).json({ success: true, ...key });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Register Nifty routes
 registerNiftyRoutes(app);
 
@@ -4473,18 +4503,21 @@ app.listen(PORT, () => {
   ║  Scheduled Polling: ${scheduleStatus.enabled ? 'ENABLED' : 'DISABLED'}                                  ║
   ║  Schedule: 8 AM, 12 PM, 4 PM, 12 AM EST                       ║
   ║                                                               ║
-  ║  Endpoints:                                                   ║
+  ║  Internal API:                                                ║
   ║   POST /api/analyze-ticket      - Analyze support ticket      ║
   ║   POST /api/generate-response   - Generate ticket response    ║
   ║   POST /api/chat                - General AI chat             ║
-  ║   GET  /api/tickets             - Get cached tickets          ║
-  ║   GET  /api/analyses            - Get all cached analyses     ║
-  ║   POST /api/ai/switch           - Switch AI provider          ║
-  ║   POST /api/ai/key              - Update API key              ║
-  ║   GET  /api/schedule/status     - Get schedule status         ║
-  ║   POST /api/schedule/run        - Run manual analysis         ║
-  ║   GET  /api/settings            - Get all settings            ║
   ║   GET  /health                  - Health check                ║
+  ║                                                               ║
+  ║  External API v1 (authenticated):                             ║
+  ║   POST /api/bootstrap-key       - Generate first admin key    ║
+  ║   POST /api/v1/tickets/triage   - AI triage a ticket          ║
+  ║   POST /api/v1/tickets/draft    - Generate draft response     ║
+  ║   POST /api/v1/chat             - AI chat                     ║
+  ║   POST /api/v1/webhook/incoming - Receive external events     ║
+  ║   GET  /api/v1/status           - System status               ║
+  ║                                                               ║
+  ║  MCP Server: node server/mcp-server.js (stdio transport)      ║
   ║                                                               ║
   ╚═══════════════════════════════════════════════════════════════╝
   `);
