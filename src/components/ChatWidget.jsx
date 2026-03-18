@@ -227,6 +227,118 @@ function ChatWidget({ onNavigate }) {
   const [paMessage, setPAMessage] = useState('');
   const [paType, setPAType] = useState('note');
 
+  // Native browser voice: Speech-to-Text (STT) and Text-to-Speech (TTS)
+  const [sttActive, setSttActive] = useState(false);
+  const [sttSupported, setSttSupported] = useState(false);
+  const [ttsEnabled, setTtsEnabled] = useState(true);
+  const [ttsSupported, setTtsSupported] = useState(false);
+  const [ttsSpeaking, setTtsSpeaking] = useState(false);
+  const sttRef = useRef(null);
+  const ttsVoicesRef = useRef([]);
+
+  // Initialize native browser STT and TTS
+  useEffect(() => {
+    // Speech-to-Text (STT) setup
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      setSttSupported(true);
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onresult = (event) => {
+        let finalTranscript = '';
+        let interimTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript;
+          } else {
+            interimTranscript += event.results[i][0].transcript;
+          }
+        }
+        if (interimTranscript) {
+          setInputText(interimTranscript);
+        }
+        if (finalTranscript) {
+          setInputText(finalTranscript);
+          setSttActive(false);
+        }
+      };
+
+      recognition.onerror = (event) => {
+        console.log('STT error:', event.error);
+        setSttActive(false);
+      };
+
+      recognition.onend = () => {
+        setSttActive(false);
+      };
+
+      sttRef.current = recognition;
+    }
+
+    // Text-to-Speech (TTS) setup
+    if ('speechSynthesis' in window) {
+      setTtsSupported(true);
+      const loadVoices = () => {
+        ttsVoicesRef.current = window.speechSynthesis.getVoices();
+      };
+      loadVoices();
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+    }
+
+    return () => {
+      if (sttRef.current) {
+        try { sttRef.current.abort(); } catch (e) {}
+      }
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
+  // Toggle speech-to-text listening
+  const toggleSTT = () => {
+    if (!sttRef.current) return;
+    if (sttActive) {
+      sttRef.current.stop();
+      setSttActive(false);
+    } else {
+      setInputText('');
+      sttRef.current.start();
+      setSttActive(true);
+    }
+  };
+
+  // Speak text aloud using browser TTS
+  const speakText = (text) => {
+    if (!ttsSupported || !ttsEnabled) return;
+    window.speechSynthesis.cancel();
+    // Strip signature block from spoken text
+    const cleanText = text.replace(/\n\nJamaur J\.\nGoHighLevel[\s\S]*$/, '').trim();
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    // Pick a good English voice
+    const voices = ttsVoicesRef.current;
+    const englishVoices = voices.filter(v => v.lang.startsWith('en'));
+    const preferred = englishVoices.find(v =>
+      v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('Microsoft')
+    ) || englishVoices[0] || voices[0];
+    if (preferred) utterance.voice = preferred;
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    utterance.onstart = () => setTtsSpeaking(true);
+    utterance.onend = () => setTtsSpeaking(false);
+    utterance.onerror = () => setTtsSpeaking(false);
+    window.speechSynthesis.speak(utterance);
+  };
+
+  // Stop TTS playback
+  const stopTTS = () => {
+    window.speechSynthesis.cancel();
+    setTtsSpeaking(false);
+  };
+
   // Send to PA - Opens Telegram with pre-filled message TO the bot
   // Bot can then read and respond to the message
   const sendToPA = (message, type = 'note') => {
@@ -559,9 +671,14 @@ function ChatWidget({ onNavigate }) {
       agentId,
       content,
       timestamp: new Date(),
-      ...extras
+      ...extras,
+      canSpeak: role !== 'user' && role !== 'system'
     };
     setMessages(prev => [...prev, msg]);
+    // Auto-speak AI responses if TTS is enabled
+    if (msg.canSpeak && ttsEnabled && ttsSupported && content) {
+      speakText(content);
+    }
     return msg;
   };
 
@@ -857,7 +974,7 @@ function ChatWidget({ onNavigate }) {
       {/* Floating Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className={`fixed bottom-6 right-6 z-50 p-4 rounded-full shadow-2xl transition-all duration-300 group ${
+        className={`fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 p-4 rounded-full shadow-2xl transition-all duration-300 group ${
           isOpen ? 'bg-red-500 hover:bg-red-600' : 'bg-gradient-to-r from-purple-600 to-cyan-500 hover:scale-110'
         }`}
       >
@@ -873,8 +990,11 @@ function ChatWidget({ onNavigate }) {
 
       {/* Chat Panel */}
       {isOpen && (
-        <div className={`fixed bottom-24 right-6 z-50 w-[450px] h-[650px] rounded-2xl shadow-2xl flex flex-col overflow-hidden border transition-all duration-300 ${
-          isDark ? 'bg-gray-900 border-purple-500/30' : 'bg-white border-gray-200'
+        <div className={`fixed z-50 rounded-2xl shadow-2xl flex flex-col overflow-hidden border transition-all duration-300
+          bottom-24 right-2 left-2 h-[calc(100vh-7rem)]
+          sm:left-auto sm:right-4 sm:w-[420px] sm:h-[600px]
+          md:right-6 md:w-[450px] md:h-[650px]
+          ${isDark ? 'bg-gray-900 border-purple-500/30' : 'bg-white border-gray-200'
         }`}>
           {/* Header */}
           <div className={`p-4 border-b ${isDark ? 'border-gray-800' : 'border-gray-200'}`}>
@@ -1392,6 +1512,15 @@ function ChatWidget({ onNavigate }) {
                         </p>
                       )}
                       <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                      {msg.canSpeak && ttsSupported && (
+                        <button
+                          onClick={() => speakText(msg.content)}
+                          className={`mt-1 p-1 rounded opacity-50 hover:opacity-100 transition-opacity ${isDark ? 'hover:bg-gray-700' : 'hover:bg-gray-200'}`}
+                          title="Read aloud"
+                        >
+                          <Volume2 className="w-3 h-3" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1558,48 +1687,94 @@ function ChatWidget({ onNavigate }) {
           )}
 
           {/* Input */}
-          <div className={`p-4 border-t ${isDark ? 'border-gray-800' : 'border-gray-200'}`}>
-            <div className="flex items-center gap-2 mb-2">
+          <div className={`p-3 sm:p-4 border-t ${isDark ? 'border-gray-800' : 'border-gray-200'}`}>
+            <div className="flex items-center gap-1 sm:gap-2 mb-2">
               <input ref={fileInputRef} type="file" multiple onChange={handleFileUpload} className="hidden" />
               <button onClick={() => fileInputRef.current?.click()} className={`p-2 rounded-lg ${isDark ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-600'}`}>
-                <Paperclip className="w-5 h-5" />
+                <Paperclip className="w-4 h-4 sm:w-5 sm:h-5" />
               </button>
               <button onClick={isScreenSharing ? stopScreenShare : startScreenShare} className={`p-2 rounded-lg ${isScreenSharing ? 'bg-red-500/20 text-red-500' : isDark ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-600'}`}>
-                {isScreenSharing ? <StopCircle className="w-5 h-5" /> : <Monitor className="w-5 h-5" />}
+                {isScreenSharing ? <StopCircle className="w-4 h-4 sm:w-5 sm:h-5" /> : <Monitor className="w-4 h-4 sm:w-5 sm:h-5" />}
               </button>
-            </div>
-            <div className="flex items-center gap-2">
+              {/* TTS toggle */}
+              {ttsSupported && (
+                <button
+                  onClick={() => { setTtsEnabled(!ttsEnabled); if (ttsSpeaking) stopTTS(); }}
+                  className={`p-2 rounded-lg transition-all ${
+                    ttsEnabled
+                      ? 'bg-purple-600/20 text-purple-400'
+                      : isDark ? 'hover:bg-gray-800 text-gray-500' : 'hover:bg-gray-100 text-gray-400'
+                  }`}
+                  title={ttsEnabled ? 'Voice responses ON - click to mute' : 'Voice responses OFF - click to enable'}
+                >
+                  {ttsEnabled ? <Volume2 className="w-4 h-4 sm:w-5 sm:h-5" /> : <VolumeX className="w-4 h-4 sm:w-5 sm:h-5" />}
+                </button>
+              )}
+              {/* Stop speaking button */}
+              {ttsSpeaking && (
+                <button
+                  onClick={stopTTS}
+                  className="p-2 rounded-lg bg-red-500/20 text-red-400 animate-pulse"
+                  title="Stop speaking"
+                >
+                  <StopCircle className="w-4 h-4 sm:w-5 sm:h-5" />
+                </button>
+              )}
+              {/* PersonaPlex voice button (advanced) */}
               <button
                 onClick={handleMicButton}
-                className={`p-3 rounded-xl transition-all ${
+                className={`p-2 rounded-lg transition-all ${
                   voiceActive
                     ? 'bg-emerald-500 text-white animate-pulse'
                     : voiceConnecting
                     ? 'bg-yellow-500 text-white animate-pulse'
                     : showVoiceSetup
                     ? 'bg-emerald-600 text-white ring-2 ring-emerald-400'
-                    : 'bg-emerald-600 text-white hover:bg-emerald-500'
+                    : isDark ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-600'
                 }`}
-                title={voiceActive ? 'End voice session' : 'Start PersonaPlex voice'}
+                title={voiceActive ? 'End PersonaPlex voice session' : 'PersonaPlex voice (advanced)'}
               >
-                {voiceActive ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                <Phone className="w-4 h-4 sm:w-5 sm:h-5" />
               </button>
+            </div>
+            <div className="flex items-center gap-2">
+              {/* Speech-to-text mic button */}
+              {sttSupported && (
+                <button
+                  onClick={toggleSTT}
+                  className={`p-3 rounded-xl transition-all flex-shrink-0 ${
+                    sttActive
+                      ? 'bg-red-500 text-white animate-pulse ring-2 ring-red-400'
+                      : 'bg-emerald-600 text-white hover:bg-emerald-500'
+                  }`}
+                  title={sttActive ? 'Stop listening' : 'Voice input - speak your message'}
+                >
+                  {sttActive ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                </button>
+              )}
               <input
                 type="text"
                 value={inputText}
                 onChange={e => setInputText(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleSend()}
-                placeholder="Talk to your AI team..."
-                className={`flex-1 px-4 py-3 rounded-xl border ${isDark ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500' : 'bg-gray-100 border-gray-200 text-gray-900 placeholder-gray-400'} focus:outline-none focus:border-purple-500`}
+                placeholder={sttActive ? 'Listening...' : 'Talk to your AI team...'}
+                className={`flex-1 min-w-0 px-3 sm:px-4 py-3 rounded-xl border ${
+                  sttActive
+                    ? 'border-red-500 ring-1 ring-red-400'
+                    : isDark ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500' : 'bg-gray-100 border-gray-200 text-gray-900 placeholder-gray-400'
+                } ${isDark ? 'bg-gray-800 text-white placeholder-gray-500' : 'bg-gray-100 text-gray-900 placeholder-gray-400'} focus:outline-none focus:border-purple-500`}
               />
               <button
                 onClick={() => handleSend()}
                 disabled={!inputText.trim() && uploadedFiles.length === 0}
-                className={`p-3 rounded-xl ${inputText.trim() || uploadedFiles.length ? 'bg-cyan-600 text-white hover:bg-cyan-500' : isDark ? 'bg-gray-800 text-gray-600' : 'bg-gray-200 text-gray-400'}`}
+                className={`p-3 rounded-xl flex-shrink-0 ${inputText.trim() || uploadedFiles.length ? 'bg-cyan-600 text-white hover:bg-cyan-500' : isDark ? 'bg-gray-800 text-gray-600' : 'bg-gray-200 text-gray-400'}`}
               >
                 <Send className="w-5 h-5" />
               </button>
             </div>
+            {sttActive && (
+              <p className="text-xs text-red-400 mt-1 animate-pulse text-center">Listening... speak now</p>
+            )}
           </div>
         </div>
       )}
