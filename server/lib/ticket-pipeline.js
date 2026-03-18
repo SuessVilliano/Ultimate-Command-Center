@@ -84,7 +84,7 @@ export async function processTicket(ticketId, options = {}) {
         requester: { name: ticket.requester_name, email: ticket.requester_email }
       },
       {
-        agentName: options.agentName || 'Support Agent',
+        agentName: options.agentName || 'Jamaur J.',
         ticketType: (analysis.ESCALATION_TYPE || analysis.escalation_type || 'general').toLowerCase(),
         analysis: {
           SUMMARY: analysis.SUMMARY || analysis.summary,

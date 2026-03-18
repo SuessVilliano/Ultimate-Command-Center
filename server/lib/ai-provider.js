@@ -732,7 +732,7 @@ export async function analyzeTicket(ticket, options = {}) {
     ? `\n\nCOMPANY STANDARD OPERATING PROCEDURES (follow these strictly):\n${sopContent}\n`
     : '';
 
-  const prompt = `You are a support ticket analyzer for a GoHighLevel SaaS support team. Analyze this support ticket and provide:
+  const prompt = `You are a support ticket analyzer for Jamaur J., a GoHighLevel Senior Customer Support Specialist. Analyze this support ticket and provide:
 1. ESCALATION_TYPE: One of [DEV, TWILIO, BILLING, FEATURE, BUG, SUPPORT]
 2. URGENCY_SCORE: 1-10 (10 being most urgent)
 3. SUGGESTED_RESPONSE: A brief suggested response to the customer
@@ -832,7 +832,15 @@ Use insights from these similar tickets to inform your response.`;
     ? `\nCOMPANY SOPs (you MUST follow these protocols):\n${sopContent}\n`
     : '';
 
-  const prompt = `You are ${agentName || 'a support agent'}, a GoHighLevel Support Agent responding to a customer ticket. Write a professional, helpful response.
+  // Agent signature block - used at the end of every response
+  const agentSignature = `Jamaur J.
+GoHighLevel
+Senior Customer Support Specialist
+Ticket #${ticket.id || ticket.freshdesk_id || ''}
+Available time: Tuesday- Saturday, 8am to 4pm CST
+Booking Calendar: https://speakwith.us/jamaur`;
+
+  const prompt = `You are Jamaur J., a GoHighLevel Senior Customer Support Specialist responding to a customer ticket. Write a professional, helpful response.
 
 CRITICAL FORMATTING RULES:
 - Write PLAIN TEXT only - absolutely NO markdown
@@ -840,8 +848,9 @@ CRITICAL FORMATTING RULES:
 - Use simple line breaks for paragraphs
 - Keep it conversational and professional
 - The response should be ready to copy and paste directly into Freshdesk
+- Do NOT include any signature or sign-off at the end - the signature will be appended automatically
 ${sopSection}
-YOUR NAME: ${agentName || 'Support Agent'}
+YOUR NAME: Jamaur J.
 CUSTOMER NAME: ${ticket.requester?.name || ticket.requester_name || 'there'}
 
 TICKET DETAILS:
@@ -859,9 +868,9 @@ RESPONSE STRUCTURE:
 2. Acknowledge their specific issue
 3. Provide solution or next steps
 4. Offer further assistance
-5. Sign off with: Best regards, ${agentName || 'Support Team'}
+5. Do NOT add a sign-off - the signature is appended automatically
 
-Write a warm, professional response. Do NOT use any markdown formatting.`;
+Write a warm, professional response. Do NOT use any markdown formatting. Do NOT include a signature block.`;
 
   const result = await chat([{ role: 'user', content: prompt }], {
     ...options,
@@ -878,6 +887,14 @@ Write a warm, professional response. Do NOT use any markdown formatting.`;
     .replace(/`/g, '')
     .replace(/\[|\]/g, '')
     .trim();
+
+  // Strip any AI-generated sign-offs before appending the real signature
+  text = text
+    .replace(/\n*(Best regards|Kind regards|Warm regards|Thanks|Thank you|Sincerely|Cheers),?\n*.*?(Jamaur|Support (Team|Agent)|Customer Support).*$/is, '')
+    .trim();
+
+  // Append the official agent signature
+  text = `${text}\n\n${agentSignature}`;
 
   return {
     response: text,
@@ -980,9 +997,18 @@ COMPANY RESPONSE STANDARDS:
 9. Use bullet points for multiple steps
 10. Always personalize with the customer's name`;
 
-  const prompt = `You are ${agentName || 'a senior support agent'} writing a response to a customer ticket.
+  // Agent signature block
+  const agentSignature = `Jamaur J.
+GoHighLevel
+Senior Customer Support Specialist
+Ticket #${ticket.id || ticket.freshdesk_id || ''}
+Available time: Tuesday- Saturday, 8am to 4pm CST
+Booking Calendar: https://speakwith.us/jamaur`;
+
+  const prompt = `You are Jamaur J., a GoHighLevel Senior Customer Support Specialist writing a response to a customer ticket.
 
 CRITICAL: Write a SHORT, DIRECT response following company standards. No fluff.
+Do NOT include any signature or sign-off at the end - the signature will be appended automatically.
 
 ${standardsPrompt}
 
@@ -998,6 +1024,7 @@ FORMATTING RULES:
 - NO asterisks, hashtags, or backticks
 - Keep it under 150 words
 - Be direct and helpful
+- Do NOT include a signature block - it will be appended automatically
 
 Write your response now:`;
 
@@ -1015,6 +1042,14 @@ Write your response now:`;
     .replace(/^#{1,6}\s/gm, '')
     .replace(/`/g, '')
     .trim();
+
+  // Strip any AI-generated sign-offs before appending the real signature
+  response = response
+    .replace(/\n*(Best regards|Kind regards|Warm regards|Thanks|Thank you|Sincerely|Cheers),?\n*.*?(Jamaur|Support (Team|Agent)|Customer Support).*$/is, '')
+    .trim();
+
+  // Append the official agent signature
+  response = `${response}\n\n${agentSignature}`;
 
   return {
     response,
