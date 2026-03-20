@@ -8,6 +8,46 @@ import {
 import { useTheme } from '../context/ThemeContext';
 import { API_URL } from '../config';
 
+// Error boundary to prevent black screen crashes
+class TradingErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, info) {
+    console.error('Trading page error:', error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="space-y-6">
+          <h1 className="text-2xl font-bold text-white">Trading & Markets</h1>
+          <div className="p-6 rounded-xl bg-red-900/20 border border-red-900/30">
+            <div className="flex items-center gap-3 mb-3">
+              <AlertCircle className="w-6 h-6 text-red-400" />
+              <span className="text-red-400 font-semibold text-lg">Something went wrong</span>
+            </div>
+            <p className="text-gray-400 mb-4">The trading page encountered an error. This usually means market data came back in an unexpected format.</p>
+            <pre className="text-xs text-red-300 bg-black/30 p-3 rounded-lg overflow-x-auto mb-4">
+              {this.state.error?.message || 'Unknown error'}
+            </pre>
+            <button
+              onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
+              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-500"
+            >
+              Reload Page
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function Trading() {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
@@ -357,27 +397,34 @@ function Trading() {
                         <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>Market Movers (Volume Gainers)</h3>
                       </div>
                       <div className="p-4">
-                        {movers.data?.length > 0 ? (
+                        {(movers.symbols || movers.data || []).length > 0 ? (
                           <div className="grid grid-cols-2 gap-3">
-                            {(movers.data || []).slice(0, 8).map((item, i) => (
-                              <div key={i} className={`p-3 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
-                                <div className="flex items-center justify-between">
-                                  <span className={`font-medium text-sm ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                                    {item.d?.[0] || item.symbol || item.name || `#${i + 1}`}
-                                  </span>
-                                  <span className={`text-xs font-medium ${
-                                    (item.d?.[2] || 0) >= 0 ? 'text-green-400' : 'text-red-400'
-                                  }`}>
-                                    {item.d?.[2] !== undefined ? formatChange(item.d[2]) : '-'}
-                                  </span>
+                            {(movers.symbols || movers.data || []).slice(0, 8).map((item, i) => {
+                              // TradingView format: { s: "NASDAQ:NVDA", f: [volume] }
+                              // Fallback format: { d: [name, price, change], symbol, name }
+                              const symbol = item.s ? item.s.split(':').pop() : (item.d?.[0] || item.symbol || item.name || `#${i + 1}`);
+                              const volume = item.f?.[0] || item.d?.[1];
+                              const change = item.d?.[2];
+                              return (
+                                <div key={i} className={`p-3 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+                                  <div className="flex items-center justify-between">
+                                    <span className={`font-medium text-sm ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                                      {symbol}
+                                    </span>
+                                    {change !== undefined ? (
+                                      <span className={`text-xs font-medium ${(change || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                        {formatChange(change)}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  {volume && (
+                                    <span className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                                      Vol: {formatVolume(volume)}
+                                    </span>
+                                  )}
                                 </div>
-                                {item.d?.[1] && (
-                                  <span className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                                    {formatPrice(item.d[1])}
-                                  </span>
-                                )}
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         ) : (
                           <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
@@ -667,4 +714,10 @@ function Trading() {
   );
 }
 
-export default Trading;
+export default function TradingPage() {
+  return (
+    <TradingErrorBoundary>
+      <Trading />
+    </TradingErrorBoundary>
+  );
+}

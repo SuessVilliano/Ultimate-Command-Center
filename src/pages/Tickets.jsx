@@ -212,6 +212,8 @@ function Tickets() {
   const [sendingToPA, setSendingToPA] = useState(false); // Sending to Personal Assistant
   const [sentToPA, setSentToPA] = useState({}); // Track which tickets were sent
   const [quickLinksCollapsed, setQuickLinksCollapsed] = useState(false); // Collapsible quick links
+  const [ticketConversations, setTicketConversations] = useState({}); // Cache conversations by ticket ID
+  const [loadingConversation, setLoadingConversation] = useState(false);
   // SOP Management state
   const [sopList, setSopList] = useState([]);
   const [sopUploading, setSopUploading] = useState(false);
@@ -677,6 +679,40 @@ function Tickets() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Fetch full conversation thread for a ticket from Freshdesk
+  const fetchConversations = async (ticketId) => {
+    // Return cached if available
+    if (ticketConversations[ticketId]) return;
+
+    const domain = freshdeskDomain || localStorage.getItem(STORAGE_KEYS.FRESHDESK_DOMAIN);
+    const apiKey = freshdeskApiKey || localStorage.getItem(STORAGE_KEYS.FRESHDESK_API_KEY);
+    if (!domain || !apiKey) return;
+
+    setLoadingConversation(true);
+    try {
+      const authHeader = 'Basic ' + btoa(apiKey + ':X');
+      const response = await fetch(
+        `https://${domain}.freshdesk.com/api/v2/tickets/${ticketId}/conversations`,
+        { headers: { 'Authorization': authHeader, 'Content-Type': 'application/json' } }
+      );
+      if (response.ok) {
+        const conversations = await response.json();
+        setTicketConversations(prev => ({ ...prev, [ticketId]: conversations }));
+      }
+    } catch (err) {
+      console.error('Failed to fetch conversations:', err);
+    } finally {
+      setLoadingConversation(false);
+    }
+  };
+
+  // Fetch conversations when a ticket is selected
+  const handleSelectTicket = (ticket) => {
+    setSelectedTicket(ticket);
+    setAiResponse('');
+    fetchConversations(ticket.id);
   };
 
   // Proactive auto-analysis: silently analyze unanalyzed tickets in background
@@ -1427,7 +1463,7 @@ function Tickets() {
       <div className="mt-4">
         <DraftQueue isDark={isDark} onSelectTicket={(ticketId) => {
           const ticket = tickets.find(t => t.id === ticketId);
-          if (ticket) setSelectedTicket(ticket);
+          if (ticket) handleSelectTicket(ticket);
         }} />
       </div>
 
@@ -2272,7 +2308,7 @@ function Tickets() {
                 return (
                   <div
                     key={ticket.id}
-                    onClick={() => setSelectedTicket(ticket)}
+                    onClick={() => handleSelectTicket(ticket)}
                     className={`p-4 cursor-pointer transition-colors ${
                       selectedTicket?.id === ticket.id
                         ? isDark ? 'bg-purple-600/20' : 'bg-purple-50'
@@ -2393,16 +2429,111 @@ function Tickets() {
               </div>
 
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                {/* Description */}
+                {/* Conversation Thread */}
                 <div>
-                  <h4 className={`text-sm font-semibold mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                    Description
-                  </h4>
-                  <div className={`p-3 rounded-lg text-sm ${
-                    isDark ? 'bg-white/5 text-gray-300' : 'bg-gray-50 text-gray-700'
-                  }`}>
-                    {selectedTicket.description_text || selectedTicket.description || 'No description provided'}
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className={`text-sm font-semibold flex items-center gap-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                      <MessageSquare className="w-4 h-4" />
+                      Conversation Thread
+                      {ticketConversations[selectedTicket.id] && (
+                        <span className={`text-xs font-normal px-2 py-0.5 rounded-full ${isDark ? 'bg-white/10 text-gray-400' : 'bg-gray-100 text-gray-500'}`}>
+                          {ticketConversations[selectedTicket.id].length} messages
+                        </span>
+                      )}
+                    </h4>
                   </div>
+                  {loadingConversation && !ticketConversations[selectedTicket.id] ? (
+                    <div className={`p-4 rounded-lg flex items-center gap-2 ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+                      <RefreshCw className="w-4 h-4 animate-spin text-purple-400" />
+                      <span className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Loading conversation...</span>
+                    </div>
+                  ) : ticketConversations[selectedTicket.id]?.length > 0 ? (
+                    <div className="space-y-3 max-h-[500px] overflow-y-auto">
+                      {/* Original description as first message */}
+                      <div className={`p-3 rounded-lg border-l-3 ${isDark ? 'bg-white/5 border-l-blue-500' : 'bg-gray-50 border-l-blue-500'}`}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className={`text-xs font-semibold ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
+                            {selectedTicket.requester?.name || 'Customer'}
+                          </span>
+                          <span className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                            {selectedTicket.created_at ? new Date(selectedTicket.created_at).toLocaleString() : ''}
+                          </span>
+                        </div>
+                        <div
+                          className={`text-sm prose prose-sm max-w-none ${isDark ? 'text-gray-300 prose-invert' : 'text-gray-700'}`}
+                          dangerouslySetInnerHTML={{ __html: selectedTicket.description || selectedTicket.description_text || 'No description' }}
+                        />
+                      </div>
+                      {/* Conversation replies */}
+                      {ticketConversations[selectedTicket.id].map((conv, idx) => {
+                        const isAgent = !conv.incoming;
+                        return (
+                          <div
+                            key={conv.id || idx}
+                            className={`p-3 rounded-lg border-l-3 ${
+                              isAgent
+                                ? isDark ? 'bg-green-900/10 border-l-green-500' : 'bg-green-50 border-l-green-500'
+                                : isDark ? 'bg-white/5 border-l-blue-500' : 'bg-gray-50 border-l-blue-500'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="flex items-center gap-2">
+                                <span className={`text-xs font-semibold ${
+                                  isAgent
+                                    ? isDark ? 'text-green-400' : 'text-green-600'
+                                    : isDark ? 'text-blue-400' : 'text-blue-600'
+                                }`}>
+                                  {isAgent ? 'Agent' : (conv.from_email || 'Customer')}
+                                </span>
+                                {isAgent && (
+                                  <span className={`text-xs px-1.5 py-0.5 rounded ${isDark ? 'bg-green-500/20 text-green-300' : 'bg-green-100 text-green-700'}`}>
+                                    Staff
+                                  </span>
+                                )}
+                                {conv.private && (
+                                  <span className={`text-xs px-1.5 py-0.5 rounded ${isDark ? 'bg-yellow-500/20 text-yellow-300' : 'bg-yellow-100 text-yellow-700'}`}>
+                                    Private Note
+                                  </span>
+                                )}
+                              </div>
+                              <span className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                                {conv.created_at ? new Date(conv.created_at).toLocaleString() : ''}
+                              </span>
+                            </div>
+                            <div
+                              className={`text-sm prose prose-sm max-w-none ${isDark ? 'text-gray-300 prose-invert' : 'text-gray-700'}`}
+                              style={{ overflowWrap: 'break-word', wordBreak: 'break-word' }}
+                              dangerouslySetInnerHTML={{ __html: conv.body || conv.body_text || '' }}
+                            />
+                            {conv.attachments?.length > 0 && (
+                              <div className={`mt-2 flex flex-wrap gap-2`}>
+                                {conv.attachments.map((att, ai) => (
+                                  <a
+                                    key={ai}
+                                    href={att.attachment_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className={`flex items-center gap-1 text-xs px-2 py-1 rounded ${
+                                      isDark ? 'bg-white/10 text-blue-400 hover:bg-white/20' : 'bg-gray-100 text-blue-600 hover:bg-gray-200'
+                                    }`}
+                                  >
+                                    <FileText className="w-3 h-3" />
+                                    {att.name || 'Attachment'}
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className={`p-3 rounded-lg text-sm ${isDark ? 'bg-white/5 text-gray-400' : 'bg-gray-50 text-gray-500'}`}>
+                      {freshdeskDomain && freshdeskApiKey
+                        ? 'No conversation replies yet — only the initial description above.'
+                        : 'Configure Freshdesk credentials to load conversation thread.'}
+                    </div>
+                  )}
                 </div>
 
                 {/* AI Analysis */}
