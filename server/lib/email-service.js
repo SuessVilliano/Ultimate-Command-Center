@@ -251,7 +251,7 @@ export async function sendUrgentAlert(tickets, recipientEmail = null) {
           </tbody>
         </table>
         <p style="margin-top: 20px; color: #374151;">
-          <a href="${process.env.FRONTEND_URL || 'https://commandcenter.liv8.co'}/tickets"
+          <a href="${process.env.FRONTEND_URL || 'https://command.liv8.co'}/tickets"
              style="background: #7c3aed; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
             View in Command Center
           </a>
@@ -348,8 +348,10 @@ function buildReportEmailHTML(reportData, date) {
           </p>
         ` : ''}
 
+        ${buildTicketSolutionsHTML(reportData)}
+
         <div style="margin-top: 30px; text-align: center;">
-          <a href="${process.env.FRONTEND_URL || 'https://commandcenter.liv8.co'}"
+          <a href="${process.env.FRONTEND_URL || 'https://command.liv8.co'}"
              style="background: #7c3aed; color: white; padding: 12px 30px; text-decoration: none; border-radius: 8px; font-weight: bold;">
             Open Command Center
           </a>
@@ -368,6 +370,108 @@ function buildReportEmailHTML(reportData, date) {
       </div>
     </div>
   `;
+}
+
+/**
+ * Build HTML section for ticket solutions with pre-written AI responses
+ */
+function buildTicketSolutionsHTML(reportData) {
+  const solutions = reportData.ticketSolutions || [];
+  const urgentTickets = reportData.urgentTickets || [];
+  const needsWorkTickets = reportData.needsWorkTickets || [];
+
+  if (solutions.length === 0 && urgentTickets.length === 0 && needsWorkTickets.length === 0) {
+    return '';
+  }
+
+  let html = '';
+
+  // Urgent tickets section
+  if (urgentTickets.length > 0) {
+    html += `
+      <h2 style="color: #ef4444; border-bottom: 2px solid #ef4444; padding-bottom: 10px; margin-top: 30px;">
+        🚨 Urgent Tickets (${urgentTickets.length})
+      </h2>
+    `;
+    for (const ticket of urgentTickets.slice(0, 10)) {
+      html += `
+        <div style="background: #fef2f2; border-left: 4px solid #ef4444; padding: 12px 15px; margin: 10px 0; border-radius: 0 8px 8px 0;">
+          <strong style="color: #991b1b;">#${ticket.id}: ${escapeHtml(ticket.subject)}</strong>
+          <div style="color: #6b7280; font-size: 12px; margin-top: 4px;">
+            ${ticket.status} | ${ticket.priority} | ${ticket.escalationType || 'SUPPORT'} | From: ${escapeHtml(ticket.requester || 'Unknown')}
+          </div>
+          ${ticket.summary ? `<div style="color: #374151; font-size: 13px; margin-top: 6px;">${escapeHtml(ticket.summary)}</div>` : ''}
+        </div>
+      `;
+    }
+  }
+
+  // Pre-written AI responses section
+  if (solutions.length > 0) {
+    html += `
+      <h2 style="color: #22c55e; border-bottom: 2px solid #22c55e; padding-bottom: 10px; margin-top: 30px;">
+        ✍️ Pre-Written Responses Ready (${solutions.length})
+      </h2>
+      <p style="color: #6b7280; font-size: 13px;">Copy-paste these AI-drafted responses to get a head start on your queue:</p>
+    `;
+    for (const solution of solutions.slice(0, 10)) {
+      const ticket = solution.ticket || {};
+      const response = solution.suggestedResponse || 'No response generated';
+      html += `
+        <div style="background: #f0fdf4; border-left: 4px solid #22c55e; padding: 12px 15px; margin: 12px 0; border-radius: 0 8px 8px 0;">
+          <strong style="color: #166534;">#${ticket.freshdesk_id || ticket.id || '?'}: ${escapeHtml((ticket.subject || 'No subject').substring(0, 70))}</strong>
+          <div style="color: #6b7280; font-size: 12px; margin-top: 4px;">
+            From: ${escapeHtml(ticket.requester_name || ticket.requester_email || 'Unknown')} |
+            Urgency: ${ticket.urgency_score || 'N/A'}/10 |
+            Type: ${ticket.escalation_type || 'SUPPORT'}
+          </div>
+          <div style="background: white; border: 1px solid #d1fae5; padding: 12px; margin-top: 8px; border-radius: 6px; font-size: 13px; color: #1f2937; line-height: 1.6; white-space: pre-wrap;">
+${escapeHtml(response.substring(0, 800))}${response.length > 800 ? '\n\n[...full response in PDF attachment]' : ''}
+          </div>
+          ${solution.similarTickets && solution.similarTickets.length > 0 ? `
+            <div style="color: #9ca3af; font-size: 11px; margin-top: 6px;">
+              Based on ${solution.similarTickets.length} similar resolved ticket(s)
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }
+  }
+
+  // Needs attention (without solutions already shown)
+  const solutionIds = new Set(solutions.map(s => (s.ticket?.freshdesk_id || s.ticket?.id)));
+  const remainingTickets = needsWorkTickets.filter(t => !solutionIds.has(t.id));
+  if (remainingTickets.length > 0) {
+    html += `
+      <h2 style="color: #f59e0b; border-bottom: 2px solid #f59e0b; padding-bottom: 10px; margin-top: 30px;">
+        📋 Also Needs Attention (${remainingTickets.length})
+      </h2>
+    `;
+    for (const ticket of remainingTickets.slice(0, 10)) {
+      html += `
+        <div style="background: #fffbeb; border-left: 4px solid #f59e0b; padding: 10px 15px; margin: 8px 0; border-radius: 0 8px 8px 0;">
+          <strong style="color: #92400e;">#${ticket.id}: ${escapeHtml(ticket.subject)}</strong>
+          <div style="color: #6b7280; font-size: 12px; margin-top: 4px;">
+            ${ticket.status} | ${ticket.priority} | From: ${escapeHtml(ticket.requester || 'Unknown')}
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  return html;
+}
+
+/**
+ * Escape HTML special characters
+ */
+function escapeHtml(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 /**
@@ -403,10 +507,45 @@ ${aiAnalysis.summary}
 `;
   }
 
+  // Include urgent tickets
+  const urgentTickets = reportData.urgentTickets || [];
+  if (urgentTickets.length > 0) {
+    text += `
+URGENT TICKETS (${urgentTickets.length})
+${'─'.repeat(30)}
+`;
+    for (const ticket of urgentTickets.slice(0, 10)) {
+      text += `  #${ticket.id}: ${ticket.subject}
+    Status: ${ticket.status} | Priority: ${ticket.priority} | Type: ${ticket.escalationType || 'SUPPORT'}
+    From: ${ticket.requester || 'Unknown'}
+`;
+    }
+  }
+
+  // Include pre-written AI responses
+  const solutions = reportData.ticketSolutions || [];
+  if (solutions.length > 0) {
+    text += `
+PRE-WRITTEN RESPONSES (${solutions.length})
+${'─'.repeat(30)}
+`;
+    for (const solution of solutions.slice(0, 10)) {
+      const ticket = solution.ticket || {};
+      text += `
+#${ticket.freshdesk_id || ticket.id || '?'}: ${ticket.subject || 'No subject'}
+From: ${ticket.requester_name || ticket.requester_email || 'Unknown'} | Urgency: ${ticket.urgency_score || 'N/A'}/10
+
+SUGGESTED RESPONSE:
+${(solution.suggestedResponse || 'No response generated').substring(0, 500)}
+${'─'.repeat(20)}
+`;
+    }
+  }
+
   text += `
 ${'='.repeat(50)}
 Full PDF report attached.
-View online: ${process.env.FRONTEND_URL || 'https://commandcenter.liv8.co'}
+View online: ${process.env.FRONTEND_URL || 'https://command.liv8.co'}
 `;
 
   return text;

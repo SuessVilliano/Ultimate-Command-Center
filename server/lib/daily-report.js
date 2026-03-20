@@ -15,6 +15,90 @@ import {
   getRecentRuns
 } from './database.js';
 
+// Freshdesk config (populated by scheduler init or env vars)
+function getFreshdeskConfig() {
+  return {
+    domain: process.env.FRESHDESK_DOMAIN,
+    apiKey: process.env.FRESHDESK_API_KEY,
+    agentId: process.env.FRESHDESK_AGENT_ID
+  };
+}
+
+/**
+ * Fetch tickets directly from Freshdesk API (fallback when DB is empty)
+ */
+async function fetchFreshdeskTicketsDirect(statuses = [2, 3, 6, 7]) {
+  const config = getFreshdeskConfig();
+  if (!config.domain || !config.apiKey) {
+    console.log('Freshdesk not configured for direct fetch');
+    return [];
+  }
+
+  const allTickets = [];
+  const baseUrl = `https://${config.domain}.freshdesk.com/api/v2`;
+  const auth = Buffer.from(`${config.apiKey}:X`).toString('base64');
+
+  for (const status of statuses) {
+    try {
+      let query = `"status:${status}"`;
+      if (config.agentId) {
+        query = `"agent_id:${config.agentId} AND status:${status}"`;
+      }
+
+      const url = `${baseUrl}/search/tickets?query=${encodeURIComponent(query)}`;
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        allTickets.push(...(data.results || []));
+      } else {
+        console.error(`Freshdesk fetch status ${status} failed:`, response.status);
+      }
+
+      // Rate limit
+      await new Promise(r => setTimeout(r, 300));
+    } catch (error) {
+      console.error(`Freshdesk fetch error for status ${status}:`, error.message);
+    }
+  }
+
+  // Deduplicate
+  const seen = new Set();
+  return allTickets.filter(t => {
+    if (seen.has(t.id)) return false;
+    seen.add(t.id);
+    return true;
+  });
+}
+
+/**
+ * Normalize Freshdesk API ticket to match DB ticket format
+ */
+function normalizeFreshdeskTicket(ticket) {
+  return {
+    freshdesk_id: ticket.id,
+    subject: ticket.subject || 'No subject',
+    description: ticket.description_text || ticket.description || '',
+    status: ticket.status,
+    priority: ticket.priority,
+    requester_name: ticket.requester?.name || '',
+    requester_email: ticket.requester?.email || ticket.requester_id?.toString() || '',
+    created_at: ticket.created_at,
+    updated_at: ticket.updated_at,
+    // These will be filled by AI analysis
+    escalation_type: null,
+    urgency_score: ticket.priority === 4 ? 8 : (ticket.priority === 3 ? 6 : 4),
+    summary: null,
+    suggested_response: null,
+    action_items: null
+  };
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -53,7 +137,41 @@ export async function generateReportData() {
   console.log('Generating daily report data...');
 
   // Get all open/pending tickets with their analysis
-  const tickets = getAllTicketsWithAnalysis([2, 3, 6, 7]) || [];
+  let tickets = getAllTicketsWithAnalysis([2, 3, 6, 7]) || [];
+
+  // FALLBACK: If DB is empty, fetch directly from Freshdesk API
+  if (tickets.length === 0) {
+    console.log('No tickets in database, fetching directly from Freshdesk...');
+    try {
+      const freshdeskTickets = await fetchFreshdeskTicketsDirect([2, 3, 6, 7]);
+      if (freshdeskTickets.length > 0) {
+        console.log(`Fetched ${freshdeskTickets.length} tickets directly from Freshdesk`);
+        tickets = freshdeskTickets.map(normalizeFreshdeskTicket);
+
+        // Quick AI analysis for each ticket
+        for (const ticket of tickets) {
+          try {
+            const analysis = await ai.analyzeTicket({
+              id: ticket.freshdesk_id,
+              subject: ticket.subject,
+              description_text: ticket.description,
+              priority: ticket.priority,
+              status: ticket.status
+            });
+            ticket.escalation_type = analysis.ESCALATION_TYPE || 'SUPPORT';
+            ticket.urgency_score = analysis.URGENCY_SCORE || ticket.urgency_score;
+            ticket.summary = analysis.SUMMARY || null;
+            // Rate limit
+            await new Promise(r => setTimeout(r, 300));
+          } catch (e) {
+            console.log(`Quick analysis failed for #${ticket.freshdesk_id}:`, e.message);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Freshdesk direct fetch failed:', e.message);
+    }
+  }
 
   // Get knowledge base stats
   let kbStats = { total: 0, lastUpdated: null };
