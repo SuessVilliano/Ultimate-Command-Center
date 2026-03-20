@@ -207,69 +207,82 @@ function Inbox() {
     inputRef.current?.focus();
   };
 
-  // Generate AI response using Gemini API or smart fallback
+  // Generate AI response using backend AI server
   const generateAIResponse = async (userMessage, channelId) => {
     setAiTyping(true);
 
     // Small delay to feel natural
-    await new Promise(resolve => setTimeout(resolve, 800 + Math.random() * 1200));
+    await new Promise(resolve => setTimeout(resolve, 600 + Math.random() * 800));
 
     let aiResponse = '';
-    const geminiKey = localStorage.getItem('liv8_gemini_api_key');
+    const API_URL = localStorage.getItem('liv8_api_url') || import.meta.env.VITE_API_URL || 'http://localhost:3005';
 
-    if (geminiKey) {
-      try {
-        const channelContext = channels.find(c => c.id === channelId);
-        const recentMsgs = (messages[channelId] || []).slice(-5).map(m => {
-          const member = TEAM_MEMBERS.find(tm => tm.id === m.userId);
-          return `${member?.name || 'Unknown'}: ${m.content}`;
-        }).join('\n');
+    // Try backend AI server first (has Gemini/Claude/GPT configured)
+    try {
+      const channelContext = channels.find(c => c.id === channelId);
+      const recentMsgs = (messages[channelId] || []).slice(-8).map(m => {
+        const member = TEAM_MEMBERS.find(tm => tm.id === m.userId);
+        return `${member?.name || 'Unknown'}: ${m.content}`;
+      }).join('\n');
 
-        const systemPrompt = `You are HybridCore AI, an AI assistant in the LIV8 Command Center team chat (channel: #${channelContext?.name || channelId}).
-You help the team with development, support, business strategy, and operations.
-Be conversational, helpful, and concise - like a team member in Slack. Keep responses under 3 paragraphs.
-Don't use excessive formatting. Be natural and direct.
+      const systemPrompt = `You are HybridCore AI, an AI team member in the LIV8 Command Center team chat (channel: #${channelContext?.name || channelId}).
+You help the team with development, support, business strategy, trading, and operations.
+Be conversational, helpful, and concise - like a real team member in Slack. Keep responses under 3 paragraphs.
+Don't use markdown formatting. Be natural and direct. Use casual professional tone.
 
-Recent messages in channel:
+Team members: CEO (SV), VP of Technology, Operations Manager, Support Lead, Marketing Lead, Senior Developer, Frontend Developer.
+
+Recent conversation in #${channelContext?.name || channelId}:
 ${recentMsgs}`;
 
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: `${systemPrompt}\n\nUser message: ${userMessage}\n\nRespond as HybridCore AI:` }] }],
-              generationConfig: { temperature: 0.8, maxOutputTokens: 512 }
-            })
-          }
-        );
+      const response = await fetch(`${API_URL}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: userMessage,
+          systemPrompt,
+          agentId: 'hybridcore-inbox',
+          userId: 'ai-assistant',
+        })
+      });
 
-        if (response.ok) {
-          const data = await response.json();
-          aiResponse = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        }
-      } catch (err) {
-        console.warn('Gemini API failed:', err);
+      if (response.ok) {
+        const data = await response.json();
+        aiResponse = data.response || data.text || '';
+        // Clean any markdown
+        aiResponse = aiResponse.replace(/\*\*/g, '').replace(/\*/g, '').replace(/^#{1,6}\s/gm, '').replace(/`/g, '');
+      }
+    } catch (err) {
+      console.warn('Backend AI failed, trying Gemini fallback:', err);
+    }
+
+    // Fallback: try Gemini browser-side
+    if (!aiResponse) {
+      const geminiKey = localStorage.getItem('liv8_gemini_api_key');
+      if (geminiKey) {
+        try {
+          const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: `You are HybridCore AI in a team chat. Respond naturally and helpfully.\n\nUser: ${userMessage}\n\nRespond:` }] }],
+                generationConfig: { temperature: 0.8, maxOutputTokens: 512 }
+              })
+            }
+          );
+          if (response.ok) {
+            const data = await response.json();
+            aiResponse = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          }
+        } catch { /* fall through */ }
       }
     }
 
-    // Fallback smart responses if Gemini fails or no key
+    // Last resort fallback
     if (!aiResponse) {
-      const lower = userMessage.toLowerCase();
-      if (lower.includes('help') || lower.includes('how')) {
-        aiResponse = "I'd be happy to help! Can you give me more details about what you need? I can assist with development tasks, support tickets, project planning, or business strategy.";
-      } else if (lower.includes('deploy') || lower.includes('launch') || lower.includes('ship')) {
-        aiResponse = "Ready to help with deployment! Let me know which project you're looking to deploy and I'll outline the steps. We can coordinate with the dev team here.";
-      } else if (lower.includes('bug') || lower.includes('issue') || lower.includes('error')) {
-        aiResponse = "I'll look into that. Can you share more details about the error you're seeing? Stack traces, screenshots, or steps to reproduce would be really helpful.";
-      } else if (lower.includes('status') || lower.includes('update') || lower.includes('progress')) {
-        aiResponse = "Here's a quick status check - all core systems are operational. Let me know if you need details on a specific project or task and I'll pull up the latest info.";
-      } else if (lower.includes('hello') || lower.includes('hi') || lower.includes('hey')) {
-        aiResponse = "Hey! 👋 Ready to help. What are you working on today?";
-      } else {
-        aiResponse = `Got it! I'll look into "${userMessage.substring(0, 50)}${userMessage.length > 50 ? '...' : ''}". Let me know if you need me to take any specific action on this.`;
-      }
+      aiResponse = `I'll look into that. Let me check on "${userMessage.substring(0, 40)}${userMessage.length > 40 ? '...' : ''}" and get back to you. In the meantime, feel free to check the relevant dashboard page for live data.`;
     }
 
     const aiMessage = {

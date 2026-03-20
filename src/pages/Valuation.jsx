@@ -22,18 +22,83 @@ const formatCurrency = (value) => {
   return `$${(value / 1000).toFixed(0)}K`;
 };
 
+// Language rate multipliers ($/KB of code, reflecting market rates)
+const LANG_RATES = {
+  JavaScript: 0.8, TypeScript: 1.0, Python: 0.9, Rust: 1.5, Go: 1.2,
+  Java: 0.7, 'C#': 0.8, C: 0.6, 'C++': 0.8, Ruby: 0.7, PHP: 0.5,
+  Swift: 1.1, Kotlin: 1.0, Dart: 0.9, Shell: 0.3, HTML: 0.2, CSS: 0.2,
+  Solidity: 2.0, Vue: 0.9, SCSS: 0.3, default: 0.5
+};
+
+// Category detection and premium multipliers
+const detectCategory = (repo) => {
+  const text = `${repo.name} ${repo.description || ''} ${(repo.topics || []).join(' ')}`.toLowerCase();
+  if (text.match(/trade|trading|broker|fund|prop|journal/)) return { cat: 'Fintech/Trading', mult: 2.3 };
+  if (text.match(/ai|ml|agent|llm|gpt|claude|neural|model/)) return { cat: 'AI/ML', mult: 2.2 };
+  if (text.match(/saas|platform|dashboard|portal|command/)) return { cat: 'SaaS', mult: 2.0 };
+  if (text.match(/web3|solana|ethereum|crypto|wallet|defi|nft/)) return { cat: 'Web3/Crypto', mult: 2.0 };
+  if (text.match(/mobile|flutter|react.native|ios|android/)) return { cat: 'Mobile', mult: 1.8 };
+  if (text.match(/api|server|backend|service|micro/)) return { cat: 'Backend/API', mult: 1.5 };
+  if (text.match(/solar|energy|health|insurance|credit/)) return { cat: 'Industry', mult: 1.6 };
+  if (text.match(/ecommerce|shop|store|payment/)) return { cat: 'E-Commerce', mult: 1.7 };
+  if (text.match(/port|twilio|ghl|highlevel|automation/)) return { cat: 'Enterprise Tool', mult: 2.0 };
+  return { cat: 'Utility', mult: 1.0 };
+};
+
+// Calculate per-repo valuation
+const calculateRepoValue = (repo) => {
+  const sizeKB = repo.size || 0;
+  const lang = repo.language || 'default';
+  const rate = LANG_RATES[lang] || LANG_RATES.default;
+  const { cat, mult: categoryMult } = detectCategory(repo);
+
+  // Estimated lines of code (rough: 30 lines/KB average for code repos)
+  const estimatedLOC = sizeKB * 30;
+
+  // Base value: LOC-based with language rate
+  const baseValue = (estimatedLOC / 1000) * rate * 120;
+
+  // Activity multiplier
+  const daysSinceUpdate = Math.floor((Date.now() - new Date(repo.updatedAt || repo.updated_at || repo.pushed_at).getTime()) / (1000 * 60 * 60 * 24));
+  const activityMult = daysSinceUpdate < 7 ? 1.5 : daysSinceUpdate < 30 ? 1.3 : daysSinceUpdate < 90 ? 1.0 : 0.6;
+
+  // Social proof bonus
+  const stars = repo.stars || repo.stargazers_count || 0;
+  const forks = repo.forks || repo.forks_count || 0;
+  const socialMult = 1 + (stars * 0.02) + (forks * 0.05);
+
+  // Tech stack bonus from topics
+  const topics = (repo.topics || []).join(' ').toLowerCase();
+  let techBonus = 1.0;
+  if (topics.includes('react') || topics.includes('next')) techBonus += 0.2;
+  if (topics.includes('ai') || topics.includes('ml')) techBonus += 0.3;
+  if (topics.includes('web3') || topics.includes('blockchain')) techBonus += 0.25;
+
+  const conservative = Math.round(baseValue * activityMult * 0.7);
+  const aggressive = Math.round(baseValue * categoryMult * activityMult * socialMult * techBonus * 1.3);
+
+  return {
+    conservative: Math.max(conservative, sizeKB > 10 ? 500 : 0),
+    aggressive: Math.max(aggressive, sizeKB > 10 ? 1000 : 0),
+    category: cat,
+    estimatedLOC,
+    activityMult,
+    categoryMult,
+  };
+};
+
 // Calculate dynamic value multipliers from GitHub data
 const calculateGitHubMultipliers = (repos) => {
-  if (!repos || repos.length === 0) return { repoMultiplier: 1, healthScore: 50 };
+  if (!repos || repos.length === 0) return { repoMultiplier: 1, healthScore: 50, repoValuations: [], totalSoftwareValue: { min: 0, max: 0 } };
 
   const totalRepos = repos.length;
   const activeRepos = repos.filter(r => {
-    const days = Math.floor((Date.now() - new Date(r.updatedAt).getTime()) / (1000 * 60 * 60 * 24));
+    const days = Math.floor((Date.now() - new Date(r.updatedAt || r.updated_at || r.pushed_at).getTime()) / (1000 * 60 * 60 * 24));
     return days < 30;
   }).length;
 
   const totalSize = repos.reduce((sum, r) => sum + (r.size || 0), 0);
-  const totalStars = repos.reduce((sum, r) => sum + (r.stars || 0), 0);
+  const totalStars = repos.reduce((sum, r) => sum + (r.stars || r.stargazers_count || 0), 0);
   const languages = [...new Set(repos.map(r => r.language).filter(Boolean))];
   const withDescription = repos.filter(r => r.description && r.description !== 'No description').length;
 
@@ -54,6 +119,26 @@ const calculateGitHubMultipliers = (repos) => {
   // Multiplier: 0.8 to 1.4 based on health
   const repoMultiplier = 0.8 + (healthScore / 100) * 0.6;
 
+  // Calculate per-repo valuations
+  const repoValuations = repos
+    .filter(r => (r.size || 0) > 5) // Skip near-empty repos
+    .map(r => ({
+      name: r.name,
+      language: r.language,
+      size: r.size || 0,
+      stars: r.stars || r.stargazers_count || 0,
+      forks: r.forks || r.forks_count || 0,
+      description: r.description,
+      updatedAt: r.updatedAt || r.updated_at || r.pushed_at,
+      ...calculateRepoValue(r),
+    }))
+    .sort((a, b) => b.aggressive - a.aggressive);
+
+  const totalSoftwareValue = {
+    min: repoValuations.reduce((sum, r) => sum + r.conservative, 0),
+    max: repoValuations.reduce((sum, r) => sum + r.aggressive, 0),
+  };
+
   return {
     repoMultiplier,
     healthScore,
@@ -65,7 +150,9 @@ const calculateGitHubMultipliers = (repos) => {
     activityScore: Math.round(activityScore),
     codeScore: Math.round(codeScore),
     diversityScore: Math.round(diversityScore),
-    docScore: Math.round(docScore)
+    docScore: Math.round(docScore),
+    repoValuations,
+    totalSoftwareValue,
   };
 };
 
@@ -96,11 +183,16 @@ function Valuation() {
 
   const multiplier = metrics?.repoMultiplier || 1;
 
+  // Use real GitHub-calculated software values when available, fallback to portfolio.js
+  const realSoftwareValue = metrics?.totalSoftwareValue;
+  const softwareMin = realSoftwareValue ? realSoftwareValue.min : Math.round(valuationSummary.conservative.software.min * multiplier);
+  const softwareMax = realSoftwareValue ? realSoftwareValue.max : Math.round(valuationSummary.aggressive.software.max * multiplier);
+
   const conservative = {
-    software: { min: Math.round(valuationSummary.conservative.software.min * multiplier), max: Math.round(valuationSummary.conservative.software.max * multiplier) },
+    software: { min: softwareMin, max: Math.round(softwareMin + (softwareMax - softwareMin) * 0.4) },
     trading: valuationSummary.conservative.trading,
-    agents: valuationSummary.conservative.agents,
-    brand: valuationSummary.conservative.brand,
+    agents: { min: aiAgents.length * 4000, max: aiAgents.length * 8000 },
+    brand: { min: domains.filter(d => d.status === 'live').length * 3000, max: domains.length * 6000 },
   };
   conservative.total = {
     min: conservative.software.min + conservative.trading.min + conservative.agents.min + conservative.brand.min,
@@ -108,10 +200,10 @@ function Valuation() {
   };
 
   const aggressive = {
-    software: { min: Math.round(valuationSummary.aggressive.software.min * multiplier), max: Math.round(valuationSummary.aggressive.software.max * multiplier) },
+    software: { min: Math.round(softwareMin + (softwareMax - softwareMin) * 0.5), max: softwareMax },
     trading: valuationSummary.aggressive.trading,
-    agents: valuationSummary.aggressive.agents,
-    brand: valuationSummary.aggressive.brand,
+    agents: { min: aiAgents.length * 8000, max: aiAgents.length * 20000 },
+    brand: { min: domains.filter(d => d.status === 'live').length * 5000, max: domains.length * 12000 },
   };
   aggressive.total = {
     min: aggressive.software.min + aggressive.trading.min + aggressive.agents.min + aggressive.brand.min,
@@ -346,6 +438,70 @@ function Valuation() {
           </div>
         </div>
       </div>
+
+      {/* GitHub Project Valuations - Real Data */}
+      {metrics?.repoValuations?.length > 0 && (
+        <div className="card p-6 border border-purple-500/30">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+              <GitCommit className="w-5 h-5 text-purple-400" />
+              GitHub Project Valuations
+            </h3>
+            <span className="text-sm text-gray-400">
+              {metrics.repoValuations.length} projects valued | Total: {formatCurrency(metrics.totalSoftwareValue.min)} - {formatCurrency(metrics.totalSoftwareValue.max)}
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-gray-500 border-b border-white/10">
+                  <th className="text-left p-2">Project</th>
+                  <th className="text-left p-2">Category</th>
+                  <th className="text-left p-2">Language</th>
+                  <th className="text-right p-2">Est. LOC</th>
+                  <th className="text-right p-2">Conservative</th>
+                  <th className="text-right p-2">Aggressive</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metrics.repoValuations.slice(0, 25).map((repo, i) => (
+                  <tr key={repo.name} className={`border-b border-white/5 ${i < 3 ? 'bg-purple-500/5' : ''}`}>
+                    <td className="p-2">
+                      <div className="font-medium text-white">{repo.name}</div>
+                      {repo.description && <div className="text-xs text-gray-500 truncate max-w-[250px]">{repo.description}</div>}
+                    </td>
+                    <td className="p-2">
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        repo.category.includes('Fintech') ? 'bg-green-500/20 text-green-400' :
+                        repo.category.includes('AI') ? 'bg-purple-500/20 text-purple-400' :
+                        repo.category.includes('SaaS') ? 'bg-cyan-500/20 text-cyan-400' :
+                        repo.category.includes('Web3') ? 'bg-orange-500/20 text-orange-400' :
+                        'bg-gray-500/20 text-gray-400'
+                      }`}>
+                        {repo.category}
+                      </span>
+                    </td>
+                    <td className="p-2 text-gray-400">{repo.language || '-'}</td>
+                    <td className="p-2 text-right text-gray-400">{repo.estimatedLOC > 1000 ? `${(repo.estimatedLOC / 1000).toFixed(1)}K` : repo.estimatedLOC}</td>
+                    <td className="p-2 text-right text-green-400 font-medium">{formatCurrency(repo.conservative)}</td>
+                    <td className="p-2 text-right text-purple-400 font-medium">{formatCurrency(repo.aggressive)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-white/20">
+                  <td className="p-2 font-bold text-white" colSpan={4}>Total Software Portfolio</td>
+                  <td className="p-2 text-right font-bold text-green-400">{formatCurrency(metrics.totalSoftwareValue.min)}</td>
+                  <td className="p-2 text-right font-bold text-purple-400">{formatCurrency(metrics.totalSoftwareValue.max)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <p className="text-xs text-gray-500 mt-3">
+            Valuations calculated from: repository size, language rates, category premiums (Fintech 2.3x, AI/ML 2.2x, SaaS 2.0x), activity recency, stars, and forks. Updates automatically when GitHub data refreshes.
+          </p>
+        </div>
+      )}
 
       {/* Patentable IP - same as before */}
       <div className="card p-6">
