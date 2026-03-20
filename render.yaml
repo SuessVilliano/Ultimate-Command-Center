@@ -78,6 +78,22 @@ services:
         sync: false
       - key: REPORT_EMAIL
         sync: false
+      # ClickUp SOP Integration
+      - key: CLICKUP_API_TOKEN
+        sync: false
+      - key: CLICKUP_SOP_SPACE
+        sync: false
+      - key: CLICKUP_SOP_FOLDER
+        sync: false
+      - key: CLICKUP_SOP_LIST
+        sync: false
+      - key: CLICKUP_NOTIFY_CC
+        sync: false
+      - key: CLICKUP_NOTIFY_BCC
+        sync: false
+      # Slack Integration
+      - key: SLACK_WEBHOOK_URL
+        sync: false
       # Scheduler Configuration
       - key: SCHEDULE_ENABLED
         value: "true"

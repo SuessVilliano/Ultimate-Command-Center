@@ -4615,6 +4615,222 @@ app.post('/api/telegram/command-center', async (req, res) => {
   }
 });
 
+// ============================================
+// CLICKUP SOP INTEGRATION
+// ============================================
+import * as clickupSop from './lib/clickup-sop.js';
+
+// Webhook receiver — ClickUp sends events here
+app.post('/api/clickup/webhook', async (req, res) => {
+  // Acknowledge immediately (ClickUp retries if no 200 within 30s)
+  res.sendStatus(200);
+
+  try {
+    const payload = req.body;
+    console.log(`[ClickUp Webhook] Event: ${payload.event}, Task: ${payload.task_id || payload.page_id || 'N/A'}`);
+
+    // Process the event
+    const entry = await clickupSop.processWebhookEvent(payload);
+
+    // Check if this is an SOP (filter by space/folder/list if configured)
+    const sopFilter = process.env.CLICKUP_SOP_SPACE || process.env.CLICKUP_SOP_FOLDER || process.env.CLICKUP_SOP_LIST;
+    if (sopFilter) {
+      const matchSpace = !process.env.CLICKUP_SOP_SPACE || (entry.space_name || '').toLowerCase().includes(process.env.CLICKUP_SOP_SPACE.toLowerCase());
+      const matchFolder = !process.env.CLICKUP_SOP_FOLDER || (entry.folder_name || '').toLowerCase().includes(process.env.CLICKUP_SOP_FOLDER.toLowerCase());
+      const matchList = !process.env.CLICKUP_SOP_LIST || (entry.list_name || '').toLowerCase().includes(process.env.CLICKUP_SOP_LIST.toLowerCase());
+      if (!matchSpace && !matchFolder && !matchList) {
+        console.log(`[ClickUp] Skipping non-SOP event: ${entry.title}`);
+        return;
+      }
+    }
+
+    // Get notification recipients from env or request
+    const notifyCC = process.env.CLICKUP_NOTIFY_CC || '';
+    const notifyBCC = process.env.CLICKUP_NOTIFY_BCC || '';
+
+    // Send email notification
+    const emailResult = await clickupSop.notifyViaEmail(entry, {
+      cc: notifyCC,
+      bcc: notifyBCC
+    });
+    entry.notified_emails = emailResult.success ? emailResult.notified : null;
+
+    // Send Slack notification
+    const slackResult = await clickupSop.notifyViaSlack(entry);
+    entry.notified_slack = slackResult.success;
+
+    // Sync content to AI knowledge base
+    const synced = clickupSop.syncToKnowledgeBase(entry);
+    entry.synced_to_kb = synced;
+
+    // Log to database
+    db.logSOPChange(entry);
+
+    console.log(`[ClickUp SOP] Logged: "${entry.title}" | Email: ${emailResult.success} | Slack: ${slackResult.success} | KB: ${synced}`);
+  } catch (error) {
+    console.error('[ClickUp Webhook Error]', error.message);
+  }
+});
+
+// Get SOP change log
+app.get('/api/clickup/sop-log', (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
+    const log = db.getSOPLog(limit, offset);
+    res.json({ success: true, log, count: log.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get single SOP log entry
+app.get('/api/clickup/sop-log/:id', (req, res) => {
+  try {
+    const entry = db.getSOPLogEntry(parseInt(req.params.id));
+    if (!entry) return res.status(404).json({ error: 'Entry not found' });
+    res.json({ success: true, entry });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Setup ClickUp webhook (one-time setup helper)
+app.post('/api/clickup/setup-webhook', async (req, res) => {
+  try {
+    if (!clickupSop.isConfigured()) {
+      return res.status(400).json({ error: 'CLICKUP_API_TOKEN not set. Add it in Render env vars.' });
+    }
+
+    const { teamId, events } = req.body;
+
+    // If no teamId, fetch teams first
+    let targetTeamId = teamId;
+    if (!targetTeamId) {
+      const teams = await clickupSop.getTeams();
+      if (!teams.teams || teams.teams.length === 0) {
+        return res.status(400).json({ error: 'No teams found in your ClickUp workspace' });
+      }
+      targetTeamId = teams.teams[0].id;
+    }
+
+    const callbackUrl = `${process.env.APP_URL || 'https://liv8-command-center-api.onrender.com'}/api/clickup/webhook`;
+    const result = await clickupSop.createWebhook(targetTeamId, callbackUrl, events);
+
+    res.json({
+      success: true,
+      webhook: result,
+      callbackUrl,
+      teamId: targetTeamId,
+      message: 'Webhook created! ClickUp will now send SOP updates to your Command Center.'
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// List existing ClickUp webhooks
+app.get('/api/clickup/webhooks', async (req, res) => {
+  try {
+    if (!clickupSop.isConfigured()) {
+      return res.json({ configured: false, error: 'CLICKUP_API_TOKEN not set' });
+    }
+    const { teamId } = req.query;
+    let targetTeamId = teamId;
+    if (!targetTeamId) {
+      const teams = await clickupSop.getTeams();
+      targetTeamId = teams.teams?.[0]?.id;
+    }
+    if (!targetTeamId) return res.json({ webhooks: [] });
+
+    const result = await clickupSop.listWebhooks(targetTeamId);
+    res.json({ success: true, webhooks: result.webhooks || [] });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete a ClickUp webhook
+app.delete('/api/clickup/webhooks/:id', async (req, res) => {
+  try {
+    const success = await clickupSop.deleteWebhook(req.params.id);
+    res.json({ success });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update notification settings (CC/BCC emails, Slack URL)
+app.post('/api/clickup/notification-settings', (req, res) => {
+  try {
+    const { ccEmails, bccEmails, slackWebhookUrl } = req.body;
+
+    // Save to settings in DB
+    if (ccEmails !== undefined) db.setSetting('clickup_notify_cc', ccEmails);
+    if (bccEmails !== undefined) db.setSetting('clickup_notify_bcc', bccEmails);
+    if (slackWebhookUrl !== undefined) db.setSetting('clickup_slack_webhook', slackWebhookUrl);
+
+    res.json({
+      success: true,
+      settings: {
+        ccEmails: ccEmails || db.getSetting('clickup_notify_cc') || '',
+        bccEmails: bccEmails || db.getSetting('clickup_notify_bcc') || '',
+        slackWebhookUrl: slackWebhookUrl ? '***configured***' : db.getSetting('clickup_slack_webhook') ? '***configured***' : 'not set'
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Test SOP notification (send a test email/slack)
+app.post('/api/clickup/test-notification', async (req, res) => {
+  try {
+    const { cc, bcc } = req.body;
+    const testEntry = {
+      clickup_doc_id: 'test-123',
+      event_type: 'taskUpdated',
+      title: 'TEST — SOP Notification Check',
+      url: 'https://app.clickup.com',
+      space_name: 'Support SOPs',
+      folder_name: 'Test',
+      changed_by: 'AutoPort Test',
+      change_summary: 'This is a test notification to verify your SOP alert pipeline is working.',
+      content_snapshot: 'If you received this, your ClickUp SOP notifications are configured correctly! Email, Slack, and knowledge base sync are all active.'
+    };
+
+    const emailResult = await clickupSop.notifyViaEmail(testEntry, {
+      cc: cc || process.env.CLICKUP_NOTIFY_CC || '',
+      bcc: bcc || process.env.CLICKUP_NOTIFY_BCC || ''
+    });
+    const slackResult = await clickupSop.notifyViaSlack(testEntry);
+
+    res.json({
+      success: true,
+      email: emailResult,
+      slack: slackResult
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ClickUp integration status
+app.get('/api/clickup/status', (req, res) => {
+  res.json({
+    configured: clickupSop.isConfigured(),
+    hasSlack: !!process.env.SLACK_WEBHOOK_URL,
+    hasEmail: emailService.isEmailEnabled(),
+    sopFilter: {
+      space: process.env.CLICKUP_SOP_SPACE || null,
+      folder: process.env.CLICKUP_SOP_FOLDER || null,
+      list: process.env.CLICKUP_SOP_LIST || null
+    },
+    notifyCC: process.env.CLICKUP_NOTIFY_CC || db.getSetting('clickup_notify_cc') || '',
+    notifyBCC: process.env.CLICKUP_NOTIFY_BCC || db.getSetting('clickup_notify_bcc') || ''
+  });
+});
+
 // Register Nifty routes
 registerNiftyRoutes(app);
 

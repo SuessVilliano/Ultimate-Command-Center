@@ -230,6 +230,28 @@ function createTables() {
     )
   `);
 
+  // SOP change log — tracks ClickUp doc updates
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sop_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      clickup_doc_id TEXT NOT NULL,
+      clickup_task_id TEXT,
+      event_type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      url TEXT,
+      space_name TEXT,
+      folder_name TEXT,
+      list_name TEXT,
+      changed_by TEXT,
+      change_summary TEXT,
+      content_snapshot TEXT,
+      notified_emails TEXT,
+      notified_slack INTEGER DEFAULT 0,
+      synced_to_kb INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   // Create indexes for better query performance
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status);
@@ -242,6 +264,8 @@ function createTables() {
     CREATE INDEX IF NOT EXISTS idx_casebook_type ON casebook(issue_type);
     CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts(status);
     CREATE INDEX IF NOT EXISTS idx_drafts_ticket ON drafts(ticket_id);
+    CREATE INDEX IF NOT EXISTS idx_sop_log_doc ON sop_log(clickup_doc_id);
+    CREATE INDEX IF NOT EXISTS idx_sop_log_created ON sop_log(created_at);
   `);
 
   console.log('Database tables created successfully');
@@ -1124,5 +1148,68 @@ export default {
   updateDraftStatus,
   getAllDrafts,
   getDraftStats,
-  deleteDraft
+  deleteDraft,
+  // SOP Log
+  logSOPChange,
+  getSOPLog,
+  getSOPLogEntry,
+  markSOPSynced
 };
+
+// ═══════════════════════════════════════════════════
+//  SOP CHANGE LOG
+// ═══════════════════════════════════════════════════
+
+/**
+ * Log an SOP change event from ClickUp webhook
+ */
+export function logSOPChange(entry) {
+  if (!db) return null;
+  const stmt = db.prepare(`
+    INSERT INTO sop_log (clickup_doc_id, clickup_task_id, event_type, title, url, space_name, folder_name, list_name, changed_by, change_summary, content_snapshot, notified_emails, notified_slack, synced_to_kb)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const result = stmt.run(
+    entry.clickup_doc_id || '',
+    entry.clickup_task_id || null,
+    entry.event_type || 'updated',
+    entry.title || 'Untitled',
+    entry.url || null,
+    entry.space_name || null,
+    entry.folder_name || null,
+    entry.list_name || null,
+    entry.changed_by || null,
+    entry.change_summary || null,
+    entry.content_snapshot || null,
+    entry.notified_emails || null,
+    entry.notified_slack ? 1 : 0,
+    entry.synced_to_kb ? 1 : 0
+  );
+  return result.lastInsertRowid;
+}
+
+/**
+ * Get SOP change log entries
+ */
+export function getSOPLog(limit = 50, offset = 0) {
+  if (!db) return [];
+  return db.prepare(`
+    SELECT * FROM sop_log ORDER BY created_at DESC LIMIT ? OFFSET ?
+  `).all(limit, offset);
+}
+
+/**
+ * Get a single SOP log entry
+ */
+export function getSOPLogEntry(id) {
+  if (!db) return null;
+  return db.prepare('SELECT * FROM sop_log WHERE id = ?').get(id);
+}
+
+/**
+ * Mark an SOP log entry as synced to knowledge base
+ */
+export function markSOPSynced(id) {
+  if (!db) return;
+  db.prepare('UPDATE sop_log SET synced_to_kb = 1 WHERE id = ?').run(id);
+}
