@@ -835,6 +835,19 @@ function Tickets() {
       if (ticketLower.includes('cnam') || ticketLower.includes('caller id')) ticketType = 'cnam';
       if (ticketLower.includes('whitelabel') || ticketLower.includes('white label')) ticketType = 'whitelabel';
 
+      // Include conversation thread if available
+      const convos = ticketConversations[ticket.id] || [];
+      const conversationThread = convos.map(c => ({
+        from: c.incoming ? (c.from_email || 'Customer') : 'Agent',
+        body: c.body_text || c.body || '',
+        private: c.private || false,
+        date: c.created_at,
+      }));
+
+      // Get user's signature and canned responses from settings
+      const savedSignature = localStorage.getItem('liv8_agent_signature') || '';
+      const savedCanned = localStorage.getItem('liv8_canned_responses') || '';
+
       const response = await fetch(`${AI_SERVER_URL}/api/generate-response`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -845,7 +858,10 @@ function Tickets() {
           agentName,
           ticketType,
           ticketId: String(ticket.id),
-          analysis
+          analysis,
+          conversationThread,
+          agentSignature: savedSignature,
+          cannedResponses: savedCanned,
         })
       });
 
@@ -1157,6 +1173,10 @@ function Tickets() {
       if (ticketLower.includes('email') || ticketLower.includes('smtp')) ticketType = 'email';
       if (ticketLower.includes('workflow') || ticketLower.includes('automation')) ticketType = 'automation';
 
+      const savedSignature = localStorage.getItem('liv8_agent_signature') || '';
+      const savedCanned = localStorage.getItem('liv8_canned_responses') || '';
+      const convos = ticketConversations[ticket.id] || [];
+
       const response = await fetch(`${AI_SERVER_URL}/api/generate-response`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1167,7 +1187,15 @@ function Tickets() {
           agentName,
           ticketType,
           ticketId: String(ticket.id),
-          analysis
+          analysis,
+          conversationThread: convos.map(c => ({
+            from: c.incoming ? (c.from_email || 'Customer') : 'Agent',
+            body: c.body_text || c.body || '',
+            private: c.private || false,
+            date: c.created_at,
+          })),
+          agentSignature: savedSignature,
+          cannedResponses: savedCanned,
         })
       });
 
@@ -1487,6 +1515,7 @@ function Tickets() {
               {[
                 { id: 'freshdesk', label: 'Freshdesk' },
                 { id: 'ai', label: 'AI Provider' },
+                { id: 'signature', label: 'Signature & Style' },
                 { id: 'schedule', label: 'Schedule' },
                 { id: 'sops', label: 'SOPs' }
               ].map(tab => (
@@ -1866,6 +1895,51 @@ function Tickets() {
                       </div>
                     </div>
                   )}
+                </>
+              )}
+
+              {/* Signature & Style Tab */}
+              {settingsTab === 'signature' && (
+                <>
+                  <div>
+                    <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                      Your Email Signature
+                    </label>
+                    <p className={`text-xs mb-2 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                      This will be used EXACTLY at the end of every AI-generated response. Include your name, title, and any links.
+                    </p>
+                    <textarea
+                      defaultValue={localStorage.getItem('liv8_agent_signature') || ''}
+                      onBlur={e => localStorage.setItem('liv8_agent_signature', e.target.value)}
+                      placeholder={`Best regards,\nSV - GoHighLevel Support\nPhone: (XXX) XXX-XXXX\nhttps://gohighlevel.com`}
+                      rows={5}
+                      className={`w-full px-3 py-2 rounded-lg border text-sm ${
+                        isDark ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'
+                      }`}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                      Canned Responses / Writing Style Examples
+                    </label>
+                    <p className={`text-xs mb-2 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                      Paste your canned responses or example replies here. The AI will learn your writing style, tone, and common phrases from these.
+                    </p>
+                    <textarea
+                      defaultValue={localStorage.getItem('liv8_canned_responses') || ''}
+                      onBlur={e => localStorage.setItem('liv8_canned_responses', e.target.value)}
+                      placeholder={`Example 1: Porting Response\nHi [Name],\n\nThank you for reaching out! I'd be happy to help with your porting request...\n\n---\n\nExample 2: Twilio Issue\nHi [Name],\n\nI understand you're experiencing issues with...`}
+                      rows={10}
+                      className={`w-full px-3 py-2 rounded-lg border text-sm ${
+                        isDark ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'
+                      }`}
+                    />
+                  </div>
+                  <div className={`p-3 rounded-lg ${isDark ? 'bg-purple-500/10 border border-purple-500/20' : 'bg-purple-50 border border-purple-200'}`}>
+                    <p className={`text-xs ${isDark ? 'text-purple-300' : 'text-purple-700'}`}>
+                      <strong>How it works:</strong> Your signature is appended to every AI response. Your canned responses teach the AI your writing style — the more examples you provide, the more accurately the AI will match your voice. The full conversation thread is also sent so the AI responds to the latest message, not just the ticket description.
+                    </p>
+                  </div>
                 </>
               )}
 

@@ -875,7 +875,10 @@ app.post('/api/generate-response', async (req, res) => {
       agentName,
       ticketType,
       ticketId,
-      analysis
+      analysis,
+      conversationThread,
+      agentSignature,
+      cannedResponses,
     } = req.body;
 
     // Find similar tickets from RAG
@@ -890,6 +893,9 @@ app.post('/api/generate-response', async (req, res) => {
       agentName,
       ticketType,
       analysis,
+      conversationThread,
+      agentSignature,
+      cannedResponses,
       similarTickets: similarDocs.map(d => ({
         id: d.metadata?.ticketId,
         subject: d.metadata?.subject,

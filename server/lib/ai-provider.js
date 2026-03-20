@@ -770,7 +770,7 @@ Respond in JSON format only. No markdown, just the raw JSON object.`;
  * Generate a response for a ticket
  */
 export async function generateResponse(ticket, options = {}) {
-  const { agentName, similarTickets, analysis } = options;
+  const { agentName, similarTickets, analysis, conversationThread, agentSignature, cannedResponses } = options;
 
   const typeGuidelines = {
     porting: `
@@ -832,6 +832,34 @@ Use insights from these similar tickets to inform your response.`;
     ? `\nCOMPANY SOPs (you MUST follow these protocols):\n${sopContent}\n`
     : '';
 
+  // Build conversation thread context
+  let threadContext = '';
+  if (conversationThread && conversationThread.length > 0) {
+    threadContext = `\n\nFULL CONVERSATION THREAD (read carefully — respond to the LATEST message, not just the description):
+${conversationThread.map((msg, i) => {
+  const label = msg.from === 'Agent' ? `[AGENT]` : `[CUSTOMER: ${msg.from}]`;
+  const note = msg.private ? ' (PRIVATE NOTE)' : '';
+  const date = msg.date ? ` (${new Date(msg.date).toLocaleString()})` : '';
+  // Strip HTML for AI context
+  const body = (msg.body || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 1500);
+  return `${label}${note}${date}:\n${body}`;
+}).join('\n\n---\n\n')}
+\nIMPORTANT: Your response should address the MOST RECENT customer message. Acknowledge the full conversation history.\n`;
+  }
+
+  // Build canned response examples
+  let cannedContext = '';
+  if (cannedResponses && cannedResponses.trim()) {
+    cannedContext = `\n\nYOUR CANNED RESPONSES (use these as your writing style reference — match this tone, vocabulary, and structure):
+${cannedResponses.substring(0, 4000)}
+\nIMPORTANT: Write in the SAME style as the canned responses above. Use similar phrases, structure, and tone.\n`;
+  }
+
+  // Build signature
+  const signatureSection = agentSignature && agentSignature.trim()
+    ? `\nYOUR EMAIL SIGNATURE (use this EXACTLY at the end of every response):\n${agentSignature}\n`
+    : '';
+
   const prompt = `You are ${agentName || 'a support agent'}, a GoHighLevel Support Agent responding to a customer ticket. Write a professional, helpful response.
 
 CRITICAL FORMATTING RULES:
@@ -840,7 +868,7 @@ CRITICAL FORMATTING RULES:
 - Use simple line breaks for paragraphs
 - Keep it conversational and professional
 - The response should be ready to copy and paste directly into Freshdesk
-${sopSection}
+${sopSection}${signatureSection}
 YOUR NAME: ${agentName || 'Support Agent'}
 CUSTOMER NAME: ${ticket.requester?.name || ticket.requester_name || 'there'}
 
@@ -849,17 +877,17 @@ Subject: ${ticket.subject}
 Description: ${ticket.description || ticket.description_text || 'No description provided'}
 Ticket Type: ${ticketType}
 ${analysis?.SUMMARY ? `Issue Summary: ${analysis.SUMMARY}` : ''}
-${similarContext}
-${casebookContext}
+${threadContext}${similarContext}
+${casebookContext}${cannedContext}
 RESPONSE GUIDELINES FOR ${ticketType.toUpperCase()} TICKETS:
 ${typeGuidelines[ticketType] || typeGuidelines.general}
 
 RESPONSE STRUCTURE:
 1. Greeting with customer's name (Hi [Name],)
-2. Acknowledge their specific issue
+2. Acknowledge their specific issue${conversationThread?.length > 0 ? ' — reference the conversation history' : ''}
 3. Provide solution or next steps
 4. Offer further assistance
-5. Sign off with: Best regards, ${agentName || 'Support Team'}
+5. ${agentSignature ? 'End with your EXACT signature as provided above' : `Sign off with: Best regards, ${agentName || 'Support Team'}`}
 
 Write a warm, professional response. Do NOT use any markdown formatting.`;
 
