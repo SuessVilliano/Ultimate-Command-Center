@@ -1453,6 +1453,73 @@ app.get('/api/agents/:agentId/history', (req, res) => {
 });
 
 // ============================================
+// FRESHDESK DEBUG / TEST ENDPOINT
+// ============================================
+app.get('/api/freshdesk/test', async (req, res) => {
+  const domain = process.env.FRESHDESK_DOMAIN;
+  const apiKey = process.env.FRESHDESK_API_KEY;
+  const agentId = process.env.FRESHDESK_AGENT_ID;
+
+  if (!domain || !apiKey) {
+    return res.json({ error: 'FRESHDESK_DOMAIN or FRESHDESK_API_KEY not set', domain: !!domain, apiKey: !!apiKey, agentId });
+  }
+
+  const baseUrl = `https://${domain}.freshdesk.com/api/v2`;
+  const auth = Buffer.from(`${apiKey}:X`).toString('base64');
+  const results = {};
+
+  try {
+    // Test 1: Fetch all open tickets (no agent filter)
+    const allOpenQuery = `"status:2"`;
+    const allOpenResp = await fetch(`${baseUrl}/search/tickets?query=${encodeURIComponent(allOpenQuery)}`, {
+      headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/json' }
+    });
+    results.allOpen = { status: allOpenResp.status, count: 0 };
+    if (allOpenResp.ok) {
+      const data = await allOpenResp.json();
+      results.allOpen.count = (data.results || []).length;
+      results.allOpen.total = data.total;
+      results.allOpen.sampleIds = (data.results || []).slice(0, 3).map(t => ({ id: t.id, subject: t.subject?.substring(0, 50), agent: t.responder_id }));
+    } else {
+      results.allOpen.body = await allOpenResp.text();
+    }
+
+    // Test 2: Fetch with agent filter
+    if (agentId) {
+      const agentQuery = `"agent_id:${agentId} AND status:2"`;
+      const agentResp = await fetch(`${baseUrl}/search/tickets?query=${encodeURIComponent(agentQuery)}`, {
+        headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/json' }
+      });
+      results.agentOpen = { status: agentResp.status, count: 0, agentId };
+      if (agentResp.ok) {
+        const data = await agentResp.json();
+        results.agentOpen.count = (data.results || []).length;
+        results.agentOpen.total = data.total;
+      } else {
+        results.agentOpen.body = await agentResp.text();
+      }
+    }
+
+    // Test 3: List all tickets (non-search endpoint)
+    const listResp = await fetch(`${baseUrl}/tickets?per_page=5&order_by=updated_at&order_type=desc`, {
+      headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/json' }
+    });
+    results.listAll = { status: listResp.status };
+    if (listResp.ok) {
+      const tickets = await listResp.json();
+      results.listAll.count = tickets.length;
+      results.listAll.samples = tickets.slice(0, 3).map(t => ({ id: t.id, subject: t.subject?.substring(0, 50), status: t.status, agent: t.responder_id }));
+    } else {
+      results.listAll.body = await listResp.text();
+    }
+
+    res.json({ domain, agentId, results });
+  } catch (error) {
+    res.status(500).json({ error: error.message, domain, agentId });
+  }
+});
+
+// ============================================
 // KNOWLEDGE BUILDER ENDPOINTS
 // ============================================
 
