@@ -49,6 +49,36 @@ import aiService from '../services/aiService';
 import AISettings from './AISettings';
 import { API_URL, VOICEBOX_URL } from '../config';
 
+// ── Edge TTS (natural voices via server) ──────────────────────────
+async function fetchEdgeVoices() {
+  try {
+    const res = await fetch(`${API_URL}/api/tts/voices`);
+    if (res.ok) return await res.json();
+  } catch { /* server may be offline */ }
+  return null;
+}
+
+async function speakWithEdgeTTS(text, voiceId, onEnd) {
+  try {
+    const res = await fetch(`${API_URL}/api/tts/speak`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice: voiceId }),
+    });
+    if (res.ok) {
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      return new Promise((resolve) => {
+        audio.onended = () => { URL.revokeObjectURL(url); onEnd?.(); resolve(true); };
+        audio.onerror = () => { URL.revokeObjectURL(url); onEnd?.(); resolve(false); };
+        audio.play().catch(() => { URL.revokeObjectURL(url); onEnd?.(); resolve(false); });
+      });
+    }
+  } catch { /* fall through */ }
+  return false;
+}
+
 // ── Voicebox voice cloning & TTS helpers ──────────────────────────
 async function fetchVoiceboxProfiles() {
   try {
@@ -209,6 +239,9 @@ function ChatWidget({ onNavigate }) {
   const [voiceError, setVoiceError] = useState(null);
   const [voiceboxProfiles, setVoiceboxProfiles] = useState([]);
   const [selectedProfileId, setSelectedProfileId] = useState('');
+  const [edgeVoices, setEdgeVoices] = useState([]);
+  const [selectedEdgeVoice, setSelectedEdgeVoice] = useState(() => localStorage.getItem('liv8_edge_voice') || 'en-US-AvaMultilingualNeural');
+  const [ttsProvider, setTtsProvider] = useState(() => localStorage.getItem('liv8_tts_provider') || 'edge'); // 'edge', 'voicebox', 'browser'
   const [showVoiceSetup, setShowVoiceSetup] = useState(false);
   const [voiceTranscript, setVoiceTranscript] = useState('');
   const [aiAudioLevel, setAiAudioLevel] = useState(0);
@@ -357,41 +390,46 @@ function ChatWidget({ onNavigate }) {
     } catch { /* non-critical */ }
   }, []);
 
-  // Speak text using Voicebox TTS (cloned voice) with browser fallback
+  // Speak text using best available TTS: Voicebox → Edge TTS → Browser
   const speakWithVoicebox = useCallback(async (text) => {
     if (!text.trim()) return;
     setIsSpeaking(true);
     setAiAudioLevel(0.5);
 
-    try {
-      if (selectedProfileId) {
+    const onEnd = () => { setIsSpeaking(false); setAiAudioLevel(0); };
+
+    // 1. Try Voicebox (cloned voice) if selected
+    if (ttsProvider === 'voicebox' && selectedProfileId) {
+      try {
         const gen = await generateVoiceboxSpeech(text, selectedProfileId);
         if (gen?.id) {
           await playVoiceboxAudio(gen.id);
-          setIsSpeaking(false);
-          setAiAudioLevel(0);
+          onEnd();
           return;
         }
-      }
-    } catch {
-      // Fallback to browser TTS
+      } catch { /* fall through */ }
     }
 
-    // Browser TTS fallback
+    // 2. Try Edge TTS (natural neural voices, free)
+    if (ttsProvider !== 'browser') {
+      const success = await speakWithEdgeTTS(text, selectedEdgeVoice, onEnd);
+      if (success) return;
+    }
+
+    // 3. Browser TTS fallback (robotic but always available)
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
       const voices = window.speechSynthesis.getVoices();
       const englishVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Google') || v.name.includes('Samantha'))) || voices.find(v => v.lang.startsWith('en')) || voices[0];
       if (englishVoice) utterance.voice = englishVoice;
-      utterance.onend = () => { setIsSpeaking(false); setAiAudioLevel(0); };
-      utterance.onerror = () => { setIsSpeaking(false); setAiAudioLevel(0); };
+      utterance.onend = onEnd;
+      utterance.onerror = onEnd;
       window.speechSynthesis.speak(utterance);
     } else {
-      setIsSpeaking(false);
-      setAiAudioLevel(0);
+      onEnd();
     }
-  }, [selectedProfileId]);
+  }, [selectedProfileId, selectedEdgeVoice, ttsProvider]);
 
   const connectVoicebox = useCallback(async () => {
     setVoiceConnecting(true);
@@ -399,11 +437,24 @@ function ChatWidget({ onNavigate }) {
     setVoiceTranscript('');
 
     try {
-      // Check Voicebox server health
-      const healthRes = await fetch(`${VOICEBOX_URL}/health`).catch(() => null);
+      // Load Edge TTS voices (parallel with Voicebox check)
+      const [healthRes, edgeData] = await Promise.all([
+        fetch(`${VOICEBOX_URL}/health`).catch(() => null),
+        fetchEdgeVoices(),
+      ]);
       const voiceboxOnline = healthRes?.ok;
 
-      // Refresh profiles
+      // Store Edge voices
+      if (edgeData?.voices) {
+        setEdgeVoices(edgeData.voices);
+        // Auto-select best provider
+        if (!voiceboxOnline && ttsProvider === 'voicebox') {
+          setTtsProvider('edge');
+          localStorage.setItem('liv8_tts_provider', 'edge');
+        }
+      }
+
+      // Refresh Voicebox profiles
       if (voiceboxOnline) {
         const profiles = await fetchVoiceboxProfiles();
         setVoiceboxProfiles(profiles);
@@ -989,25 +1040,77 @@ function ChatWidget({ onNavigate }) {
               <div className="space-y-3">
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
-                    <Mic className="w-4 h-4 text-emerald-400" />
-                    <span className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Voicebox Voice</span>
+                    <Volume2 className="w-4 h-4 text-emerald-400" />
+                    <span className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Voice Engine</span>
                     {voiceActive && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400">Active</span>}
                   </div>
-                  <div className="flex items-center gap-2">
+                  {/* TTS Provider selector */}
+                  <div className="flex gap-1">
+                    {[
+                      { id: 'edge', label: 'Edge Neural', desc: 'Natural' },
+                      { id: 'voicebox', label: 'Voicebox', desc: 'Cloned' },
+                      { id: 'browser', label: 'Browser', desc: 'Basic' },
+                    ].map(p => (
+                      <button
+                        key={p.id}
+                        onClick={() => { setTtsProvider(p.id); localStorage.setItem('liv8_tts_provider', p.id); }}
+                        disabled={voiceActive}
+                        className={`flex-1 px-2 py-1.5 rounded text-[11px] font-medium transition-colors ${
+                          ttsProvider === p.id
+                            ? 'bg-emerald-600 text-white'
+                            : isDark ? 'bg-gray-900 text-gray-400 hover:bg-gray-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        } disabled:opacity-50`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Edge TTS voice selector */}
+                  {ttsProvider === 'edge' && (
+                    <select
+                      value={selectedEdgeVoice}
+                      onChange={e => { setSelectedEdgeVoice(e.target.value); localStorage.setItem('liv8_edge_voice', e.target.value); }}
+                      disabled={voiceActive}
+                      className={`w-full px-2 py-1 rounded text-sm ${isDark ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'} border disabled:opacity-50`}
+                    >
+                      <optgroup label="Recommended (Most Natural)">
+                        <option value="en-US-AvaMultilingualNeural">Ava (Female, Multilingual)</option>
+                        <option value="en-US-AndrewMultilingualNeural">Andrew (Male, Multilingual)</option>
+                        <option value="en-US-EmmaMultilingualNeural">Emma (Female, Multilingual)</option>
+                        <option value="en-US-BrianMultilingualNeural">Brian (Male, Multilingual)</option>
+                        <option value="en-US-AriaNeural">Aria (Female)</option>
+                        <option value="en-US-GuyNeural">Guy (Male)</option>
+                        <option value="en-US-JennyNeural">Jenny (Female)</option>
+                        <option value="en-GB-SoniaNeural">Sonia (Female, British)</option>
+                        <option value="en-GB-RyanNeural">Ryan (Male, British)</option>
+                      </optgroup>
+                      {edgeVoices.length > 0 && (
+                        <optgroup label="All English Voices">
+                          {edgeVoices.filter(v => !['en-US-AvaMultilingualNeural','en-US-AndrewMultilingualNeural','en-US-EmmaMultilingualNeural','en-US-BrianMultilingualNeural','en-US-AriaNeural','en-US-GuyNeural','en-US-JennyNeural','en-GB-SoniaNeural','en-GB-RyanNeural'].includes(v.id)).map(v => (
+                            <option key={v.id} value={v.id}>{v.name} ({v.gender})</option>
+                          ))}
+                        </optgroup>
+                      )}
+                    </select>
+                  )}
+                  {/* Voicebox profile selector */}
+                  {ttsProvider === 'voicebox' && (
                     <select
                       value={selectedProfileId}
                       onChange={e => setSelectedProfileId(e.target.value)}
                       disabled={voiceActive}
-                      className={`flex-1 px-2 py-1 rounded text-sm ${isDark ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'} border disabled:opacity-50`}
+                      className={`w-full px-2 py-1 rounded text-sm ${isDark ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'} border disabled:opacity-50`}
                     >
-                      <option value="">Browser TTS (fallback)</option>
+                      <option value="">Select voice profile...</option>
                       {voiceboxProfiles.map(p => (
                         <option key={p.id} value={p.id}>{p.name}</option>
                       ))}
                     </select>
-                  </div>
+                  )}
                   <div className={`text-[10px] ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                    Server: <span className="font-mono">{VOICEBOX_URL}</span>
+                    {ttsProvider === 'edge' ? 'Free neural voices via Microsoft Edge TTS' :
+                     ttsProvider === 'voicebox' ? `Server: ${VOICEBOX_URL}` :
+                     'Built-in browser speech synthesis'}
                   </div>
                 </div>
                 <div className="pt-2 border-t border-gray-700">

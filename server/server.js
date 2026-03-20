@@ -44,6 +44,7 @@ import * as unifiedInbox from './lib/unified-inbox.js';
 import * as proactiveEngine from './lib/proactive-ai-engine.js';
 import * as eventBus from './lib/cross-platform-event-bus.js';
 import * as workflowOrchestrator from './lib/unified-workflow-orchestrator.js';
+import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -935,6 +936,95 @@ app.post('/api/proactive-analysis', async (req, res) => {
     res.json(analysis);
   } catch (error) {
     console.error('Proactive analysis error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// TEXT-TO-SPEECH (Edge TTS — free, natural voices)
+// ============================================
+
+// List available voices
+app.get('/api/tts/voices', async (req, res) => {
+  try {
+    const tts = new MsEdgeTTS();
+    const voices = await tts.getVoices();
+    // Return curated list with best English voices first
+    const english = voices.filter(v => v.Locale.startsWith('en-'));
+    const curated = [
+      // Best natural-sounding voices
+      ...english.filter(v => v.ShortName.includes('Neural') || v.ShortName.includes('Multilingual')),
+      ...english.filter(v => !v.ShortName.includes('Neural') && !v.ShortName.includes('Multilingual')),
+    ];
+    res.json({
+      voices: curated.map(v => ({
+        id: v.ShortName,
+        name: v.FriendlyName || v.ShortName,
+        locale: v.Locale,
+        gender: v.Gender,
+      })),
+      recommended: [
+        'en-US-AriaNeural',
+        'en-US-GuyNeural',
+        'en-US-JennyNeural',
+        'en-US-AndrewMultilingualNeural',
+        'en-US-AvaMultilingualNeural',
+        'en-US-BrianMultilingualNeural',
+        'en-US-EmmaMultilingualNeural',
+        'en-GB-SoniaNeural',
+        'en-GB-RyanNeural',
+      ]
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Generate speech audio
+app.post('/api/tts/speak', async (req, res) => {
+  try {
+    const { text, voice, rate, pitch, volume } = req.body;
+    if (!text) return res.status(400).json({ error: 'Text is required' });
+
+    const voiceId = voice || 'en-US-AvaMultilingualNeural';
+    const tts = new MsEdgeTTS();
+    await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
+
+    // Build SSML rate/pitch
+    const rateStr = rate ? `${rate > 0 ? '+' : ''}${Math.round((rate - 1) * 100)}%` : '+0%';
+    const pitchStr = pitch ? `${pitch > 0 ? '+' : ''}${Math.round((pitch - 1) * 50)}Hz` : '+0Hz';
+
+    const readable = tts.toStream(text);
+
+    // Collect audio chunks
+    const chunks = [];
+    readable.on('data', (chunk) => {
+      // msedge-tts emits objects with audio property
+      if (chunk.audio) {
+        chunks.push(chunk.audio);
+      } else if (Buffer.isBuffer(chunk)) {
+        chunks.push(chunk);
+      }
+    });
+
+    readable.on('end', () => {
+      const audioBuffer = Buffer.concat(chunks);
+      res.set({
+        'Content-Type': 'audio/mpeg',
+        'Content-Length': audioBuffer.length,
+        'Cache-Control': 'public, max-age=3600',
+      });
+      res.send(audioBuffer);
+    });
+
+    readable.on('error', (err) => {
+      console.error('TTS stream error:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'TTS generation failed' });
+      }
+    });
+  } catch (error) {
+    console.error('TTS error:', error);
     res.status(500).json({ error: error.message });
   }
 });

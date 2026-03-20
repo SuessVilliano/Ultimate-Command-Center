@@ -158,8 +158,27 @@ Keep responses concise for voice — under 3 sentences when possible. Be direct 
             return;
           }
         }
-      } catch { /* fall through to browser TTS */ }
+      } catch { /* fall through to Edge TTS */ }
     }
+
+    // Try Edge TTS (natural neural voices, free)
+    try {
+      const edgeVoice = localStorage.getItem('liv8_edge_voice') || 'en-US-AvaMultilingualNeural';
+      const ttsRes = await fetch(`${API_URL}/api/tts/speak`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice: edgeVoice }),
+      });
+      if (ttsRes.ok) {
+        const blob = await ttsRes.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.onended = () => { URL.revokeObjectURL(url); setIsSpeaking(false); };
+        audio.onerror = () => { URL.revokeObjectURL(url); setIsSpeaking(false); };
+        await audio.play().catch(() => { URL.revokeObjectURL(url); setIsSpeaking(false); });
+        return;
+      }
+    } catch { /* fall through to browser TTS */ }
 
     // Browser TTS fallback
     if (speechSupported && voices.length > 0) {
