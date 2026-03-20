@@ -395,7 +395,7 @@ app.delete('/api/sop/:sopId', (req, res) => {
 // ============================================
 
 // Save an approved response to casebook
-app.post('/api/casebook', (req, res) => {
+app.post('/api/casebook', async (req, res) => {
   try {
     const { ticket_id, subject, issue_type, customer_message, approved_response, sop_references, keywords, resolution_notes } = req.body;
     if (!approved_response || !subject) {
