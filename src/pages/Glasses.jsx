@@ -12,9 +12,10 @@ import { API_URL } from '../config';
  * - Minimal UI — big text, no clutter
  */
 
-// Alert priority thresholds
+// Timing constants
 const ALERT_CHECK_INTERVAL = 60000; // Check for alerts every 60s
-const BRIEFING_CHECK_INTERVAL = 300000; // Check briefing every 5min
+const SCREEN_MONITOR_INTERVAL = 15000; // Capture screen every 15s
+const MONITOR_COOLDOWN = 30000; // Don't speak more than once every 30s
 
 function Glasses() {
   // Core state
@@ -32,6 +33,12 @@ function Glasses() {
   const [cameraActive, setCameraActive] = useState(false);
   const [lastCapture, setLastCapture] = useState(null);
 
+  // Screen monitoring
+  const [screenSharing, setScreenSharing] = useState(false);
+  const [monitorActive, setMonitorActive] = useState(false);
+  const [monitorContext, setMonitorContext] = useState(null); // what tool AI detected
+  const [monitorCount, setMonitorCount] = useState(0);
+
   // Settings
   const [autoListen, setAutoListen] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
@@ -44,7 +51,12 @@ function Glasses() {
   const audioRef = useRef(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const screenVideoRef = useRef(null);
+  const screenCanvasRef = useRef(null);
   const alertIntervalRef = useRef(null);
+  const monitorIntervalRef = useRef(null);
+  const lastMonitorSpokeRef = useRef(0);
+  const lastFrameHashRef = useRef('');
   const speakingRef = useRef(false);
   const autoListenRef = useRef(autoListen);
   const statusRef = useRef(status);
@@ -91,7 +103,7 @@ function Glasses() {
       }
 
       if (newFinal && newFinal.trim()) {
-        handleVoiceInput(newFinal.trim());
+        handleVoiceInputExtended(newFinal.trim());
       }
     };
 
@@ -321,6 +333,206 @@ function Glasses() {
     }
   }, [cameraActive, conversationId, voiceId, speakResponse]);
 
+  // ── Screen Share: Start sharing your computer screen ──
+  const startScreenShare = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { cursor: 'always', width: 1920, height: 1080 },
+        audio: false,
+      });
+
+      if (screenVideoRef.current) {
+        screenVideoRef.current.srcObject = stream;
+        setScreenSharing(true);
+
+        // Detect when user stops sharing
+        stream.getVideoTracks()[0].onended = () => {
+          setScreenSharing(false);
+          setMonitorActive(false);
+          clearInterval(monitorIntervalRef.current);
+        };
+      }
+    } catch (err) {
+      console.error('Screen share error:', err);
+      setDisplayText('Screen share cancelled or not available.');
+    }
+  }, []);
+
+  const stopScreenShare = useCallback(() => {
+    if (screenVideoRef.current?.srcObject) {
+      screenVideoRef.current.srcObject.getTracks().forEach(t => t.stop());
+      screenVideoRef.current.srcObject = null;
+    }
+    setScreenSharing(false);
+    setMonitorActive(false);
+    clearInterval(monitorIntervalRef.current);
+  }, []);
+
+  // ── Simple frame hash to detect screen changes ──
+  const getFrameHash = useCallback((canvas) => {
+    const ctx = canvas.getContext('2d');
+    // Sample a grid of pixels for a fast hash
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let hash = 0;
+    // Sample every 10000th pixel for speed
+    for (let i = 0; i < data.length; i += 40000) {
+      hash = ((hash << 5) - hash + data[i]) | 0;
+    }
+    return String(hash);
+  }, []);
+
+  // ── Screen Monitor: Periodic capture → AI analysis ──
+  const captureScreen = useCallback(async () => {
+    if (!screenVideoRef.current?.srcObject) return;
+    if (speakingRef.current || statusRef.current === 'thinking') return;
+
+    // Cooldown: don't speak more than once per MONITOR_COOLDOWN
+    if (Date.now() - lastMonitorSpokeRef.current < MONITOR_COOLDOWN) return;
+
+    const canvas = screenCanvasRef.current;
+    const video = screenVideoRef.current;
+    if (!canvas || !video || !video.videoWidth) return;
+
+    canvas.width = Math.min(video.videoWidth, 1280);
+    canvas.height = Math.min(video.videoHeight, 720);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // Check if screen actually changed
+    const frameHash = getFrameHash(canvas);
+    if (frameHash === lastFrameHashRef.current) return; // No change, skip
+    lastFrameHashRef.current = frameHash;
+
+    const imageBase64 = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+    setLastCapture(canvas.toDataURL('image/jpeg', 0.2));
+    setMonitorCount(prev => prev + 1);
+
+    try {
+      const response = await fetch(`${API_URL}/api/vision/monitor`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image: imageBase64,
+          conversationId,
+          voice: voiceId,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.conversationId) setConversationId(data.conversationId);
+        if (data.detectedTool) setMonitorContext(data.detectedTool);
+
+        // Only speak if AI decided this is worth interrupting for
+        if (data.shouldSpeak && data.response) {
+          lastMonitorSpokeRef.current = Date.now();
+          setLastResponse(data.response);
+          setDisplayText(data.response);
+          await speakResponse(data.audio, data.response);
+        }
+      }
+    } catch (err) {
+      console.error('Monitor capture error:', err);
+    }
+  }, [conversationId, voiceId, speakResponse, getFrameHash]);
+
+  // ── Toggle screen monitor on/off ──
+  const toggleMonitor = useCallback(() => {
+    if (monitorActive) {
+      setMonitorActive(false);
+      clearInterval(monitorIntervalRef.current);
+    } else {
+      if (!screenSharing) {
+        // Start screen share first
+        startScreenShare().then(() => {
+          setMonitorActive(true);
+          monitorIntervalRef.current = setInterval(captureScreen, SCREEN_MONITOR_INTERVAL);
+        });
+      } else {
+        setMonitorActive(true);
+        monitorIntervalRef.current = setInterval(captureScreen, SCREEN_MONITOR_INTERVAL);
+      }
+    }
+  }, [monitorActive, screenSharing, startScreenShare, captureScreen]);
+
+  // Cleanup monitor on unmount
+  useEffect(() => {
+    return () => clearInterval(monitorIntervalRef.current);
+  }, []);
+
+  // ── Voice commands for screen monitoring ──
+  // Extend handleVoiceInput to recognize monitor commands
+  const handleVoiceInputExtended = useCallback(async (text) => {
+    const lower = text.toLowerCase();
+
+    // Screen monitoring commands
+    if (lower.includes('watch my screen') || lower.includes('monitor my screen') ||
+        lower.includes('start monitoring') || lower.includes('screen share')) {
+      if (!screenSharing) {
+        setDisplayText('Starting screen share...');
+        await startScreenShare();
+      }
+      setMonitorActive(true);
+      monitorIntervalRef.current = setInterval(captureScreen, SCREEN_MONITOR_INTERVAL);
+      setDisplayText('Screen monitoring active. I\'ll watch and alert you.');
+      speakResponse(null, 'Screen monitoring is now active. I\'ll watch your screen and alert you when I see something important.');
+      return;
+    }
+
+    if (lower.includes('stop monitoring') || lower.includes('stop watching') ||
+        lower.includes('stop screen')) {
+      setMonitorActive(false);
+      clearInterval(monitorIntervalRef.current);
+      stopScreenShare();
+      setDisplayText('Screen monitoring stopped.');
+      speakResponse(null, 'Screen monitoring stopped.');
+      return;
+    }
+
+    if (lower.includes('what\'s on my screen') || lower.includes('what\'s on screen') ||
+        lower.includes('describe my screen') || lower.includes('read my screen')) {
+      if (screenSharing) {
+        // One-shot screen analysis
+        const canvas = screenCanvasRef.current;
+        const video = screenVideoRef.current;
+        if (canvas && video && video.videoWidth) {
+          canvas.width = Math.min(video.videoWidth, 1280);
+          canvas.height = Math.min(video.videoHeight, 720);
+          canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+          const imageBase64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+
+          setStatus('thinking');
+          setDisplayText('Reading your screen...');
+          try {
+            const response = await fetch(`${API_URL}/api/vision`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                image: imageBase64,
+                prompt: text,
+                conversationId,
+                voice: voiceId,
+              }),
+            });
+            if (response.ok) {
+              const data = await response.json();
+              if (data.conversationId) setConversationId(data.conversationId);
+              setDisplayText(data.response);
+              await speakResponse(data.audio, data.response);
+            }
+          } catch {}
+          return;
+        }
+      }
+      setDisplayText('Share your screen first. Say "watch my screen".');
+      speakResponse(null, 'Share your screen first. Say watch my screen.');
+      return;
+    }
+
+    // Fall through to normal voice handling
+    await handleVoiceInput(text);
+  }, [handleVoiceInput, screenSharing, startScreenShare, stopScreenShare, captureScreen, conversationId, voiceId, speakResponse]);
+
   // ── Proactive Alerts ──
   const checkAlerts = useCallback(async () => {
     // Don't interrupt if speaking or thinking
@@ -431,9 +643,11 @@ function Glasses() {
     <div className="fixed inset-0 bg-black flex flex-col items-center justify-between p-6 select-none"
          style={{ fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif' }}>
 
-      {/* Hidden video/canvas for camera capture */}
+      {/* Hidden video/canvas for camera + screen capture */}
       <video ref={videoRef} autoPlay playsInline muted className="hidden" />
+      <video ref={screenVideoRef} autoPlay playsInline muted className="hidden" />
       <canvas ref={canvasRef} className="hidden" />
+      <canvas ref={screenCanvasRef} className="hidden" />
 
       {/* Top bar — status + connection */}
       <div className="w-full flex items-center justify-between">
@@ -484,18 +698,42 @@ function Glasses() {
                 {cameraActive ? 'ON' : 'OFF'}
               </button>
             </label>
+            <label className="flex items-center justify-between">
+              <span className="text-white/60 text-sm">Screen Monitor</span>
+              <button
+                onClick={toggleMonitor}
+                className={`px-3 py-1 rounded-full text-xs font-medium ${
+                  monitorActive ? 'bg-orange-500/20 text-orange-400' : 'bg-white/10 text-white/40'
+                }`}
+              >
+                {monitorActive ? `ON (${monitorCount})` : 'OFF'}
+              </button>
+            </label>
+            {monitorContext && (
+              <div className="text-xs text-white/30 px-1">
+                Detected: <span className="text-purple-400">{monitorContext}</span>
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <button
                 onClick={checkAlerts}
                 className="flex-1 px-3 py-2 rounded-lg bg-purple-500/20 text-purple-400 text-xs font-medium"
               >
-                Check Alerts Now
+                Alerts
               </button>
               <button
                 onClick={fetchAndSpeakBriefing}
                 className="flex-1 px-3 py-2 rounded-lg bg-cyan-500/20 text-cyan-400 text-xs font-medium"
               >
-                Get Briefing
+                Briefing
+              </button>
+              <button
+                onClick={screenSharing ? stopScreenShare : startScreenShare}
+                className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium ${
+                  screenSharing ? 'bg-red-500/20 text-red-400' : 'bg-orange-500/20 text-orange-400'
+                }`}
+              >
+                {screenSharing ? 'Stop Share' : 'Share Screen'}
               </button>
             </div>
           </div>
@@ -579,25 +817,35 @@ function Glasses() {
             </svg>
           </button>
 
-          {/* Briefing button */}
+          {/* Screen monitor button */}
           <button
-            onClick={fetchAndSpeakBriefing}
-            className="w-14 h-14 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-all"
+            onClick={toggleMonitor}
+            className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${
+              monitorActive
+                ? 'bg-orange-500/30 shadow-[0_0_30px_rgba(249,115,22,0.3)]'
+                : 'bg-white/10 hover:bg-white/20'
+            }`}
           >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-white/60">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
-              <line x1="16" x2="8" y1="13" y2="13"/>
-              <line x1="16" x2="8" y1="17" y2="17"/>
-              <polyline points="10 9 9 9 8 9"/>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
+                 className={monitorActive ? 'text-orange-400' : 'text-white/60'}>
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+              <line x1="8" x2="16" y1="21" y2="21"/>
+              <line x1="12" x2="12" y1="17" y2="21"/>
             </svg>
           </button>
         </div>
 
-        {/* Glasses mode indicator */}
-        <span className="text-white/15 text-xs font-mono tracking-widest">
-          LIV8 COMMAND CENTER  //  GLASSES MODE
-        </span>
+        {/* Glasses mode indicator + monitor status */}
+        <div className="flex flex-col items-center gap-1">
+          {monitorActive && (
+            <span className="text-orange-400/60 text-xs font-mono">
+              SCREEN MONITOR ACTIVE {monitorContext ? `// ${monitorContext.toUpperCase()}` : ''}
+            </span>
+          )}
+          <span className="text-white/15 text-xs font-mono tracking-widest">
+            LIV8 COMMAND CENTER  //  GLASSES MODE
+          </span>
+        </div>
       </div>
     </div>
   );

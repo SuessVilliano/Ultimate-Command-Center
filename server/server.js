@@ -1252,6 +1252,168 @@ app.post('/api/vision', async (req, res) => {
   }
 });
 
+// ============================================
+// VISION MONITOR ENDPOINT (Screen Monitoring Copilot)
+// Periodic screen captures → detect tool → cross-reference data → decide if to speak
+// ============================================
+
+// In-memory state for monitor to avoid repeating itself
+const monitorState = {
+  lastSpokenTopics: [], // What we already told the user about
+  lastDetectedTool: null,
+  lastAnalysis: null,
+  lastSpokeAt: 0,
+};
+
+app.post('/api/vision/monitor', async (req, res) => {
+  try {
+    const { image, conversationId: reqConvId, userId, voice } = req.body;
+    if (!image) return res.status(400).json({ error: 'Image required' });
+
+    const uid = userId || 'default';
+    const convId = reqConvId || memory.getActiveConversation(uid);
+
+    // Gather live context data in parallel
+    let marketContext = '';
+    let ticketContext = '';
+
+    const [marketResult, ticketResult] = await Promise.allSettled([
+      // Get live market data
+      (async () => {
+        try {
+          const tickers = await marketData.getBinanceTickers(['BTCUSDT', 'ETHUSDT', 'SOLUSDT']);
+          if (tickers?.length) {
+            return tickers.map(t =>
+              `${t.symbol}: $${parseFloat(t.lastPrice).toFixed(2)} (${parseFloat(t.priceChangePercent) > 0 ? '+' : ''}${parseFloat(t.priceChangePercent).toFixed(1)}%)`
+            ).join(', ');
+          }
+        } catch {}
+        return '';
+      })(),
+      // Get ticket summary
+      (async () => {
+        try {
+          const ticketsWithAnalysis = db.getAllTicketsWithAnalysis();
+          const tickets = ticketsWithAnalysis.map(t => t.ticket ? JSON.parse(t.ticket) : t);
+          const open = tickets.filter(t => t.status === 2);
+          const pending = tickets.filter(t => t.status === 3);
+          return `Open tickets: ${open.length}, Pending: ${pending.length}`;
+        } catch {}
+        return '';
+      })(),
+    ]);
+
+    if (marketResult.status === 'fulfilled' && marketResult.value) {
+      marketContext = `Live prices: ${marketResult.value}`;
+    }
+    if (ticketResult.status === 'fulfilled' && ticketResult.value) {
+      ticketContext = ticketResult.value;
+    }
+
+    // Build the monitor prompt — tell AI to detect what's on screen and decide importance
+    const monitorPrompt = `You are a proactive AI copilot monitoring the user's computer screen through their Meta Ray-Ban glasses.
+
+WHAT YOU ALREADY TOLD THEM (don't repeat):
+${monitorState.lastSpokenTopics.slice(-5).join('\n') || 'Nothing yet.'}
+
+LIVE DATA:
+${marketContext}
+${ticketContext}
+
+USER'S WATCHED INSTRUMENTS: NQ (Nasdaq futures), MNQ (Micro Nasdaq), NAS100, SOL, Oil, Gold, Forex
+
+YOUR JOB:
+1. Identify what tool/app is on screen (TradingView, Freshdesk, Gmail, code editor, etc.)
+2. Analyze what's happening — look for: price levels, chart patterns, ticket details, errors, notifications
+3. Decide: is there something WORTH INTERRUPTING the user about?
+
+SPEAK ONLY IF you see:
+- A significant price move or chart pattern on a watched instrument
+- A new urgent ticket or important notification
+- An error or problem that needs attention
+- Something the user would want to know RIGHT NOW
+
+RESPOND IN THIS JSON FORMAT:
+{"detectedTool": "TradingView|Freshdesk|Gmail|CodeEditor|Browser|Other|Unknown", "shouldSpeak": true/false, "insight": "What you'd say to the user (1-2 sentences, conversational)", "reason": "Why this is worth mentioning"}
+
+If nothing noteworthy, respond: {"detectedTool": "...", "shouldSpeak": false, "insight": "", "reason": "nothing notable"}`;
+
+    // Send to vision AI
+    const result = await ai.analyzeImage(image, monitorPrompt);
+
+    // Parse the AI response
+    let parsed = { detectedTool: 'Unknown', shouldSpeak: false, insight: '', reason: '' };
+    try {
+      // Extract JSON from response (AI might wrap it in markdown)
+      const jsonMatch = result.text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        parsed = JSON.parse(jsonMatch[0]);
+      }
+    } catch {
+      // If JSON parsing fails, check if AI just gave a plain response
+      if (result.text.length > 10 && !result.text.includes('"shouldSpeak": false')) {
+        parsed.shouldSpeak = true;
+        parsed.insight = result.text.substring(0, 200);
+      }
+    }
+
+    // Update monitor state
+    monitorState.lastDetectedTool = parsed.detectedTool;
+    monitorState.lastAnalysis = parsed;
+
+    let audioBase64 = null;
+
+    if (parsed.shouldSpeak && parsed.insight) {
+      // Track what we told them to avoid repeating
+      monitorState.lastSpokenTopics.push(parsed.insight);
+      if (monitorState.lastSpokenTopics.length > 10) {
+        monitorState.lastSpokenTopics = monitorState.lastSpokenTopics.slice(-5);
+      }
+      monitorState.lastSpokeAt = Date.now();
+
+      // Store in conversation
+      memory.addMessage(convId, 'user', `[Screen monitor: ${parsed.detectedTool}]`);
+      memory.addMessage(convId, 'assistant', parsed.insight, {
+        provider: result.provider,
+        model: result.model,
+      });
+
+      // Generate TTS
+      try {
+        const voiceId = voice || 'en-US-AvaMultilingualNeural';
+        const tts = new MsEdgeTTS();
+        await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
+        const readable = tts.toStream(parsed.insight);
+        const chunks = [];
+        await new Promise((resolve, reject) => {
+          readable.on('data', (chunk) => {
+            if (chunk.audio) chunks.push(chunk.audio);
+            else if (Buffer.isBuffer(chunk)) chunks.push(chunk);
+          });
+          readable.on('end', resolve);
+          readable.on('error', reject);
+        });
+        audioBase64 = Buffer.concat(chunks).toString('base64');
+      } catch {}
+    }
+
+    res.json({
+      shouldSpeak: parsed.shouldSpeak,
+      response: parsed.insight || '',
+      detectedTool: parsed.detectedTool || 'Unknown',
+      reason: parsed.reason || '',
+      audio: audioBase64,
+      audioFormat: 'audio/mp3',
+      provider: result.provider,
+      model: result.model,
+      conversationId: convId,
+    });
+  } catch (error) {
+    console.error('Vision monitor error:', error);
+    res.status(500).json({ error: error.message, shouldSpeak: false });
+  }
+});
+
 // General chat with memory
 app.post('/api/chat', async (req, res) => {
   try {
