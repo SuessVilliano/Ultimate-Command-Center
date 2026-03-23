@@ -94,6 +94,9 @@ services:
       # Slack Integration
       - key: SLACK_WEBHOOK_URL
         sync: false
+      # Hybrid Journal API
+      - key: HYBRID_JOURNAL_API_KEY
+        sync: false
       # Telegram Bridge
       - key: TELEGRAM_BOT_TOKEN
         sync: false

@@ -1652,6 +1652,150 @@ app.post('/api/telegram/signal/analyze', async (req, res) => {
   }
 });
 
+// ============================================
+// HYBRID JOURNAL iOS SHORTCUTS BRIDGE
+// Simple endpoints that iOS Shortcuts can call easily
+// ============================================
+
+const HJ_API = 'https://hybridjournal.base44.app/api/functions';
+const HJ_API_KEY = process.env.HYBRID_JOURNAL_API_KEY;
+
+// Helper to call Hybrid Journal API
+async function callHJ(endpoint, body = {}) {
+  const response = await fetch(`${HJ_API}/${endpoint}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'api_key': HJ_API_KEY || '',
+    },
+    body: JSON.stringify(body),
+  });
+  return response.json();
+}
+
+// Morning Brief — call from iOS Shortcut or Siri
+app.get('/api/journal/brief', async (req, res) => {
+  try {
+    const data = await callHJ('apiData?entity=Trade&action=list&limit=10');
+    const trades = Array.isArray(data) ? data : [];
+
+    // Summarize with AI
+    const stats = {
+      total: trades.length,
+      winners: trades.filter(t => t.pnl > 0).length,
+      losers: trades.filter(t => t.pnl < 0).length,
+      totalPnl: trades.reduce((s, t) => s + (t.pnl || 0), 0),
+    };
+
+    const briefResult = await ai.chat(
+      [{ role: 'user', content: `My recent trading stats: ${JSON.stringify(stats)}. Recent trades: ${JSON.stringify(trades.slice(0, 5).map(t => ({ instrument: t.instrument, pnl: t.pnl, entry_date: t.entry_date })))}. Give me a quick morning brief — what should I focus on today? 2-3 sentences.` }],
+      { systemPrompt: 'You are Juno, a trading coach. Be concise and actionable.', maxTokens: 256 }
+    );
+
+    res.json({
+      brief: briefResult.text,
+      stats,
+      speak: briefResult.text, // For Siri to read aloud
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Quick Journal Entry — dictate via Siri, posted to Hybrid Journal
+app.post('/api/journal/entry', async (req, res) => {
+  try {
+    const { text, mood, type } = req.body;
+    if (!text) return res.status(400).json({ error: 'text required' });
+
+    const result = await callHJ('apiData?entity=JournalEntry&action=create', {
+      content: text,
+      mood_tags: mood ? [mood] : [],
+      entry_type: type || 'thought',
+    });
+
+    res.json({ success: true, entry: result, speak: 'Journal entry saved.' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Performance Check — "How am I doing?"
+app.get('/api/journal/performance', async (req, res) => {
+  try {
+    const period = req.query.period || '7'; // days
+    const data = await callHJ('apiData?entity=Trade&action=list&limit=200');
+    const trades = Array.isArray(data) ? data : [];
+
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - parseInt(period));
+    const recent = trades.filter(t => new Date(t.entry_date) >= cutoff);
+
+    const stats = {
+      period: `${period} days`,
+      trades: recent.length,
+      winners: recent.filter(t => t.pnl > 0).length,
+      losers: recent.filter(t => t.pnl < 0).length,
+      winRate: recent.length > 0 ? Math.round((recent.filter(t => t.pnl > 0).length / recent.length) * 100) : 0,
+      totalPnl: Math.round(recent.reduce((s, t) => s + (t.pnl || 0), 0) * 100) / 100,
+      bestTrade: recent.length > 0 ? Math.max(...recent.map(t => t.pnl || 0)) : 0,
+      worstTrade: recent.length > 0 ? Math.min(...recent.map(t => t.pnl || 0)) : 0,
+    };
+
+    const speak = `In the last ${period} days: ${stats.trades} trades, ${stats.winRate}% win rate, total P&L ${stats.totalPnl > 0 ? 'plus' : 'minus'} ${Math.abs(stats.totalPnl)} dollars.`;
+
+    res.json({ ...stats, speak });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Recent Signals
+app.get('/api/journal/signals', async (req, res) => {
+  try {
+    const data = await callHJ('apiData?entity=Signal&action=list&limit=10');
+    const signals = Array.isArray(data) ? data : [];
+
+    const summary = signals.slice(0, 3).map(s =>
+      `${s.action || 'SIGNAL'} ${s.symbol || 'Unknown'} at ${s.entry_price || '?'}`
+    ).join('. ');
+
+    res.json({
+      signals,
+      count: signals.length,
+      speak: signals.length > 0 ? `${signals.length} recent signals. ${summary}.` : 'No recent signals.',
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Log Quick Trade — "I just took a long on NQ at 18500"
+app.post('/api/journal/trade', async (req, res) => {
+  try {
+    const { instrument, direction, entry_price, stop_loss, take_profit, notes } = req.body;
+    if (!instrument) return res.status(400).json({ error: 'instrument required' });
+
+    const result = await callHJ('apiData?entity=Trade&action=create', {
+      instrument,
+      direction: direction || 'LONG',
+      entry_price: parseFloat(entry_price) || 0,
+      stop_loss: stop_loss ? parseFloat(stop_loss) : undefined,
+      take_profit: take_profit ? parseFloat(take_profit) : undefined,
+      notes: notes || '',
+      entry_date: new Date().toISOString(),
+    });
+
+    res.json({
+      success: true,
+      trade: result,
+      speak: `Trade logged: ${direction || 'LONG'} ${instrument} at ${entry_price || 'market'}.`,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // General chat with memory
 app.post('/api/chat', async (req, res) => {
   try {

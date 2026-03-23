@@ -750,6 +750,41 @@ function Glasses() {
   const handleVoiceInputExtended = useCallback(async (text) => {
     const lower = text.toLowerCase();
 
+    // Journal / Trading commands
+    if (lower.includes('how am i doing') || lower.includes('my performance') ||
+        lower.includes('check my stats') || lower.includes('trading stats')) {
+      setStatus('thinking');
+      setDisplayText('Checking your performance...');
+      try {
+        const r = await fetch(`${API_URL}/api/journal/performance?period=7`);
+        if (r.ok) {
+          const data = await r.json();
+          setDisplayText(data.speak);
+          speakResponse(null, data.speak);
+        } else { speakResponse(null, 'Could not check performance.'); }
+      } catch { speakResponse(null, 'Could not reach journal.'); }
+      return;
+    }
+
+    if (lower.includes('journal') && (lower.includes('entry') || lower.includes('note') || lower.includes('log'))) {
+      // Extract journal content after the command word
+      const content = text.replace(/^.*?(journal|entry|note|log)\s*/i, '').trim() || text;
+      setStatus('thinking');
+      setDisplayText('Saving journal entry...');
+      try {
+        const r = await fetch(`${API_URL}/api/journal/entry`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: content }),
+        });
+        if (r.ok) {
+          setDisplayText('Journal entry saved.');
+          speakResponse(null, 'Journal entry saved.');
+        }
+      } catch { speakResponse(null, 'Could not save entry.'); }
+      return;
+    }
+
     // Telegram commands
     if (lower.includes('tell juno') || lower.includes('message juno') ||
         lower.includes('send to juno') || lower.includes('ask juno')) {
