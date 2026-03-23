@@ -334,7 +334,8 @@ function parseProviderError(provider, error) {
  * Get fallback provider order (excluding the failed one)
  */
 function getFallbackProviders(failedProvider) {
-  const allProviders = ['groq', 'gemini', 'claude', 'openai', 'kimi'];
+  // Fallback order: free/cheap first, Claude last (most expensive — save for code)
+  const allProviders = ['groq', 'gemini', 'kimi', 'openai', 'claude'];
   const availableMap = { claude: !!anthropicClient, openai: !!openaiClient, gemini: !!geminiClient, kimi: !!kimiApiKey, groq: !!groqApiKey };
   return allProviders.filter(p => p !== failedProvider && availableMap[p]);
 }
@@ -369,12 +370,38 @@ function sleep(ms) {
 }
 
 /**
+ * Detect if a message is code-related (use Claude for code, Gemini for everything else)
+ */
+function isCodeRelated(messages) {
+  const codeKeywords = /\b(code|function|debug|error|bug|compile|syntax|refactor|implement|class|method|api|endpoint|deploy|git|npm|import|export|async|await|promise|typescript|javascript|python|react|node|database|query|sql|schema|migration)\b/i;
+  const lastMessage = messages[messages.length - 1]?.content || '';
+  // Also check for code blocks
+  if (lastMessage.includes('```') || lastMessage.includes('def ') || lastMessage.includes('const ') || lastMessage.includes('function ')) {
+    return true;
+  }
+  return codeKeywords.test(lastMessage);
+}
+
+/**
  * Main chat completion function - works with all providers
+ * Routes: Gemini for general chat (free), Claude for code tasks only
  * Includes automatic fallback to other available providers on failure
  */
 export async function chat(messages, options = {}) {
-  const provider = options.provider || currentProvider;
-  const model = options.model || currentModel;
+  // Smart routing: use Claude for code, Gemini for everything else
+  let provider = options.provider || currentProvider;
+  let model = options.model || currentModel;
+
+  // Auto-route to Claude for code tasks if available, otherwise stay on Gemini
+  if (!options.provider && isCodeRelated(messages) && anthropicClient) {
+    provider = 'claude';
+    model = getDefaultModel('claude');
+  } else if (!options.provider) {
+    // Default to cheapest available for non-code
+    const cheap = getCostEffectiveProvider();
+    provider = cheap.provider;
+    model = cheap.model;
+  }
   const maxTokens = options.maxTokens || 1024;
   const temperature = options.temperature || 0.7;
   const systemPrompt = options.systemPrompt || null;
@@ -523,17 +550,23 @@ async function chatWithGemini(messages, options) {
     throw new Error('Gemini client not initialized. Add GEMINI_API_KEY to .env or settings');
   }
 
-  const model = geminiClient.getGenerativeModel({
+  const modelConfig = {
     model: options.model || 'gemini-2.5-flash-preview-05-20',
     generationConfig: {
       maxOutputTokens: options.maxTokens,
       temperature: options.temperature
     }
-  });
+  };
+
+  // Use Gemini's native systemInstruction so it persists across all turns
+  if (options.systemPrompt) {
+    modelConfig.systemInstruction = options.systemPrompt;
+  }
+
+  const model = geminiClient.getGenerativeModel(modelConfig);
 
   // Build conversation history
   const history = [];
-  let systemInstruction = options.systemPrompt || '';
 
   for (const m of messages.slice(0, -1)) {
     history.push({
@@ -544,12 +577,7 @@ async function chatWithGemini(messages, options) {
 
   // Get the last message as the current prompt
   const lastMessage = messages[messages.length - 1];
-  let prompt = lastMessage?.content || '';
-
-  // Prepend system prompt to first user message if exists
-  if (systemInstruction && history.length === 0) {
-    prompt = `${systemInstruction}\n\n${prompt}`;
-  }
+  const prompt = lastMessage?.content || '';
 
   try {
     const chat = model.startChat({ history });

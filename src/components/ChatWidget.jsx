@@ -116,8 +116,10 @@ async function playVoiceboxAudio(generationId) {
   } catch { /* */ }
 }
 
+// Voice prompt is now handled server-side via unified system-prompt.js
+// This is only used as a minimal fallback if server is unreachable
 const DEFAULT_VOICE_PROMPT =
-  `You are an AI assistant integrated into LIV8 Command Center — a voice-enabled operations dashboard for managing projects, support tickets, GitHub repos, AI agent teams, domain portfolios, integrations (Freshdesk, ClickUp, GitHub), news monitoring, and automated workflows. You help users navigate the app, find information, manage tasks, troubleshoot issues, and operate the platform hands-free. Be concise and helpful.`;
+  `You are the LIV8 Command Center AI assistant. Be concise and helpful. Keep voice responses under 3 sentences.`;
 
 function ChatWidget({ onNavigate }) {
   const { theme, toggleTheme } = useTheme();

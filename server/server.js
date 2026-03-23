@@ -28,6 +28,7 @@ import * as memory from './lib/conversation-memory.js';
 import * as integrations from './lib/integrations.js';
 import * as agentKnowledge from './lib/agent-knowledge.js';
 import * as contentIngestion from './lib/content-ingestion.js';
+import { getVoicePrompt, getChatPrompt, getCommanderPrompt } from './lib/system-prompt.js';
 import * as dailyReport from './lib/daily-report.js';
 import * as emailService from './lib/email-service.js';
 import * as orchestrator from './lib/agent-orchestrator.js';
@@ -1035,6 +1036,80 @@ app.post('/api/tts/speak', async (req, res) => {
   }
 });
 
+// ============================================
+// VOICE ENDPOINT (Meta Glasses / Wearables)
+// Single call: text in → AI response + audio out
+// ============================================
+app.post('/api/voice', async (req, res) => {
+  try {
+    const { message, conversationId: reqConvId, userId, voice } = req.body;
+    if (!message) return res.status(400).json({ error: 'Message is required' });
+
+    const uid = userId || 'default';
+    const convId = reqConvId || memory.getActiveConversation(uid);
+
+    // Get conversation history and memory
+    const history = memory.getConversationHistory(convId, 10);
+    const memoryContext = memory.buildMemoryContext(uid, message);
+
+    const messages = [
+      ...history.map(h => ({ role: h.role, content: h.content })),
+      { role: 'user', content: message }
+    ];
+
+    // Store user message
+    memory.addMessage(convId, 'user', message);
+
+    // Use voice-optimized prompt (short answers)
+    const systemPrompt = getVoicePrompt(memoryContext);
+
+    const result = await ai.chat(messages, { systemPrompt, maxTokens: 512 });
+
+    // Store assistant response
+    memory.addMessage(convId, 'assistant', result.text, {
+      provider: result.provider,
+      model: result.model
+    });
+
+    // Generate TTS audio
+    let audioBase64 = null;
+    try {
+      const voiceId = voice || 'en-US-AvaMultilingualNeural';
+      const tts = new MsEdgeTTS();
+      await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
+      const readable = tts.toStream(result.text);
+      const chunks = [];
+      await new Promise((resolve, reject) => {
+        readable.on('data', (chunk) => {
+          // msedge-tts emits objects with audio property
+          if (chunk.audio) {
+            chunks.push(chunk.audio);
+          } else if (Buffer.isBuffer(chunk)) {
+            chunks.push(chunk);
+          }
+        });
+        readable.on('end', resolve);
+        readable.on('error', reject);
+      });
+      audioBase64 = Buffer.concat(chunks).toString('base64');
+    } catch (ttsErr) {
+      console.warn('Voice TTS failed, returning text only:', ttsErr.message);
+    }
+
+    res.json({
+      response: result.text,
+      audio: audioBase64,
+      audioFormat: 'audio/mp3',
+      provider: result.provider,
+      model: result.model,
+      conversationId: convId
+    });
+  } catch (error) {
+    console.error('Voice endpoint error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // General chat with memory
 app.post('/api/chat', async (req, res) => {
   try {
@@ -1057,13 +1132,7 @@ app.post('/api/chat', async (req, res) => {
       { role: 'user', content: message }
     ];
 
-    const defaultSystemPrompt = `You are a helpful AI assistant for the LIV8 Command Center. You help manage businesses, support tickets, projects, and tasks. You have access to Taskade, TaskMagic, GoHighLevel, and Supabase integrations.
-
-You remember things about the user and their preferences. Use the context below to personalize your responses.
-
-${memoryContext}
-
-Be concise, professional, and helpful. If the user asks you to remember something, acknowledge that you will remember it.`;
+    const defaultSystemPrompt = getChatPrompt(memoryContext);
 
     // Store user message
     memory.addMessage(convId, 'user', message, { agentId, context });
@@ -2711,23 +2780,7 @@ app.post('/api/commander/chat', async (req, res) => {
     }
 
     // System prompt for commander with full context
-    const systemPrompt = `You are the LIV8 Command Center AI - a powerful executive assistant with FULL ACCESS to the user's business systems.
-
-You have access to:
-1. All support tickets and AI analyses
-2. All AI agents and their knowledge bases
-3. System integrations (Freshdesk, GoHighLevel, Taskade, etc.)
-
-Your capabilities:
-- Summarize tickets into actionable execution plans
-- Identify urgent issues and priorities
-- Route tasks to the right AI agents
-- Provide strategic recommendations
-
-Current App Context:
-${context}
-
-Be concise, actionable, and executive-focused. When creating plans, use clear formatting with priorities and owners.`;
+    const systemPrompt = getCommanderPrompt(context);
 
     // Generate response
     const response = await ai.chat([{ role: 'user', content: message }], {
@@ -4837,6 +4890,712 @@ registerNiftyRoutes(app);
 // Register Scraper routes (RapidAPI + Apify)
 registerScraperRoutes(app);
 
+// ═══════════════════════════════════════════════════════════
+//  DAILY NEWS DIGEST — Morning briefing email
+// ═══════════════════════════════════════════════════════════
+app.post('/api/news/send-digest', async (req, res) => {
+  try {
+    const { email } = req.body;
+    const targetEmail = email || process.env.REPORT_EMAIL;
+    if (!targetEmail) {
+      return res.status(400).json({ error: 'No email configured. Set REPORT_EMAIL env var or pass email in body.' });
+    }
+
+    // Gather news from multiple categories
+    const categories = [
+      { label: 'Markets & Trading', query: 'stock market nasdaq futures trading' },
+      { label: 'Crypto', query: 'cryptocurrency bitcoin solana ethereum' },
+      { label: 'Tech & AI', query: 'technology AI artificial intelligence' },
+      { label: 'World News', query: 'world news economy geopolitics' },
+      { label: 'Investing', query: 'investing portfolio wealth management' }
+    ];
+
+    const allNews = {};
+    for (const cat of categories) {
+      try {
+        const news = await newsService.fetchFinancialNews({ topics: [cat.query], limit: 5 });
+        allNews[cat.label] = news || [];
+      } catch {
+        allNews[cat.label] = [];
+      }
+    }
+
+    // Get crypto prices
+    let cryptoPrices = '';
+    try {
+      const cryptoResp = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd&include_24hr_change=true');
+      if (cryptoResp.ok) {
+        const data = await cryptoResp.json();
+        const fmt = (coin) => data[coin] ? `$${data[coin].usd.toLocaleString()} (${data[coin].usd_24h_change >= 0 ? '+' : ''}${data[coin].usd_24h_change.toFixed(2)}%)` : 'N/A';
+        cryptoPrices = `BTC: ${fmt('bitcoin')} | ETH: ${fmt('ethereum')} | SOL: ${fmt('solana')}`;
+      }
+    } catch { /* ignore */ }
+
+    // Build HTML email
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+    let newsHtml = '';
+    for (const [category, items] of Object.entries(allNews)) {
+      if (items.length === 0) continue;
+      newsHtml += `<h3 style="color:#6366f1;margin:24px 0 12px;font-size:16px;border-bottom:1px solid #e5e7eb;padding-bottom:8px;">${category}</h3>`;
+      for (const item of items) {
+        newsHtml += `
+          <div style="margin-bottom:16px;">
+            <a href="${item.url || '#'}" style="color:#111827;text-decoration:none;font-weight:600;font-size:14px;">${item.title || 'Untitled'}</a>
+            ${item.description ? `<p style="color:#6b7280;font-size:13px;margin:4px 0 0;">${item.description.substring(0, 200)}${item.description.length > 200 ? '...' : ''}</p>` : ''}
+            <p style="color:#9ca3af;font-size:11px;margin:4px 0 0;">${item.source || ''} · ${item.publishedAt ? new Date(item.publishedAt).toLocaleString() : ''}</p>
+          </div>`;
+      }
+    }
+
+    const html = `
+      <div style="max-width:600px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+        <div style="background:linear-gradient(135deg,#1e1b4b,#312e81);padding:24px;border-radius:12px 12px 0 0;text-align:center;">
+          <h1 style="color:#fff;margin:0;font-size:22px;">Daily News Digest</h1>
+          <p style="color:#a5b4fc;margin:8px 0 0;font-size:13px;">${dateStr}</p>
+        </div>
+        ${cryptoPrices ? `
+        <div style="background:#f0fdf4;padding:14px 20px;border:1px solid #86efac;">
+          <p style="margin:0;font-size:13px;color:#166534;font-weight:600;">Market Snapshot</p>
+          <p style="margin:4px 0 0;font-size:14px;color:#065f46;font-family:monospace;">${cryptoPrices}</p>
+        </div>` : ''}
+        <div style="padding:20px;background:#fff;border:1px solid #e5e7eb;border-top:none;">
+          ${newsHtml || '<p style="color:#6b7280;">No news available today. Check back later.</p>'}
+        </div>
+        <div style="background:#f9fafb;padding:16px 20px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;text-align:center;">
+          <a href="${process.env.APP_URL || 'https://command.liv8.co'}" style="color:#6366f1;font-size:13px;text-decoration:none;">Open Command Center</a>
+          <p style="color:#9ca3af;font-size:11px;margin:8px 0 0;">Powered by LIV8 Command Center</p>
+        </div>
+      </div>`;
+
+    const plainText = Object.entries(allNews).map(([cat, items]) =>
+      `--- ${cat} ---\n` + items.map(i => `• ${i.title}\n  ${i.url || ''}`).join('\n')
+    ).join('\n\n');
+
+    // Send via existing email service
+    if (!emailService.isEmailEnabled()) {
+      return res.status(400).json({ error: 'Email not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASS.' });
+    }
+
+    await emailService.sendEmail({
+      to: targetEmail,
+      subject: `Daily News Digest — ${dateStr}`,
+      html,
+      text: `Daily News Digest - ${dateStr}\n\n${cryptoPrices}\n\n${plainText}`
+    });
+
+    res.json({ success: true, sentTo: targetEmail, categories: Object.keys(allNews).length });
+  } catch (error) {
+    console.error('News digest error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// News digest scheduling happens in app.listen callback below
+
+// ═══════════════════════════════════════════════════════════
+//  TRADE SIGNALS — TradingView Webhook Receiver + Signal API
+// ═══════════════════════════════════════════════════════════
+
+// In-memory signal store (persists to DB when available)
+const tradeSignals = [];
+const MAX_SIGNALS = 200;
+
+// POST /api/trade-signals/webhook — Receive TradingView alerts
+app.post('/api/trade-signals/webhook', (req, res) => {
+  try {
+    const payload = req.body;
+    console.log('[TRADE SIGNAL] Received webhook:', JSON.stringify(payload).substring(0, 500));
+
+    // Parse flexible TradingView alert format
+    const signal = {
+      id: `sig_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+      symbol: payload.symbol || payload.ticker || payload.pair || 'UNKNOWN',
+      action: (payload.action || payload.side || payload.direction || payload.order || 'INFO').toUpperCase(),
+      entry: parseFloat(payload.entry || payload.price || payload.entry_price || payload.close || 0),
+      stopLoss: parseFloat(payload.stop_loss || payload.sl || payload.stoploss || 0),
+      tp1: parseFloat(payload.tp1 || payload.take_profit_1 || payload.target1 || 0),
+      tp2: parseFloat(payload.tp2 || payload.take_profit_2 || payload.target2 || 0),
+      tp3: parseFloat(payload.tp3 || payload.take_profit_3 || payload.target3 || 0),
+      source: payload.source || payload.strategy || payload.indicator || 'TradingView',
+      channel: payload.channel || 'Webhook',
+      timeframe: payload.timeframe || payload.interval || '',
+      message: payload.message || payload.comment || payload.text || '',
+      status: 'NEW',
+      viewedAt: null,
+      executedAt: null,
+      receivedAt: new Date().toISOString(),
+      raw: payload
+    };
+
+    // Store signal
+    tradeSignals.unshift(signal);
+    if (tradeSignals.length > MAX_SIGNALS) tradeSignals.length = MAX_SIGNALS;
+
+    // Try to persist to DB
+    try {
+      db.saveSetting(`trade_signal_${signal.id}`, JSON.stringify(signal));
+    } catch (e) { /* non-critical */ }
+
+    console.log(`[TRADE SIGNAL] ${signal.symbol} ${signal.action} @ ${signal.entry} | SL: ${signal.stopLoss} | TP1: ${signal.tp1}`);
+
+    // Forward to TaskMagic if configured
+    const taskmagicUrl = process.env.TASKMAGIC_WEBHOOK_URL;
+    if (taskmagicUrl) {
+      fetch(taskmagicUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(signal)
+      }).catch(e => console.log('TaskMagic forward error:', e.message));
+    }
+
+    res.json({ success: true, signalId: signal.id });
+  } catch (error) {
+    console.error('Trade signal webhook error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/trade-signals — Get all signals
+app.get('/api/trade-signals', (req, res) => {
+  const { status, symbol, limit } = req.query;
+  let filtered = [...tradeSignals];
+  if (status) filtered = filtered.filter(s => s.status === status.toUpperCase());
+  if (symbol) filtered = filtered.filter(s => s.symbol.toUpperCase().includes(symbol.toUpperCase()));
+  const max = parseInt(limit) || 50;
+  res.json({ signals: filtered.slice(0, max), total: filtered.length });
+});
+
+// PATCH /api/trade-signals/:id — Update signal status
+app.patch('/api/trade-signals/:id', (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+  const signal = tradeSignals.find(s => s.id === id);
+  if (!signal) return res.status(404).json({ error: 'Signal not found' });
+  signal.status = status || signal.status;
+  if (status === 'VIEWED') signal.viewedAt = new Date().toISOString();
+  if (status === 'EXECUTED') signal.executedAt = new Date().toISOString();
+  res.json({ success: true, signal });
+});
+
+// GET /api/trade-signals/prices — Free market prices (CoinGecko + proxy)
+app.get('/api/trade-signals/prices', async (req, res) => {
+  try {
+    // Fetch from CoinGecko (free, no key needed)
+    const cryptoResp = await fetch(
+      'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,binancecoin&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&include_market_cap=true'
+    );
+    const cryptoData = cryptoResp.ok ? await cryptoResp.json() : {};
+
+    // Fetch futures/forex from free sources
+    // Using TradingView mini-chart data (publicly accessible)
+    const prices = {
+      crypto: {
+        BTC: cryptoData.bitcoin ? {
+          price: cryptoData.bitcoin.usd, change24h: cryptoData.bitcoin.usd_24h_change,
+          volume24h: cryptoData.bitcoin.usd_24h_vol, marketCap: cryptoData.bitcoin.usd_market_cap, name: 'Bitcoin'
+        } : null,
+        ETH: cryptoData.ethereum ? {
+          price: cryptoData.ethereum.usd, change24h: cryptoData.ethereum.usd_24h_change,
+          volume24h: cryptoData.ethereum.usd_24h_vol, marketCap: cryptoData.ethereum.usd_market_cap, name: 'Ethereum'
+        } : null,
+        SOL: cryptoData.solana ? {
+          price: cryptoData.solana.usd, change24h: cryptoData.solana.usd_24h_change,
+          volume24h: cryptoData.solana.usd_24h_vol, marketCap: cryptoData.solana.usd_market_cap, name: 'Solana'
+        } : null,
+        BNB: cryptoData.binancecoin ? {
+          price: cryptoData.binancecoin.usd, change24h: cryptoData.binancecoin.usd_24h_change,
+          volume24h: cryptoData.binancecoin.usd_24h_vol, marketCap: cryptoData.binancecoin.usd_market_cap, name: 'BNB'
+        } : null
+      },
+      // Futures/Forex - these will be populated by TradingView widgets on frontend
+      // Server provides what's freely available
+      futures: {
+        NQ: { name: 'NASDAQ 100 Futures', symbol: 'NQ1!', exchange: 'CME' },
+        MNQ: { name: 'Micro NASDAQ Futures', symbol: 'MNQ1!', exchange: 'CME' },
+        ES: { name: 'S&P 500 Futures', symbol: 'ES1!', exchange: 'CME' },
+        CL: { name: 'Crude Oil Futures', symbol: 'CL1!', exchange: 'NYMEX' },
+        GC: { name: 'Gold Futures', symbol: 'GC1!', exchange: 'COMEX' },
+      },
+      forex: {
+        'NAS100': { name: 'NAS100 (CFD)', symbol: 'OANDA:NAS100USD' },
+        'XAUUSD': { name: 'Gold Spot', symbol: 'OANDA:XAUUSD' },
+        'USOIL': { name: 'US Oil', symbol: 'TVC:USOIL' },
+        'EURUSD': { name: 'EUR/USD', symbol: 'FX:EURUSD' },
+        'GBPUSD': { name: 'GBP/USD', symbol: 'FX:GBPUSD' },
+      },
+      updatedAt: new Date().toISOString()
+    };
+
+    res.json(prices);
+  } catch (error) {
+    console.error('Price fetch error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+//  AUTOPORT — Phone Number Porting Tool (embedded from AutoPort)
+// ═══════════════════════════════════════════════════════════
+
+// POST /api/porting/extract — Smart paste AI extraction
+app.post('/api/porting/extract', async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text || text.trim().length < 10) {
+      return res.status(400).json({ error: 'Please paste ticket content (at least 10 characters)' });
+    }
+
+    let extracted;
+    const geminiKey = process.env.GEMINI_API_KEY;
+    const openaiKey = process.env.OPENAI_API_KEY;
+
+    if (geminiKey) {
+      extracted = await portingExtractGemini(text, geminiKey);
+    } else if (openaiKey) {
+      extracted = await portingExtractOpenAI(text, openaiKey);
+    } else {
+      extracted = portingExtractRegex(text);
+    }
+
+    res.json({ success: true, extracted, method: geminiKey ? 'gemini' : openaiKey ? 'openai' : 'regex' });
+  } catch (err) {
+    console.error('Porting extract error:', err);
+    try {
+      const extracted = portingExtractRegex(req.body.text || '');
+      res.json({ success: true, extracted, method: 'regex-fallback' });
+    } catch (e) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+});
+
+async function portingExtractGemini(text, apiKey) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  const prompt = `Extract porting information from this support ticket text. Return ONLY valid JSON with these fields:
+{
+  "firstName": "",
+  "lastName": "",
+  "businessName": "",
+  "email": "",
+  "phone_numbers": [{"number": "+1XXXXXXXXXX", "type": "LOCAL or MOBILE", "carrier": "", "account_number": "", "pin": ""}],
+  "address": {"street": "", "city": "", "state": "", "zip": ""},
+  "customerType": "individual or business",
+  "notes": "any other relevant context"
+}
+Leave fields empty string if not found. Normalize phone numbers to +1XXXXXXXXXX format. Here's the ticket:\n\n${text}`;
+
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.1 }
+    })
+  });
+  const data = await resp.json();
+  const content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const jsonMatch = content.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('No JSON in AI response');
+  return JSON.parse(jsonMatch[0]);
+}
+
+async function portingExtractOpenAI(text, apiKey) {
+  const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      temperature: 0.1,
+      messages: [{
+        role: 'system',
+        content: 'Extract porting info from ticket text. Return ONLY JSON: {firstName, lastName, businessName, email, phone_numbers: [{number: "+1XXXXXXXXXX", type, carrier, account_number, pin}], address: {street, city, state, zip}, customerType: "individual"|"business", notes}'
+      }, { role: 'user', content: text }]
+    })
+  });
+  const data = await resp.json();
+  const content = data.choices?.[0]?.message?.content || '';
+  const jsonMatch = content.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('No JSON');
+  return JSON.parse(jsonMatch[0]);
+}
+
+function portingExtractRegex(text) {
+  const result = {
+    firstName: '', lastName: '', businessName: '', email: '',
+    phone_numbers: [], address: { street: '', city: '', state: '', zip: '' },
+    customerType: 'individual', notes: ''
+  };
+  // Phone numbers
+  const phoneRegex = /(?:\+?1[-.\s]?)?\(?(\d{3})\)?[-.\s]?(\d{3})[-.\s]?(\d{4})/g;
+  let match;
+  const seen = new Set();
+  while ((match = phoneRegex.exec(text)) !== null) {
+    const num = `+1${match[1]}${match[2]}${match[3]}`;
+    if (!seen.has(num)) {
+      seen.add(num);
+      result.phone_numbers.push({ number: num, type: 'LOCAL', carrier: '', account_number: '', pin: '' });
+    }
+  }
+  // Email
+  const emailMatch = text.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+  if (emailMatch) result.email = emailMatch[0];
+  // Name
+  const nameMatch = text.match(/(?:name|customer|account holder|authorized)[:\s]*([A-Z][a-z]+)\s+([A-Z][a-z]+)/i);
+  if (nameMatch) { result.firstName = nameMatch[1]; result.lastName = nameMatch[2]; }
+  // Business
+  const bizMatch = text.match(/(?:business|company|org)[:\s]*([A-Z][\w\s&.',-]+?)(?:\n|$|,)/i);
+  if (bizMatch) { result.businessName = bizMatch[1].trim(); result.customerType = 'business'; }
+  // ZIP
+  const zipMatch = text.match(/\b(\d{5})(?:-\d{4})?\b/);
+  if (zipMatch) result.address.zip = zipMatch[1];
+  // State
+  const stateAbbrevs = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'];
+  const states = ['Alabama','Alaska','Arizona','Arkansas','California','Colorado','Connecticut','Delaware','Florida','Georgia','Hawaii','Idaho','Illinois','Indiana','Iowa','Kansas','Kentucky','Louisiana','Maine','Maryland','Massachusetts','Michigan','Minnesota','Mississippi','Missouri','Montana','Nebraska','Nevada','New Hampshire','New Jersey','New Mexico','New York','North Carolina','North Dakota','Ohio','Oklahoma','Oregon','Pennsylvania','Rhode Island','South Carolina','South Dakota','Tennessee','Texas','Utah','Vermont','Virginia','Washington','West Virginia','Wisconsin','Wyoming'];
+  for (let i = 0; i < states.length; i++) {
+    if (text.includes(states[i]) || new RegExp(`\\b${stateAbbrevs[i]}\\b`).test(text)) {
+      result.address.state = states[i];
+      break;
+    }
+  }
+  // Account/PIN
+  const acctMatch = text.match(/(?:account|acct)\s*#?\s*:?\s*(\w+)/i);
+  const pinMatch = text.match(/(?:pin|passcode|last 4)\s*:?\s*(\d{4,})/i);
+  if (result.phone_numbers.length > 0) {
+    if (acctMatch) result.phone_numbers[0].account_number = acctMatch[1];
+    if (pinMatch) result.phone_numbers[0].pin = pinMatch[1];
+  }
+  return result;
+}
+
+// POST /api/porting/eligibility — Check number portability
+app.post('/api/porting/eligibility', async (req, res) => {
+  try {
+    const { phoneNumbers, locationId } = req.body;
+    if (!Array.isArray(phoneNumbers) || phoneNumbers.length === 0) {
+      return res.status(400).json({ error: 'phoneNumbers array is required' });
+    }
+
+    const results = await Promise.all(
+      phoneNumbers.map(async (number) => {
+        // Normalize
+        const digits = number.replace(/\D/g, '');
+        const normalized = digits.length === 11 && digits.startsWith('1') ? `+${digits}` : digits.length === 10 ? `+1${digits}` : number;
+
+        // Detect type
+        const isTollFree = /^\+1(800|888|877|866|855|844|833)/.test(normalized);
+        if (isTollFree) {
+          return { number: normalized, portable: false, reason: 'Toll-free numbers require manual porting', type: 'TOLL_FREE' };
+        }
+
+        // For now, simulate portability (real Twilio integration can be added)
+        return {
+          number: normalized,
+          portable: true,
+          pinRequired: true,
+          type: /^\+1(2[0-9]{2}|3[0-9]{2}|4[0-9]{2}|5[0-9]{2}|6[0-9]{2}|7[0-9]{2}|8[0-9]{2}|9[0-9]{2})/.test(normalized) ? 'LOCAL' : 'MOBILE',
+          reason: null
+        };
+      })
+    );
+
+    res.json({ results });
+  } catch (err) {
+    console.error('Eligibility error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/porting/requests — Create port request
+app.post('/api/porting/requests', upload.single('billingStatement'), async (req, res) => {
+  try {
+    let data;
+    try {
+      data = typeof req.body.data === 'string' ? JSON.parse(req.body.data) : req.body;
+    } catch { data = req.body; }
+
+    // Validate required fields
+    if (!data.customerName && !(data.firstName && data.lastName)) {
+      return res.status(400).json({ error: 'Customer name is required' });
+    }
+    if (!data.phoneNumbers || data.phoneNumbers.length === 0) {
+      return res.status(400).json({ error: 'At least one phone number is required' });
+    }
+
+    // Generate a simulated port SID (real Twilio can be added later)
+    const portSid = 'KW' + Math.random().toString(36).substr(2, 30).toUpperCase();
+
+    // Document SID (simulated)
+    let documentSid = null;
+    if (req.file) {
+      documentSid = 'ME' + Math.random().toString(36).substr(2, 30).toUpperCase();
+    }
+
+    // Log to database
+    const requestRecord = {
+      id: portSid,
+      portInSid: portSid,
+      locationId: data.locationId || 'unknown',
+      customerName: data.customerName || `${data.firstName || ''} ${data.lastName || ''}`.trim(),
+      businessName: data.businessName || null,
+      email: data.authorizedRepresentativeEmail || data.email,
+      address: data.address,
+      phoneNumbers: data.phoneNumbers,
+      status: 'waiting_for_signature',
+      documentSid,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    // Save to Supabase if available
+    try {
+      db.saveSetting(`port_request_${portSid}`, JSON.stringify(requestRecord));
+    } catch (e) {
+      console.log('Could not save port request to DB:', e.message);
+    }
+
+    res.status(201).json({
+      success: true,
+      portInRequestSid: portSid,
+      status: 'waiting_for_signature',
+      message: 'Port request created. Check your email to sign the LOA.',
+      estimatedCompletionDays: '5-15 business days'
+    });
+  } catch (err) {
+    console.error('Create port request error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/porting/chat — Conversational AI for porting
+app.post('/api/porting/chat', async (req, res) => {
+  try {
+    let { message, history } = req.body;
+    if (typeof history === 'string') {
+      try { history = JSON.parse(history); } catch { history = []; }
+    }
+    if (!message) {
+      return res.status(400).json({ error: 'Message required' });
+    }
+
+    const systemPrompt = `You are AutoPort AI, an internal porting assistant for a GoHighLevel support agent. You help with:
+- Extracting porting details from ticket text (names, addresses, phone numbers, carrier info, account numbers, PINs)
+- Explaining porting processes, timelines (2-4 weeks for <50 numbers, 6-8 weeks for larger)
+- Troubleshooting port rejections (common causes: wrong name, wrong address, wrong account#/PIN, unauthorized user)
+- LOA requirements (must match carrier records exactly)
+- Twilio porting API specifics
+- CSV formatting for bulk imports
+
+When extracting info from pasted text, output it clearly formatted so the agent can copy it.
+When you see phone numbers, always normalize to +1XXXXXXXXXX format.
+Be concise and action-oriented — this is an internal tool, not customer-facing.
+If the user pastes ticket content, extract ALL porting-relevant fields and present them clearly.`;
+
+    const geminiKey = process.env.GEMINI_API_KEY;
+    const openaiKey = process.env.OPENAI_API_KEY;
+    let reply;
+
+    if (geminiKey) {
+      const historyParts = (history || []).map(h => ({
+        role: h.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: h.content }]
+      }));
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`;
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [...historyParts, { role: 'user', parts: [{ text: message }] }],
+          generationConfig: { temperature: 0.3, maxOutputTokens: 2000 }
+        })
+      });
+      const data = await resp.json();
+      reply = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry, I could not process that.';
+    } else if (openaiKey) {
+      const messages = [
+        { role: 'system', content: systemPrompt },
+        ...(history || []).map(h => ({ role: h.role, content: h.content })),
+        { role: 'user', content: message }
+      ];
+      const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
+        body: JSON.stringify({ model: 'gpt-4o-mini', messages, temperature: 0.3, max_tokens: 2000 })
+      });
+      const data = await resp.json();
+      reply = data.choices?.[0]?.message?.content || 'Sorry, I could not process that.';
+    } else {
+      // Fallback to main AI provider
+      try {
+        const result = await ai.generateResponse(message, { systemPrompt, conversationHistory: history || [] });
+        reply = result.response || result;
+      } catch {
+        reply = 'AI not configured for porting chat. Set GEMINI_API_KEY or OPENAI_API_KEY.';
+      }
+    }
+
+    res.json({ success: true, reply });
+  } catch (err) {
+    console.error('Porting chat error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/porting/generate-loa — Generate LOA PDF
+app.post('/api/porting/generate-loa', async (req, res) => {
+  try {
+    const { default: PDFDocument } = await import('pdfkit');
+    const { firstName, lastName, businessName, address, phoneNumbers, loaMode } = req.body;
+
+    if (!firstName || !lastName || !phoneNumbers?.length) {
+      return res.status(400).json({ error: 'firstName, lastName, and phoneNumbers required' });
+    }
+
+    // Group numbers based on LOA mode
+    let loaGroups;
+    if (loaMode === 'per-number') {
+      loaGroups = phoneNumbers.map(n => [n]);
+    } else if (loaMode === 'per-carrier') {
+      const byCarrier = {};
+      phoneNumbers.forEach(n => {
+        const carrier = n.carrier || 'Unknown';
+        if (!byCarrier[carrier]) byCarrier[carrier] = [];
+        byCarrier[carrier].push(n);
+      });
+      loaGroups = Object.values(byCarrier);
+    } else {
+      loaGroups = [phoneNumbers];
+    }
+
+    const doc = new PDFDocument({ size: 'LETTER', margin: 50 });
+    const chunks = [];
+    doc.on('data', c => chunks.push(c));
+    doc.on('end', () => {
+      const pdfBuffer = Buffer.concat(chunks);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="LOA-${firstName}-${lastName}-${Date.now()}.pdf"`);
+      res.send(pdfBuffer);
+    });
+
+    loaGroups.forEach((group, groupIdx) => {
+      if (groupIdx > 0) doc.addPage();
+
+      // Title
+      doc.fontSize(20).font('Helvetica-Bold').text('Porting Letter of Authorization (LOA)', { align: 'center' });
+      doc.moveDown(1.5);
+
+      // 1. Customer Name
+      doc.fontSize(11).font('Helvetica-Bold').text('1. Customer Name (must appear exactly as it does on your telephone bill):');
+      doc.moveDown(0.5);
+      doc.rect(50, doc.y, 250, 28).stroke('#999');
+      doc.rect(310, doc.y, 252, 28).stroke('#999');
+      doc.fontSize(8).font('Helvetica').fillColor('#666')
+        .text('First Name', 55, doc.y + 3)
+        .text('Last Name', 315, doc.y - 8);
+      doc.fontSize(12).font('Helvetica').fillColor('#000')
+        .text(firstName, 55, doc.y + 4)
+        .text(lastName, 315, doc.y - 16);
+      doc.y += 22;
+      doc.moveDown(0.5);
+
+      if (businessName) {
+        doc.rect(50, doc.y, 512, 28).stroke('#999');
+        doc.fontSize(8).fillColor('#666').text('Business Name', 55, doc.y + 3);
+        doc.fontSize(12).fillColor('#000').text(businessName, 55, doc.y + 4);
+        doc.y += 22;
+      }
+      doc.moveDown(1);
+
+      // 2. Service Address
+      doc.fontSize(11).font('Helvetica-Bold').fillColor('#000')
+        .text('2. Service Address on file with your current carrier:');
+      doc.moveDown(0.5);
+      const addr = address || {};
+      doc.rect(50, doc.y, 512, 28).stroke('#999');
+      doc.fontSize(8).fillColor('#666').text('Address', 55, doc.y + 3);
+      doc.fontSize(11).fillColor('#000').text(addr.street || '', 55, doc.y + 4);
+      doc.y += 32;
+
+      const addrY = doc.y;
+      doc.rect(50, addrY, 200, 28).stroke('#999');
+      doc.rect(258, addrY, 150, 28).stroke('#999');
+      doc.rect(416, addrY, 146, 28).stroke('#999');
+      doc.fontSize(8).fillColor('#666')
+        .text('City', 55, addrY + 3)
+        .text('State/Province', 263, addrY + 3)
+        .text('Zip/Postal Code', 421, addrY + 3);
+      doc.fontSize(11).fillColor('#000')
+        .text(addr.city || '', 55, addrY + 14)
+        .text(addr.state || '', 263, addrY + 14)
+        .text(addr.zip || '', 421, addrY + 14);
+      doc.y = addrY + 36;
+      doc.moveDown(1);
+
+      // 3. Phone Numbers table
+      doc.fontSize(11).font('Helvetica-Bold').fillColor('#000')
+        .text('3. Telephone Number(s) authorized to change to the Company:');
+      doc.moveDown(0.5);
+
+      const tblY = doc.y;
+      const colWidths = [140, 130, 130, 112];
+      const colX = [50, 190, 320, 450];
+      const headers = ['Phone Number*', 'Service Provider', 'Account Number', 'PIN (if applicable)'];
+
+      doc.rect(50, tblY, 512, 22).fill('#e5e5e5').stroke('#999');
+      doc.fontSize(9).font('Helvetica-Bold').fillColor('#000');
+      headers.forEach((h, i) => doc.text(h, colX[i] + 5, tblY + 6, { width: colWidths[i] - 10 }));
+
+      let rowY = tblY + 22;
+      for (let j = 0; j < Math.min(group.length, 20); j++) {
+        if (rowY > 650) { doc.addPage(); rowY = 50; }
+        const n = group[j];
+        doc.rect(50, rowY, 512, 26).stroke('#999');
+        doc.fontSize(10).font('Helvetica').fillColor('#000');
+        const digits = (n.number || '').replace(/\D/g, '');
+        const display = digits.length >= 10 ? `(${digits.slice(-10,-7)}) ${digits.slice(-7,-4)}-${digits.slice(-4)}` : n.number;
+        doc.text(display, colX[0] + 5, rowY + 7, { width: colWidths[0] - 10 });
+        doc.text(n.carrier || '', colX[1] + 5, rowY + 7, { width: colWidths[1] - 10 });
+        doc.text(n.account_number || n.account || '', colX[2] + 5, rowY + 7, { width: colWidths[2] - 10 });
+        doc.text(n.pin || '', colX[3] + 5, rowY + 7, { width: colWidths[3] - 10 });
+        rowY += 26;
+      }
+
+      // Authorization text
+      const authY = Math.max(rowY + 25, doc.y);
+      if (authY > 580) { doc.addPage(); doc.y = 50; } else { doc.y = authY; }
+
+      doc.fontSize(9).font('Helvetica').fillColor('#333')
+        .text('By signing the below, I verify that I am, or represent (for a business), the above-named service customer, authorized to change the primary carrier(s) for the telephone number(s) listed, and am at least 18 years of age. The name and address I have provided is the name and address on record with my local telephone company for each telephone number listed. I authorize Twilio (the "Company") or its designated agent to act on my behalf and notify my current carrier(s) to change my preferred carrier(s) for the listed number(s) and service(s).', {
+          width: 512, lineGap: 3
+        });
+      doc.moveDown(2);
+
+      // Signature lines
+      const sigY = doc.y;
+      doc.strokeColor('#333')
+        .moveTo(50, sigY).lineTo(220, sigY).stroke()
+        .moveTo(240, sigY).lineTo(420, sigY).stroke()
+        .moveTo(440, sigY).lineTo(562, sigY).stroke();
+      doc.fontSize(8).fillColor('#666')
+        .text('Authorized Signature', 50, sigY + 4)
+        .text('Print Name', 240, sigY + 4)
+        .text('Date', 440, sigY + 4);
+
+      doc.moveDown(2);
+      doc.fontSize(8).fillColor('#999')
+        .text('For toll free numbers, please change RespOrg to TWI01.', { align: 'center' })
+        .text('Please do not end service on the number for 10 days after RespOrg change.', { align: 'center' });
+    });
+
+    doc.end();
+  } catch (err) {
+    console.error('LOA generation error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, () => {
   const providerInfo = ai.getCurrentProvider();
   const scheduleStatus = scheduler.getScheduleStatus();
@@ -4871,5 +5630,26 @@ app.listen(PORT, () => {
   if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY) {
     console.log('\n  WARNING: No AI API keys configured!');
     console.log('  Add ANTHROPIC_API_KEY or OPENAI_API_KEY to server/.env\n');
+  }
+
+  // Schedule daily news digest at 7 AM EST
+  if (process.env.SCHEDULE_ENABLED === 'true' && process.env.REPORT_EMAIL) {
+    import('node-cron').then(nodeCron => {
+      nodeCron.default.schedule('0 7 * * *', async () => {
+        console.log('[NEWS DIGEST] Sending daily morning digest...');
+        try {
+          const resp = await fetch(`http://localhost:${PORT}/api/news/send-digest`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: process.env.REPORT_EMAIL })
+          });
+          const data = await resp.json();
+          console.log('[NEWS DIGEST] Sent:', data);
+        } catch (e) {
+          console.error('[NEWS DIGEST] Failed:', e.message);
+        }
+      }, { timezone: process.env.SCHEDULE_TIMEZONE || 'America/New_York' });
+      console.log('  [NEWS DIGEST] Daily digest scheduled at 7:00 AM EST');
+    });
   }
 });

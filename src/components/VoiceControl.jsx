@@ -54,20 +54,8 @@ function VoiceControl({ onNavigate, isOpen, onClose }) {
   const recognitionRef = useRef(null);
   const messagesEndRef = useRef(null);
 
-  // System context for the AI
-  const SYSTEM_PROMPT = `You are the LIV8 Command Center AI assistant. You speak conversationally and give real, helpful answers.
-
-You are integrated into a business operations dashboard for Hybrid Holdings LLC, which manages:
-- Hybrid Funding (hybridfunding.co) - proprietary trading firm with challenge programs
-- Trade Hybrid (tradehybrid.co) - trading education platform
-- LIV8 Solar (liv8solar.com) - smart energy consulting
-- LIV8 Health (liv8health.com) - health supplements e-commerce
-- LIV8 AI (liv8ai.com) - AI solutions & machine learning services
-- Smart Life Brokers (smartlifebrokers.com) - insurance & financial services
-
-The Command Center has these sections: Dashboard, Agent Team (12 AI agents on Taskade), News & Markets (live crypto/stock data), Trading (live market data), Voice Agents (build voice AI for clients), API Builder (MCP connections), Projects, Integrations (Freshdesk, ClickUp, GoHighLevel, TaskMagic, GitHub), Valuation, Domains, and GitHub.
-
-Keep responses concise for voice — under 3 sentences when possible. Be direct and helpful.`;
+  // Track conversation across messages
+  const conversationIdRef = useRef(null);
 
   // Load Voicebox profiles
   useEffect(() => {
@@ -211,86 +199,81 @@ Keep responses concise for voice — under 3 sentences when possible. Be direct 
       }
     }
 
-    // For everything else, call the real AI backend
+    // Call the unified voice endpoint (chat + TTS in one call)
     setIsThinking(true);
     try {
-      // Build conversation history for context
-      const conversationHistory = messages.slice(-6).map(m => ({
-        role: m.role, content: m.content
-      }));
+      const edgeVoice = localStorage.getItem('liv8_edge_voice') || 'en-US-AvaMultilingualNeural';
 
-      const response = await fetch(`${API_URL}/api/chat`, {
+      const response = await fetch(`${API_URL}/api/voice`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: command,
-          systemPrompt: SYSTEM_PROMPT,
-          conversationHistory,
+          conversationId: conversationIdRef.current,
+          voice: edgeVoice,
         }),
       });
 
       if (response.ok) {
         const data = await response.json();
-        const reply = data.response || data.text || data.message || '';
+        const reply = data.response || '';
+
+        // Track conversation ID for continuity
+        if (data.conversationId) {
+          conversationIdRef.current = data.conversationId;
+        }
+
         if (reply) {
           setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
-          speak(reply);
-          return;
+
+          // Play audio if returned, otherwise fall back to client-side TTS
+          if (data.audio) {
+            setIsSpeaking(true);
+            try {
+              const audioBytes = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0));
+              const blob = new Blob([audioBytes], { type: data.audioFormat || 'audio/mp3' });
+              const url = URL.createObjectURL(blob);
+              const audio = new Audio(url);
+              audio.onended = () => { URL.revokeObjectURL(url); setIsSpeaking(false); };
+              audio.onerror = () => { URL.revokeObjectURL(url); setIsSpeaking(false); };
+              await audio.play().catch(() => { URL.revokeObjectURL(url); setIsSpeaking(false); });
+            } catch {
+              speak(reply); // fallback to client TTS
+            }
+          } else {
+            speak(reply);
+          }
+        } else {
+          const errorMsg = 'I received your message but couldn\'t generate a response. Please check the AI settings.';
+          setMessages(prev => [...prev, { role: 'assistant', content: errorMsg }]);
+          speak(errorMsg);
         }
-      }
-
-      // Fallback to commander endpoint
-      const fallbackResponse = await fetch(`${API_URL}/api/commander/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: command,
-          systemPrompt: SYSTEM_PROMPT,
-        }),
-      });
-
-      if (fallbackResponse.ok) {
-        const data = await fallbackResponse.json();
-        const reply = data.response || data.text || 'I received your message but couldn\'t generate a response. Please check the AI settings.';
-        setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
-        speak(reply);
       } else {
-        const errorMsg = 'I\'m having trouble connecting to the AI backend. Please make sure the server is running and API keys are configured in Settings.';
-        setMessages(prev => [...prev, { role: 'assistant', content: errorMsg }]);
-        speak(errorMsg);
+        // Server returned error — try basic /api/chat as fallback
+        const chatResponse = await fetch(`${API_URL}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: command,
+            conversationId: conversationIdRef.current,
+          }),
+        });
+
+        if (chatResponse.ok) {
+          const data = await chatResponse.json();
+          if (data.conversationId) conversationIdRef.current = data.conversationId;
+          const reply = data.response || data.text || 'Something went wrong.';
+          setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
+          speak(reply);
+        } else {
+          const errorMsg = 'I\'m having trouble connecting. Please make sure the server is running and API keys are configured.';
+          setMessages(prev => [...prev, { role: 'assistant', content: errorMsg }]);
+          speak(errorMsg);
+        }
       }
     } catch (error) {
-      // Try Gemini browser-side fallback
-      const geminiKey = localStorage.getItem('liv8_gemini_api_key');
-      if (geminiKey) {
-        try {
-          const geminiRes = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [{ parts: [{ text: `${SYSTEM_PROMPT}\n\nUser: ${command}` }] }],
-                generationConfig: { temperature: 0.8, maxOutputTokens: 512 }
-              })
-            }
-          );
-          if (geminiRes.ok) {
-            const geminiData = await geminiRes.json();
-            const reply = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
-            if (reply) {
-              setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
-              speak(reply);
-              setIsThinking(false);
-              return;
-            }
-          }
-        } catch (gemErr) {
-          console.warn('Gemini voice fallback failed:', gemErr);
-        }
-      }
       console.error('Voice AI error:', error);
-      const errorMsg = 'Connection error. Please check that the server is running or add a Gemini API key.';
+      const errorMsg = 'Connection error. Please check that the server is running.';
       setMessages(prev => [...prev, { role: 'assistant', content: errorMsg }]);
       speak(errorMsg);
     } finally {
