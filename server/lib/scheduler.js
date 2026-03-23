@@ -473,48 +473,54 @@ export function startScheduledJobs(enabled = true) {
   // Initialize email service
   emailService.initEmailService();
 
-  // 6 AM EST - Daily Report Generation & Email
-  const dailyReportCron = process.env.SCHEDULE_DAILY_REPORT || '0 6 * * *';
+  // Daily Report Email - Tuesday through Saturday at 7 AM EST only
+  // Cron: minute hour * * day-of-week (0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat)
+  const dailyReportCron = process.env.SCHEDULE_DAILY_REPORT || '0 7 * * 2-6';
   const dailyReportJob = cron.schedule(dailyReportCron, () => {
     generateAndSendDailyReport();
   }, { timezone });
   scheduledJobs.set('daily_report', dailyReportJob);
-  console.log(`Scheduled: Daily Report at 6 AM EST (${dailyReportCron})`);
+  console.log(`Scheduled: Daily Report Tue-Sat 7 AM EST (${dailyReportCron})`);
 
-  // 8 AM EST - Morning brief
-  const morningCron = process.env.SCHEDULE_MORNING || '0 8 * * *';
+  // Morning ticket analysis - Tuesday through Saturday at 8 AM EST only
+  const morningCron = process.env.SCHEDULE_MORNING || '0 8 * * 2-6';
   const morningJob = cron.schedule(morningCron, () => {
     runScheduledAnalysis('morning_8am');
   }, { timezone });
   scheduledJobs.set('morning', morningJob);
-  console.log(`Scheduled: Morning analysis at 8 AM EST (${morningCron})`);
+  console.log(`Scheduled: Morning analysis Tue-Sat 8 AM EST (${morningCron})`);
 
-  // 12 PM EST - Noon check
-  const noonCron = process.env.SCHEDULE_NOON || '0 12 * * *';
-  const noonJob = cron.schedule(noonCron, () => {
-    runScheduledAnalysis('noon_12pm');
-  }, { timezone });
-  scheduledJobs.set('noon', noonJob);
-  console.log(`Scheduled: Noon analysis at 12 PM EST (${noonCron})`);
+  // Noon, afternoon, and midnight analysis DISABLED to save API quota
+  // These can be re-enabled by setting env vars:
+  //   SCHEDULE_NOON=0 12 * * 2-6
+  //   SCHEDULE_AFTERNOON=0 16 * * 2-6
+  //   SCHEDULE_MIDNIGHT=0 0 * * 2-6
+  if (process.env.SCHEDULE_NOON) {
+    const noonJob = cron.schedule(process.env.SCHEDULE_NOON, () => {
+      runScheduledAnalysis('noon_12pm');
+    }, { timezone });
+    scheduledJobs.set('noon', noonJob);
+    console.log(`Scheduled: Noon analysis (${process.env.SCHEDULE_NOON})`);
+  }
 
-  // 4 PM EST - Afternoon review
-  const afternoonCron = process.env.SCHEDULE_AFTERNOON || '0 16 * * *';
-  const afternoonJob = cron.schedule(afternoonCron, () => {
-    runScheduledAnalysis('afternoon_4pm');
-  }, { timezone });
-  scheduledJobs.set('afternoon', afternoonJob);
-  console.log(`Scheduled: Afternoon analysis at 4 PM EST (${afternoonCron})`);
+  if (process.env.SCHEDULE_AFTERNOON) {
+    const afternoonJob = cron.schedule(process.env.SCHEDULE_AFTERNOON, () => {
+      runScheduledAnalysis('afternoon_4pm');
+    }, { timezone });
+    scheduledJobs.set('afternoon', afternoonJob);
+    console.log(`Scheduled: Afternoon analysis (${process.env.SCHEDULE_AFTERNOON})`);
+  }
 
-  // 12 AM EST - Midnight overnight prep
-  const midnightCron = process.env.SCHEDULE_MIDNIGHT || '0 0 * * *';
-  const midnightJob = cron.schedule(midnightCron, () => {
-    runScheduledAnalysis('midnight_12am');
-  }, { timezone });
-  scheduledJobs.set('midnight', midnightJob);
-  console.log(`Scheduled: Midnight analysis at 12 AM EST (${midnightCron})`);
+  if (process.env.SCHEDULE_MIDNIGHT) {
+    const midnightJob = cron.schedule(process.env.SCHEDULE_MIDNIGHT, () => {
+      runScheduledAnalysis('midnight_12am');
+    }, { timezone });
+    scheduledJobs.set('midnight', midnightJob);
+    console.log(`Scheduled: Midnight analysis (${process.env.SCHEDULE_MIDNIGHT})`);
+  }
 
-  console.log(`\nAll scheduled jobs started (timezone: ${timezone})`);
-  console.log('Daily Report: 6 AM | Analysis: 8 AM, 12 PM, 4 PM, 12 AM EST');
+  console.log(`\nScheduled jobs started (timezone: ${timezone})`);
+  console.log('Active: Daily Report + Morning Analysis (Tue-Sat only)');
 
   return scheduledJobs;
 }

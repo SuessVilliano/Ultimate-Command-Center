@@ -144,14 +144,15 @@ if (scheduleEnabled) {
   console.log('Scheduled jobs: Disabled (set SCHEDULE_ENABLED=true to enable)');
 }
 
-// Initialize Proactive AI Engine
-const proactiveEnabled = process.env.PROACTIVE_AI_ENABLED !== 'false';
+// Initialize Proactive AI Engine — DISABLED by default to save API quota
+// Set PROACTIVE_AI_ENABLED=true in .env to enable (runs AI calls every 5 min)
+const proactiveEnabled = process.env.PROACTIVE_AI_ENABLED === 'true';
 if (proactiveEnabled) {
   proactiveEngine.initProactiveEngine({
-    checkIntervalMinutes: parseInt(process.env.PROACTIVE_CHECK_INTERVAL) || 5,
-    enableAutoActions: process.env.PROACTIVE_AUTO_ACTIONS !== 'false'
+    checkIntervalMinutes: parseInt(process.env.PROACTIVE_CHECK_INTERVAL) || 15,
+    enableAutoActions: process.env.PROACTIVE_AUTO_ACTIONS === 'true'
   });
-  console.log('Proactive AI Engine: Enabled');
+  console.log('Proactive AI Engine: Enabled (every', process.env.PROACTIVE_CHECK_INTERVAL || '15', 'min)');
 } else {
   console.log('Proactive AI Engine: Disabled (set PROACTIVE_AI_ENABLED=true to enable)');
 }
@@ -6181,7 +6182,7 @@ httpServer.listen(PORT, () => {
   // Schedule daily news digest at 7 AM EST
   if (process.env.SCHEDULE_ENABLED === 'true' && process.env.REPORT_EMAIL) {
     import('node-cron').then(nodeCron => {
-      nodeCron.default.schedule('0 7 * * *', async () => {
+      nodeCron.default.schedule('0 7 * * 2-6', async () => {
         console.log('[NEWS DIGEST] Sending daily morning digest...');
         try {
           const resp = await fetch(`http://localhost:${PORT}/api/news/send-digest`, {
