@@ -22,6 +22,7 @@ import ActionFeed from './pages/ActionFeed';
 import Trading from './pages/Trading';
 import VoiceAgents from './pages/VoiceAgents';
 import APIBuilder from './pages/APIBuilder';
+import Glasses from './pages/Glasses';
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -86,7 +87,7 @@ function AppContent() {
       case 'inbox':
         return <Inbox />;
       case 'news':
-        return <News />;
+        return <Trading />;
       case 'agent-team':
         return <AgentTeam />;
       case 'integrations':
@@ -101,10 +102,17 @@ function AppContent() {
         return <APIBuilder />;
       case 'admin':
         return <AdminPanel />;
+      case 'glasses':
+        return <Glasses />;
       default:
         return <Dashboard />;
     }
   };
+
+  // Glasses mode is full-screen, no sidebar/chrome
+  if (activePage === 'glasses') {
+    return <Glasses />;
+  }
 
   return (
     <div className="flex min-h-screen bg-theme transition-colors duration-300">

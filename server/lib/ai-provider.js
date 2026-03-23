@@ -1162,6 +1162,100 @@ Respond with ONLY the JSON object.`;
   };
 }
 
+/**
+ * Vision analysis - Analyze an image with AI
+ * Uses Gemini (free, best vision) > GPT-4o > Claude as fallback
+ */
+export async function analyzeImage(imageBase64, prompt, options = {}) {
+  const systemPrompt = options.systemPrompt || 'You are a vision AI assistant for the LIV8 Command Center. Analyze images concisely. For voice responses, keep it under 3 sentences.';
+
+  // Try Gemini first (free + excellent vision)
+  if (geminiClient) {
+    try {
+      const model = geminiClient.getGenerativeModel({
+        model: 'gemini-2.0-flash',
+        systemInstruction: systemPrompt,
+      });
+
+      const result = await model.generateContent([
+        { text: prompt || 'What do you see? Be concise and actionable.' },
+        {
+          inlineData: {
+            mimeType: 'image/jpeg',
+            data: imageBase64,
+          },
+        },
+      ]);
+
+      const response = await result.response;
+      return { text: response.text(), provider: 'gemini', model: 'gemini-2.0-flash' };
+    } catch (err) {
+      console.warn('Gemini vision failed:', err.message);
+    }
+  }
+
+  // Fallback: GPT-4o (has vision)
+  if (openaiClient) {
+    try {
+      const response = await openaiClient.chat.completions.create({
+        model: 'gpt-4o',
+        max_tokens: 512,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt || 'What do you see?' },
+              { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${imageBase64}` } },
+            ],
+          },
+        ],
+      });
+
+      return {
+        text: response.choices[0]?.message?.content || '',
+        provider: 'openai',
+        model: 'gpt-4o',
+      };
+    } catch (err) {
+      console.warn('GPT-4o vision failed:', err.message);
+    }
+  }
+
+  // Fallback: Claude (vision capable)
+  if (anthropicClient) {
+    try {
+      const response = await anthropicClient.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 512,
+        system: systemPrompt,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt || 'What do you see?' },
+              {
+                type: 'image',
+                source: { type: 'base64', media_type: 'image/jpeg', data: imageBase64 },
+              },
+            ],
+          },
+        ],
+      });
+
+      return {
+        text: response.content[0]?.text || '',
+        provider: 'claude',
+        model: 'claude-sonnet-4-20250514',
+      };
+    } catch (err) {
+      console.warn('Claude vision failed:', err.message);
+    }
+  }
+
+  throw new Error('No vision-capable AI provider available. Add a Gemini, OpenAI, or Claude API key.');
+}
+
 export default {
   initAIProviders,
   switchProvider,
@@ -1169,6 +1263,7 @@ export default {
   getCostEffectiveProvider,
   updateApiKey,
   chat,
+  analyzeImage,
   analyzeTicket,
   generateResponse,
   generateSmartResponse,

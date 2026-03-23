@@ -24,7 +24,8 @@ import {
   Menu,
   Mic,
   BarChart3,
-  Terminal
+  Terminal,
+  Glasses
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -32,10 +33,9 @@ import { useAuth } from '../context/AuthContext';
 const menuItems = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'agent-team', label: 'Agent Team', icon: Bot },
-  { id: 'trading', label: 'Trading & Markets', icon: BarChart3 },
+  { id: 'trading', label: 'Trading Hub', icon: BarChart3 },
   { id: 'voice-agents', label: 'Voice Agents', icon: Mic },
   { id: 'api-builder', label: 'API / MCP Builder', icon: Terminal },
-  { id: 'news', label: 'News & Markets', icon: TrendingUp },
   { id: 'inbox', label: 'Team Inbox', icon: MessageSquare },
   { id: 'action-feed', label: 'Action Feed', icon: Inbox },
   { id: 'tickets', label: 'GHL', icon: Ticket },
@@ -46,6 +46,7 @@ const menuItems = [
   { id: 'valuation', label: 'Valuation', icon: DollarSign },
   { id: 'github', label: 'GitHub', icon: Github },
   { id: 'integrations', label: 'Integrations', icon: Plug },
+  { id: 'glasses', label: 'Glasses Mode', icon: Glasses },
 ];
 
 const quickLinks = [

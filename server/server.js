@@ -746,6 +746,85 @@ app.get('/api/briefing/god-mode', async (req, res) => {
   }
 });
 
+// ============================================
+// GLASSES ALERTS ENDPOINT
+// Returns only new, speakable alerts for the glasses companion
+// ============================================
+app.get('/api/alerts/glasses', async (req, res) => {
+  try {
+    const since = req.query.since ? new Date(req.query.since) : null;
+    const alerts = [];
+
+    // Check tickets
+    const ticketsWithAnalysis = db.getAllTicketsWithAnalysis();
+    const tickets = ticketsWithAnalysis.map(t => t.ticket ? JSON.parse(t.ticket) : t);
+    const analysisMap = db.getAllAnalysisMap();
+
+    // Urgent tickets (urgency >= 8)
+    let urgentCount = 0;
+    const urgentTickets = [];
+    for (const [ticketId, analysis] of Object.entries(analysisMap)) {
+      const parsed = typeof analysis === 'string' ? JSON.parse(analysis) : analysis;
+      if (parsed?.URGENCY_SCORE >= 8) {
+        urgentCount++;
+        const ticket = tickets.find(t => String(t.id) === ticketId);
+        if (ticket) urgentTickets.push(ticket.subject);
+      }
+    }
+
+    if (urgentCount > 0) {
+      alerts.push({
+        priority: 'urgent',
+        text: `${urgentCount} urgent ticket${urgentCount > 1 ? 's' : ''}: ${urgentTickets.slice(0, 2).join(', ')}${urgentTickets.length > 2 ? ' and more' : ''}.`,
+      });
+    }
+
+    // Pending drafts
+    try {
+      const draftStats = db.getDraftStats();
+      if (draftStats?.PENDING_REVIEW > 0) {
+        alerts.push({
+          priority: 'info',
+          text: `${draftStats.PENDING_REVIEW} draft response${draftStats.PENDING_REVIEW > 1 ? 's' : ''} ready for review.`,
+        });
+      }
+    } catch {}
+
+    // Proactive engine issues
+    try {
+      const { getProactiveState } = await import('./lib/proactive-ai-engine.js');
+      const state = getProactiveState();
+      if (state?.issues?.length > 0) {
+        alerts.push({
+          priority: 'warning',
+          text: `${state.issues.length} proactive issue${state.issues.length > 1 ? 's' : ''} detected.`,
+        });
+      }
+    } catch {}
+
+    // Open ticket count
+    const openTickets = tickets.filter(t => t.status === 2);
+    if (openTickets.length > 5) {
+      alerts.push({
+        priority: 'info',
+        text: `You have ${openTickets.length} open tickets in the queue.`,
+      });
+    }
+
+    res.json({
+      alerts,
+      count: alerts.length,
+      checkedAt: new Date().toISOString(),
+      summary: alerts.length > 0
+        ? alerts.map(a => a.text).join(' ')
+        : 'All clear. No urgent items.',
+    });
+  } catch (error) {
+    console.error('Glasses alerts error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Voice Intent Handler - accepts JSON intents from iPhone Shortcuts
 app.post('/api/intent', async (req, res) => {
   try {
@@ -1106,6 +1185,69 @@ app.post('/api/voice', async (req, res) => {
     });
   } catch (error) {
     console.error('Voice endpoint error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// VISION ENDPOINT (Camera / VisionClaw)
+// Analyze images with AI vision models
+// ============================================
+app.post('/api/vision', async (req, res) => {
+  try {
+    const { image, prompt, conversationId: reqConvId, userId, voice } = req.body;
+    if (!image) return res.status(400).json({ error: 'Image (base64) is required' });
+
+    const uid = userId || 'default';
+    const convId = reqConvId || memory.getActiveConversation(uid);
+
+    // Analyze the image
+    const visionPrompt = prompt || 'What do you see? Be concise and actionable.';
+    const result = await ai.analyzeImage(image, visionPrompt, {
+      systemPrompt: getVoicePrompt('You are analyzing an image captured by the user\'s smart glasses. Be concise — they are listening, not reading. Describe what\'s relevant and actionable.'),
+    });
+
+    // Store in conversation memory
+    memory.addMessage(convId, 'user', `[Image captured] ${visionPrompt}`);
+    memory.addMessage(convId, 'assistant', result.text, {
+      provider: result.provider,
+      model: result.model,
+    });
+
+    // Generate TTS audio
+    let audioBase64 = null;
+    try {
+      const voiceId = voice || 'en-US-AvaMultilingualNeural';
+      const tts = new MsEdgeTTS();
+      await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
+      const readable = tts.toStream(result.text);
+      const chunks = [];
+      await new Promise((resolve, reject) => {
+        readable.on('data', (chunk) => {
+          if (chunk.audio) {
+            chunks.push(chunk.audio);
+          } else if (Buffer.isBuffer(chunk)) {
+            chunks.push(chunk);
+          }
+        });
+        readable.on('end', resolve);
+        readable.on('error', reject);
+      });
+      audioBase64 = Buffer.concat(chunks).toString('base64');
+    } catch (ttsErr) {
+      console.warn('Vision TTS failed:', ttsErr.message);
+    }
+
+    res.json({
+      response: result.text,
+      audio: audioBase64,
+      audioFormat: 'audio/mp3',
+      provider: result.provider,
+      model: result.model,
+      conversationId: convId,
+    });
+  } catch (error) {
+    console.error('Vision endpoint error:', error);
     res.status(500).json({ error: error.message });
   }
 });
