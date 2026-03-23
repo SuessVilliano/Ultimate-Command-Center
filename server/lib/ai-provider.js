@@ -102,7 +102,7 @@ function getDefaultModel(provider) {
   if (provider === 'openai') {
     return process.env.GPT_MODEL || 'gpt-4o';
   }
-  if (provider === 'gemini') return process.env.GEMINI_MODEL || 'gemini-2.5-flash-preview-05-20';
+  if (provider === 'gemini') return process.env.GEMINI_MODEL || 'gemini-2.0-flash';
   if (provider === 'kimi') return process.env.KIMI_MODEL || 'nvidia/llama-3.1-nemotron-70b-instruct';
   if (provider === 'groq') return process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
   return process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
@@ -184,7 +184,7 @@ export function getCurrentProvider() {
         { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B (Free)' }
       ],
       gemini: [
-        { id: 'gemini-2.5-flash-preview-05-20', name: 'Gemini 2.5 Flash', default: true },
+        { id: 'gemini-2.0-flash', name: 'Gemini 2.5 Flash', default: true },
         { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
         { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' }
       ],
@@ -551,7 +551,7 @@ async function chatWithGemini(messages, options) {
   }
 
   const modelConfig = {
-    model: options.model || 'gemini-2.5-flash-preview-05-20',
+    model: options.model || 'gemini-2.0-flash',
     generationConfig: {
       maxOutputTokens: options.maxTokens,
       temperature: options.temperature
