@@ -46,16 +46,17 @@ function VoiceDictation({ isOpen, onClose }) {
 
     recognition.onresult = (event) => {
       let interim = '';
-      let final = '';
-      for (let i = 0; i < event.results.length; i++) {
+      let newFinal = '';
+      // Only process results starting from resultIndex to avoid re-adding old finals
+      for (let i = event.resultIndex; i < event.results.length; i++) {
         if (event.results[i].isFinal) {
-          final += event.results[i][0].transcript + ' ';
+          newFinal += event.results[i][0].transcript + ' ';
         } else {
           interim += event.results[i][0].transcript;
         }
       }
-      if (final) {
-        setFinalText(prev => prev + final);
+      if (newFinal) {
+        setFinalText(prev => prev + newFinal);
         setTranscript('');
       } else {
         setTranscript(interim);
