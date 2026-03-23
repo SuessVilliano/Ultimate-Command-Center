@@ -1865,6 +1865,74 @@ app.get('/api/tickets', (req, res) => {
   }
 });
 
+// Ticket Summary — for Siri/Shortcuts/Glasses voice
+app.get('/api/tickets/summary', async (req, res) => {
+  try {
+    const ticketsWithAnalysis = db.getAllTicketsWithAnalysis();
+    const tickets = ticketsWithAnalysis.map(t => t.ticket ? JSON.parse(t.ticket) : t);
+    const analysisMap = db.getAllAnalysisMap();
+
+    const open = tickets.filter(t => t.status === 2);
+    const pending = tickets.filter(t => t.status === 3);
+    const waiting = tickets.filter(t => t.status === 6);
+
+    // Count urgent
+    let urgentCount = 0;
+    const urgentSubjects = [];
+    for (const [ticketId, analysis] of Object.entries(analysisMap)) {
+      const parsed = typeof analysis === 'string' ? JSON.parse(analysis) : analysis;
+      if (parsed?.URGENCY_SCORE >= 8) {
+        urgentCount++;
+        const ticket = tickets.find(t => String(t.id) === ticketId);
+        if (ticket) urgentSubjects.push(ticket.subject);
+      }
+    }
+
+    const stats = {
+      total: tickets.filter(t => [2, 3, 6, 7].includes(t.status)).length,
+      open: open.length,
+      pending: pending.length,
+      waiting: waiting.length,
+      urgent: urgentCount,
+    };
+
+    // Build spoken summary
+    let speak = '';
+    if (stats.total === 0) {
+      speak = 'No active tickets. Queue is clear.';
+    } else {
+      speak = `You have ${stats.total} active ticket${stats.total !== 1 ? 's' : ''}. `;
+      if (stats.open > 0) speak += `${stats.open} open. `;
+      if (stats.pending > 0) speak += `${stats.pending} pending. `;
+      if (stats.waiting > 0) speak += `${stats.waiting} waiting on customer. `;
+      if (urgentCount > 0) {
+        speak += `${urgentCount} urgent: ${urgentSubjects.slice(0, 2).join(', ')}${urgentSubjects.length > 2 ? ' and more' : ''}.`;
+      }
+    }
+
+    // If AI summary requested
+    if (req.query.ai === 'true' && stats.total > 0) {
+      try {
+        const ticketList = tickets
+          .filter(t => [2, 3, 6].includes(t.status))
+          .slice(0, 10)
+          .map(t => `#${t.id}: ${t.subject} (${['','','Open','Pending','Resolved','Closed','Waiting'][t.status] || 'Unknown'})`);
+
+        const aiResult = await ai.chat(
+          [{ role: 'user', content: `Summarize these GHL/Freshdesk support tickets in 2-3 sentences. What should I prioritize?\n\n${ticketList.join('\n')}` }],
+          { systemPrompt: 'You are Juno. Be concise — this will be spoken aloud.', maxTokens: 200 }
+        );
+        speak = aiResult.text;
+        stats.aiSummary = aiResult.text;
+      } catch {}
+    }
+
+    res.json({ ...stats, speak });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Store tickets from frontend
 app.post('/api/tickets/sync', (req, res) => {
   try {

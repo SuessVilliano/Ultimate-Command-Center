@@ -750,6 +750,23 @@ function Glasses() {
   const handleVoiceInputExtended = useCallback(async (text) => {
     const lower = text.toLowerCase();
 
+    // Ticket commands
+    if (lower.includes('check tickets') || lower.includes('my tickets') ||
+        lower.includes('ticket summary') || lower.includes('ticket queue') ||
+        lower.includes('support tickets') || lower.includes('ghl tickets')) {
+      setStatus('thinking');
+      setDisplayText('Checking tickets...');
+      try {
+        const r = await fetch(`${API_URL}/api/tickets/summary?ai=true`);
+        if (r.ok) {
+          const data = await r.json();
+          setDisplayText(data.speak);
+          speakResponse(null, data.speak);
+        } else { speakResponse(null, 'Could not check tickets.'); }
+      } catch { speakResponse(null, 'Could not reach ticket system.'); }
+      return;
+    }
+
     // Journal / Trading commands
     if (lower.includes('how am i doing') || lower.includes('my performance') ||
         lower.includes('check my stats') || lower.includes('trading stats')) {
