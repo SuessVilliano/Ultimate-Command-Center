@@ -95,19 +95,30 @@ function Glasses() {
     }).catch(() => setIsConnected(false));
   }, []);
 
-  // ── Speech Recognition Setup ──
+  // ── Speech Recognition Setup (mobile-friendly) ──
   useEffect(() => {
     if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) return;
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
     const recognition = new SpeechRecognition();
-    recognition.continuous = true;
+    // Mobile: use single-shot mode (continuous is broken on mobile Chrome)
+    // Desktop: use continuous mode
+    recognition.continuous = !isMobile;
     recognition.interimResults = true;
     recognition.lang = 'en-US';
+
+    // Track restart attempts to avoid rapid loops
+    let restartCount = 0;
+    let lastRestartTime = 0;
 
     recognition.onresult = (event) => {
       // Don't process speech while AI is speaking (echo prevention)
       if (speakingRef.current) return;
+
+      // Reset restart counter on successful speech
+      restartCount = 0;
 
       let interim = '';
       let newFinal = '';
@@ -132,16 +143,46 @@ function Glasses() {
     recognition.onend = () => {
       // Auto-restart if we should be listening and not speaking
       if (autoListenRef.current && !speakingRef.current) {
+        const now = Date.now();
+        // Prevent rapid restart loops (max 3 restarts within 5 seconds)
+        if (now - lastRestartTime < 5000) {
+          restartCount++;
+        } else {
+          restartCount = 0;
+        }
+        lastRestartTime = now;
+
+        if (restartCount > 3) {
+          // Too many restarts — wait longer before trying again
+          setStatus('listening');
+          setTimeout(() => {
+            restartCount = 0;
+            try { recognition.start(); } catch {}
+          }, 3000);
+          return;
+        }
+
+        // Normal restart — longer delay on mobile
+        const delay = isMobile ? 1000 : 300;
         setTimeout(() => {
           try { recognition.start(); } catch {}
-        }, 300);
+        }, delay);
       } else {
         setStatus('idle');
       }
     };
 
     recognition.onerror = (event) => {
-      if (event.error === 'no-speech' || event.error === 'aborted') return;
+      if (event.error === 'no-speech') {
+        // Normal on mobile — just means silence, will auto-restart via onend
+        return;
+      }
+      if (event.error === 'aborted') return;
+      if (event.error === 'not-allowed') {
+        setDisplayText('Microphone permission needed. Check browser settings.');
+        setStatus('error');
+        return;
+      }
       console.error('Speech error:', event.error);
     };
 
@@ -149,7 +190,11 @@ function Glasses() {
 
     // Auto-start listening
     if (autoListen) {
-      try { recognition.start(); setStatus('listening'); } catch {}
+      // Delay start on mobile to let page fully load
+      const startDelay = isMobile ? 1500 : 100;
+      setTimeout(() => {
+        try { recognition.start(); setStatus('listening'); } catch {}
+      }, startDelay);
     }
 
     return () => {
@@ -250,11 +295,12 @@ function Glasses() {
       speakingRef.current = false;
       setStatus('listening');
 
-      // Resume listening after speaking
+      // Resume listening after speaking — longer delay on mobile
       if (autoListenRef.current) {
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
         setTimeout(() => {
           try { recognitionRef.current?.start(); } catch {}
-        }, 500);
+        }, isMobile ? 1500 : 500);
       }
     }
   }, []);
