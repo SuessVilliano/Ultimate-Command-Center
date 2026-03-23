@@ -39,6 +39,11 @@ function Glasses() {
   const [monitorContext, setMonitorContext] = useState(null); // what tool AI detected
   const [monitorCount, setMonitorCount] = useState(0);
 
+  // Live streaming
+  const [isLive, setIsLive] = useState(false);
+  const [streamDestinations, setStreamDestinations] = useState([]);
+  const [streamDuration, setStreamDuration] = useState(0);
+
   // Settings
   const [autoListen, setAutoListen] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
@@ -53,6 +58,9 @@ function Glasses() {
   const canvasRef = useRef(null);
   const screenVideoRef = useRef(null);
   const screenCanvasRef = useRef(null);
+  const streamWsRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const streamTimerRef = useRef(null);
   const alertIntervalRef = useRef(null);
   const monitorIntervalRef = useRef(null);
   const lastMonitorSpokeRef = useRef(0);
@@ -455,15 +463,161 @@ function Glasses() {
     }
   }, [monitorActive, screenSharing, startScreenShare, captureScreen]);
 
-  // Cleanup monitor on unmount
+  // Cleanup monitor + stream on unmount
   useEffect(() => {
-    return () => clearInterval(monitorIntervalRef.current);
+    return () => {
+      clearInterval(monitorIntervalRef.current);
+      clearInterval(streamTimerRef.current);
+      if (mediaRecorderRef.current?.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+      streamWsRef.current?.close();
+    };
+  }, []);
+
+  // ── Load stream destinations on mount ──
+  useEffect(() => {
+    fetch(`${API_URL}/api/stream/destinations`)
+      .then(r => r.ok ? r.json() : { destinations: [] })
+      .then(data => setStreamDestinations(data.destinations || []))
+      .catch(() => {});
+  }, []);
+
+  // ── Go Live: capture glasses camera + mic → stream to RTMP ──
+  const goLive = useCallback(async () => {
+    if (isLive) return;
+
+    try {
+      // Get camera + mic stream
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: 1280, height: 720 },
+        audio: true,
+      });
+
+      // Tell server to start FFmpeg
+      const startRes = await fetch(`${API_URL}/api/stream/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+
+      if (!startRes.ok) {
+        const err = await startRes.json();
+        stream.getTracks().forEach(t => t.stop());
+        setDisplayText(err.error || 'Failed to start stream.');
+        speakResponse(null, err.error || 'Failed to start stream. Check your streaming destinations.');
+        return;
+      }
+
+      const startData = await startRes.json();
+
+      // Connect WebSocket to send media data
+      const wsUrl = API_URL.replace('http', 'ws') + '/ws/stream';
+      const ws = new WebSocket(wsUrl);
+      streamWsRef.current = ws;
+
+      ws.onopen = () => {
+        // Start MediaRecorder to capture and send chunks
+        const recorder = new MediaRecorder(stream, {
+          mimeType: 'video/webm;codecs=vp8,opus',
+          videoBitsPerSecond: 2500000,
+        });
+        mediaRecorderRef.current = recorder;
+
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+            ws.send(e.data);
+          }
+        };
+
+        recorder.onstop = () => {
+          stream.getTracks().forEach(t => t.stop());
+        };
+
+        // Send chunks every 1 second for low latency
+        recorder.start(1000);
+
+        setIsLive(true);
+        setStreamDuration(0);
+        streamTimerRef.current = setInterval(() => {
+          setStreamDuration(prev => prev + 1);
+        }, 1000);
+
+        const destNames = startData.destinations?.join(', ') || 'your channels';
+        setDisplayText(`LIVE to ${destNames}`);
+        speakResponse(null, `You are now live streaming to ${destNames}.`);
+      };
+
+      ws.onerror = () => {
+        stream.getTracks().forEach(t => t.stop());
+        setDisplayText('Stream connection failed.');
+      };
+
+      ws.onclose = () => {
+        if (isLive) stopLive();
+      };
+
+    } catch (err) {
+      console.error('Go live error:', err);
+      setDisplayText('Could not access camera for streaming.');
+      speakResponse(null, 'Could not access camera. Check permissions.');
+    }
+  }, [isLive, speakResponse]);
+
+  const stopLive = useCallback(async () => {
+    clearInterval(streamTimerRef.current);
+
+    if (mediaRecorderRef.current?.state === 'recording') {
+      mediaRecorderRef.current.stop();
+    }
+    streamWsRef.current?.close();
+
+    try {
+      await fetch(`${API_URL}/api/stream/stop`, { method: 'POST' });
+    } catch {}
+
+    const dur = streamDuration;
+    setIsLive(false);
+    setStreamDuration(0);
+
+    const mins = Math.floor(dur / 60);
+    const secs = dur % 60;
+    const durText = mins > 0 ? `${mins} minutes and ${secs} seconds` : `${secs} seconds`;
+    setDisplayText(`Stream ended. Duration: ${durText}`);
+    speakResponse(null, `Stream ended. You were live for ${durText}.`);
+  }, [streamDuration, speakResponse]);
+
+  const toggleDestination = useCallback(async (id, enabled) => {
+    try {
+      await fetch(`${API_URL}/api/stream/destinations/${id}/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      setStreamDestinations(prev =>
+        prev.map(d => d.id === id ? { ...d, enabled } : d)
+      );
+    } catch {}
   }, []);
 
   // ── Voice commands for screen monitoring ──
   // Extend handleVoiceInput to recognize monitor commands
   const handleVoiceInputExtended = useCallback(async (text) => {
     const lower = text.toLowerCase();
+
+    // Live streaming commands
+    if (lower.includes('go live') || lower.includes('start streaming') ||
+        lower.includes('start the stream') || lower.includes('start broadcast')) {
+      await goLive();
+      return;
+    }
+
+    if (lower.includes('stop stream') || lower.includes('stop live') ||
+        lower.includes('end stream') || lower.includes('stop broadcast') ||
+        lower.includes('end the stream')) {
+      await stopLive();
+      return;
+    }
 
     // Screen monitoring commands
     if (lower.includes('watch my screen') || lower.includes('monitor my screen') ||
@@ -736,6 +890,28 @@ function Glasses() {
                 {screenSharing ? 'Stop Share' : 'Share Screen'}
               </button>
             </div>
+            {/* Streaming destinations */}
+            {streamDestinations.length > 0 && (
+              <div className="pt-2 border-t border-white/10">
+                <span className="text-white/40 text-xs font-medium">Stream Destinations</span>
+                <div className="mt-1 space-y-1">
+                  {streamDestinations.map(d => (
+                    <label key={d.id} className="flex items-center justify-between">
+                      <span className="text-white/50 text-xs">{d.name}</span>
+                      <button
+                        onClick={() => toggleDestination(d.id, !d.enabled)}
+                        disabled={isLive}
+                        className={`px-2 py-0.5 rounded text-xs ${
+                          d.enabled ? 'bg-green-500/20 text-green-400' : 'bg-white/5 text-white/30'
+                        } ${isLive ? 'opacity-50' : ''}`}
+                      >
+                        {d.enabled ? 'ON' : 'OFF'}
+                      </button>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -773,6 +949,26 @@ function Glasses() {
 
         {/* Action buttons */}
         <div className="flex items-center gap-4">
+          {/* GO LIVE button */}
+          <button
+            onClick={isLive ? stopLive : goLive}
+            className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${
+              isLive
+                ? 'bg-red-600 shadow-[0_0_40px_rgba(220,38,38,0.5)] animate-pulse'
+                : 'bg-red-500/20 hover:bg-red-500/40'
+            }`}
+          >
+            {isLive ? (
+              <span className="text-white text-xs font-bold">
+                {Math.floor(streamDuration / 60)}:{String(streamDuration % 60).padStart(2, '0')}
+              </span>
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="text-red-400">
+                <circle cx="12" cy="12" r="8" />
+              </svg>
+            )}
+          </button>
+
           {/* Camera button */}
           <button
             onClick={() => captureAndAnalyze('What do you see? Describe it concisely.')}
@@ -837,6 +1033,11 @@ function Glasses() {
 
         {/* Glasses mode indicator + monitor status */}
         <div className="flex flex-col items-center gap-1">
+          {isLive && (
+            <span className="text-red-500 text-xs font-mono font-bold animate-pulse">
+              LIVE {Math.floor(streamDuration / 60)}:{String(streamDuration % 60).padStart(2, '0')}
+            </span>
+          )}
           {monitorActive && (
             <span className="text-orange-400/60 text-xs font-mono">
               SCREEN MONITOR ACTIVE {monitorContext ? `// ${monitorContext.toUpperCase()}` : ''}

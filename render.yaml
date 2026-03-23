@@ -94,6 +94,21 @@ services:
       # Slack Integration
       - key: SLACK_WEBHOOK_URL
         sync: false
+      # Live Streaming RTMP Destinations
+      - key: VILOUD_RTMP_URL
+        sync: false
+      - key: VILOUD_STREAM_KEY
+        sync: false
+      - key: GOKOLLAB_RTMP_URL
+        sync: false
+      - key: GOKOLLAB_STREAM_KEY
+        sync: false
+      - key: YOUTUBE_STREAM_KEY
+        sync: false
+      - key: TWITCH_STREAM_KEY
+        sync: false
+      - key: FACEBOOK_STREAM_KEY
+        sync: false
       # Scheduler Configuration
       - key: SCHEDULE_ENABLED
         value: "true"

@@ -28,6 +28,7 @@ import * as memory from './lib/conversation-memory.js';
 import * as integrations from './lib/integrations.js';
 import * as agentKnowledge from './lib/agent-knowledge.js';
 import * as contentIngestion from './lib/content-ingestion.js';
+import * as streamRelay from './lib/stream-relay.js';
 import { getVoicePrompt, getChatPrompt, getCommanderPrompt } from './lib/system-prompt.js';
 import * as dailyReport from './lib/daily-report.js';
 import * as emailService from './lib/email-service.js';
@@ -1411,6 +1412,55 @@ If nothing noteworthy, respond: {"detectedTool": "...", "shouldSpeak": false, "i
   } catch (error) {
     console.error('Vision monitor error:', error);
     res.status(500).json({ error: error.message, shouldSpeak: false });
+  }
+});
+
+// ============================================
+// LIVE STREAMING ENDPOINTS
+// ============================================
+
+// Get streaming destinations
+app.get('/api/stream/destinations', (req, res) => {
+  try {
+    res.json({ destinations: streamRelay.getDestinations() });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Toggle a destination on/off
+app.post('/api/stream/destinations/:id/toggle', (req, res) => {
+  try {
+    const { enabled } = req.body;
+    const result = streamRelay.toggleDestination(req.params.id, enabled);
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Get stream status
+app.get('/api/stream/status', (req, res) => {
+  res.json(streamRelay.getStreamStatus());
+});
+
+// Start streaming
+app.post('/api/stream/start', (req, res) => {
+  try {
+    const result = streamRelay.startStream(req.body);
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Stop streaming
+app.post('/api/stream/stop', (req, res) => {
+  try {
+    const result = streamRelay.stopStream();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -5900,7 +5950,12 @@ app.post('/api/porting/generate-loa', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+// Create HTTP server and attach WebSocket for streaming
+import { createServer } from 'http';
+const httpServer = createServer(app);
+streamRelay.initStreamWebSocket(httpServer);
+
+httpServer.listen(PORT, () => {
   const providerInfo = ai.getCurrentProvider();
   const scheduleStatus = scheduler.getScheduleStatus();
 
