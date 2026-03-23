@@ -29,6 +29,8 @@ import * as integrations from './lib/integrations.js';
 import * as agentKnowledge from './lib/agent-knowledge.js';
 import * as contentIngestion from './lib/content-ingestion.js';
 import * as streamRelay from './lib/stream-relay.js';
+import * as telegram from './lib/telegram-bridge.js';
+import { getTelegramPrompt } from './lib/system-prompt.js';
 import { getVoicePrompt, getChatPrompt, getCommanderPrompt } from './lib/system-prompt.js';
 import * as dailyReport from './lib/daily-report.js';
 import * as emailService from './lib/email-service.js';
@@ -85,6 +87,7 @@ try {
   taskSync.initSyncTables();
   briefing.initBriefingTables();
   unifiedInbox.initUnifiedInboxTables();
+  telegram.initTelegram();
   console.log('Database: Initialized');
   console.log('Conversation Memory: Initialized');
   console.log('Task Sync: Initialized');
@@ -1460,6 +1463,190 @@ app.post('/api/stream/stop', (req, res) => {
     const result = streamRelay.stopStream();
     res.json(result);
   } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// TELEGRAM BRIDGE ENDPOINTS
+// ============================================
+
+// Get configured Telegram channels
+app.get('/api/telegram/channels', (req, res) => {
+  res.json({ channels: telegram.getChannels() });
+});
+
+// Update a channel's chat ID
+app.post('/api/telegram/channels/:key', (req, res) => {
+  try {
+    const result = telegram.setChannelId(req.params.key, req.body.chatId);
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Send a message to a Telegram channel
+app.post('/api/telegram/send', async (req, res) => {
+  try {
+    const { channel, message } = req.body;
+    if (!channel || !message) return res.status(400).json({ error: 'channel and message required' });
+
+    const result = await telegram.sendMessage(channel, message);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get new Telegram messages (for glasses readback)
+app.get('/api/telegram/updates', async (req, res) => {
+  try {
+    const messages = await telegram.getUpdates();
+    res.json({ messages, count: messages.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get signal history
+app.get('/api/telegram/signals', (req, res) => {
+  const limit = parseInt(req.query.limit) || 20;
+  res.json({ signals: telegram.getSignalHistory(limit) });
+});
+
+// Voice → Telegram: spoken words get sent as a message, then poll for reply and return audio
+app.post('/api/telegram/voice', async (req, res) => {
+  try {
+    const { message, channel, voice, conversationId: reqConvId, userId } = req.body;
+    if (!message) return res.status(400).json({ error: 'message required' });
+
+    const targetChannel = channel || 'juno';
+    const uid = userId || 'default';
+    const convId = reqConvId || memory.getActiveConversation(uid);
+
+    // Clean up spoken words into a proper text message using AI
+    let cleanedMessage = message;
+    try {
+      const cleanResult = await ai.chat(
+        [{ role: 'user', content: message }],
+        {
+          systemPrompt: getTelegramPrompt(`Target channel: ${targetChannel}`),
+          maxTokens: 256,
+        }
+      );
+      cleanedMessage = cleanResult.text || message;
+    } catch {
+      // Use raw speech if AI cleanup fails
+    }
+
+    // Send to Telegram
+    const sendResult = await telegram.sendMessage(targetChannel, cleanedMessage);
+
+    // Store in conversation
+    memory.addMessage(convId, 'user', `[Telegram → ${targetChannel}] ${cleanedMessage}`);
+
+    // Wait briefly for a reply (3 seconds)
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    const updates = await telegram.getUpdates();
+
+    let replyText = `Message sent to ${sendResult.chat}.`;
+    let audioBase64 = null;
+
+    // Check if we got a reply from the target channel
+    const reply = updates.find(u => u.channelKey === targetChannel);
+    if (reply) {
+      replyText = `${reply.from} says: ${reply.text}`;
+      memory.addMessage(convId, 'assistant', `[Telegram ← ${targetChannel}] ${reply.text}`);
+
+      // Check if reply contains a signal
+      if (reply.isSignal && reply.signal) {
+        const sig = reply.signal;
+        replyText += ` Signal detected: ${sig.direction || ''} ${sig.instrument || ''}.`;
+      }
+    }
+
+    // Generate TTS
+    try {
+      const voiceId = voice || 'en-US-AvaMultilingualNeural';
+      const tts = new MsEdgeTTS();
+      await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
+      const readable = tts.toStream(replyText);
+      const chunks = [];
+      await new Promise((resolve, reject) => {
+        readable.on('data', (chunk) => {
+          if (chunk.audio) chunks.push(chunk.audio);
+          else if (Buffer.isBuffer(chunk)) chunks.push(chunk);
+        });
+        readable.on('end', resolve);
+        readable.on('error', reject);
+      });
+      audioBase64 = Buffer.concat(chunks).toString('base64');
+    } catch {}
+
+    res.json({
+      response: replyText,
+      sent: sendResult,
+      reply: reply || null,
+      audio: audioBase64,
+      audioFormat: 'audio/mp3',
+      conversationId: convId,
+    });
+  } catch (error) {
+    console.error('Telegram voice error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Analyze a signal and optionally forward to Kraken
+app.post('/api/telegram/signal/analyze', async (req, res) => {
+  try {
+    const { signal, autoForward } = req.body;
+    if (!signal) return res.status(400).json({ error: 'signal required' });
+
+    // Get market context
+    let marketContext = '';
+    try {
+      const tickers = await marketData.getBinanceTickers(['BTCUSDT', 'ETHUSDT', 'SOLUSDT']);
+      if (tickers?.length) {
+        marketContext = tickers.map(t =>
+          `${t.symbol}: $${parseFloat(t.lastPrice).toFixed(2)} (${parseFloat(t.priceChangePercent) > 0 ? '+' : ''}${parseFloat(t.priceChangePercent).toFixed(1)}%)`
+        ).join(', ');
+      }
+    } catch {}
+
+    // AI analysis of the signal
+    const analysisResult = await ai.chat(
+      [{ role: 'user', content: `Analyze this trading signal:\n\n${signal.raw || JSON.stringify(signal)}\n\nCurrent market: ${marketContext}\n\nGive a quick risk assessment and whether to take this trade. Be concise.` }],
+      {
+        systemPrompt: 'You are Juno, a trading AI assistant. Analyze signals for risk/reward, confluence with market conditions, and give a clear YES/NO/WAIT recommendation with reasoning in 2-3 sentences.',
+        maxTokens: 256,
+      }
+    );
+
+    const analysis = analysisResult.text;
+
+    // Format for Kraken if requested
+    let krakenResult = null;
+    if (autoForward) {
+      const krakenFormat = telegram.formatForKraken(signal);
+      if (krakenFormat) {
+        try {
+          krakenResult = await telegram.forwardToKraken(krakenFormat.text);
+        } catch (err) {
+          krakenResult = { error: err.message };
+        }
+      }
+    }
+
+    res.json({
+      analysis,
+      signal,
+      krakenFormat: telegram.formatForKraken(signal),
+      forwarded: krakenResult,
+    });
+  } catch (error) {
+    console.error('Signal analysis error:', error);
     res.status(500).json({ error: error.message });
   }
 });

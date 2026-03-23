@@ -94,6 +94,17 @@ services:
       # Slack Integration
       - key: SLACK_WEBHOOK_URL
         sync: false
+      # Telegram Bridge
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_JUNO_CHAT_ID
+        sync: false
+      - key: TELEGRAM_SIGNALS_CHAT_ID
+        sync: false
+      - key: TELEGRAM_KRAKEN_CHAT_ID
+        sync: false
+      - key: TELEGRAM_COMMUNITY_CHAT_ID
+        sync: false
       # Live Streaming RTMP Destinations
       - key: VILOUD_RTMP_URL
         sync: false

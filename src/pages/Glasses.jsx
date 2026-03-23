@@ -600,10 +600,127 @@ function Glasses() {
     } catch {}
   }, []);
 
+  // ── Telegram Bridge Functions ──
+  const sendToTelegram = useCallback(async (channel, message) => {
+    setStatus('thinking');
+    setDisplayText(`Sending to ${channel}...`);
+
+    try {
+      const response = await fetch(`${API_URL}/api/telegram/voice`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message,
+          channel,
+          conversationId,
+          voice: voiceId,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.conversationId) setConversationId(data.conversationId);
+        setDisplayText(data.response);
+        await speakResponse(data.audio, data.response);
+      } else {
+        const err = await response.json();
+        setDisplayText(err.error || 'Failed to send to Telegram.');
+        speakResponse(null, err.error || 'Failed to send to Telegram.');
+      }
+    } catch (err) {
+      setDisplayText('Telegram connection failed.');
+      speakResponse(null, 'Could not connect to Telegram.');
+    }
+  }, [conversationId, voiceId, speakResponse]);
+
+  const checkSignals = useCallback(async () => {
+    setStatus('thinking');
+    setDisplayText('Checking trading signals...');
+
+    try {
+      const response = await fetch(`${API_URL}/api/telegram/signals?limit=5`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.signals?.length > 0) {
+          const latest = data.signals[data.signals.length - 1];
+          const sig = latest.signal;
+          const summary = sig
+            ? `Latest signal: ${sig.direction || 'Unknown'} ${sig.instrument || 'Unknown'}${sig.entry ? ` at ${sig.entry}` : ''}. ${data.signals.length} total signals tracked.`
+            : `${data.signals.length} signals tracked. Latest: ${latest.text?.substring(0, 100)}`;
+          setDisplayText(summary);
+          speakResponse(null, summary);
+        } else {
+          setDisplayText('No signals yet.');
+          speakResponse(null, 'No trading signals detected yet.');
+        }
+      }
+    } catch {
+      setDisplayText('Could not check signals.');
+      speakResponse(null, 'Could not check signals.');
+    }
+  }, [speakResponse]);
+
+  const checkTelegramUpdates = useCallback(async () => {
+    setStatus('thinking');
+    setDisplayText('Checking Telegram...');
+
+    try {
+      const response = await fetch(`${API_URL}/api/telegram/updates`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.count > 0) {
+          const summaries = data.messages.slice(-3).map(m =>
+            `${m.from}: ${m.text?.substring(0, 80)}`
+          );
+          const summary = `${data.count} new message${data.count > 1 ? 's' : ''}. ${summaries.join('. ')}`;
+          setDisplayText(summary);
+          speakResponse(null, summary);
+        } else {
+          setDisplayText('No new messages.');
+          speakResponse(null, 'No new Telegram messages.');
+        }
+      }
+    } catch {
+      speakResponse(null, 'Could not check Telegram.');
+    }
+  }, [speakResponse]);
+
   // ── Voice commands for screen monitoring ──
   // Extend handleVoiceInput to recognize monitor commands
   const handleVoiceInputExtended = useCallback(async (text) => {
     const lower = text.toLowerCase();
+
+    // Telegram commands
+    if (lower.includes('tell juno') || lower.includes('message juno') ||
+        lower.includes('send to juno') || lower.includes('ask juno')) {
+      // Extract the message after the command keyword
+      const junoMsg = text.replace(/^.*(tell|message|send to|ask)\s+juno\s*/i, '').trim() || text;
+      await sendToTelegram('juno', junoMsg);
+      return;
+    }
+
+    if (lower.includes('check signals') || lower.includes('any signals') ||
+        lower.includes('trading signals') || lower.includes('what signals')) {
+      await checkSignals();
+      return;
+    }
+
+    if (lower.includes('check telegram') || lower.includes('any messages') ||
+        lower.includes('telegram updates') || lower.includes('read my messages')) {
+      await checkTelegramUpdates();
+      return;
+    }
+
+    if (lower.startsWith('send to ') || lower.startsWith('message ')) {
+      // "send to [channel] [message]" or "message [channel] [message]"
+      const parts = text.replace(/^(send to|message)\s+/i, '').split(/\s+/);
+      const channel = parts[0]?.toLowerCase();
+      const msg = parts.slice(1).join(' ');
+      if (channel && msg) {
+        await sendToTelegram(channel, msg);
+        return;
+      }
+    }
 
     // Live streaming commands
     if (lower.includes('go live') || lower.includes('start streaming') ||
