@@ -73,11 +73,25 @@ function Glasses() {
   useEffect(() => { autoListenRef.current = autoListen; }, [autoListen]);
   useEffect(() => { statusRef.current = status; }, [status]);
 
-  // ── Health check ──
+  // ── Health check + trigger proactive scan on page load ──
   useEffect(() => {
     fetch(`${API_URL}/health`).then(r => {
       setIsConnected(r.ok);
-      if (r.ok) setDisplayText('Command Center online. Ready.');
+      if (r.ok) {
+        setDisplayText('Command Center online. Ready.');
+        // Run proactive AI check on fresh load
+        fetch(`${API_URL}/api/proactive/check`, { method: 'POST' })
+          .then(r => r.ok ? r.json() : null)
+          .then(data => {
+            if (data?.detectedIssues?.length > 0 || data?.suggestions?.length > 0) {
+              const issueCount = data.detectedIssues?.length || 0;
+              const sugCount = data.suggestions?.length || 0;
+              const summary = `Proactive scan: ${issueCount} issue${issueCount !== 1 ? 's' : ''}, ${sugCount} suggestion${sugCount !== 1 ? 's' : ''} found.`;
+              setAlertQueue(prev => [...prev, summary]);
+            }
+          })
+          .catch(() => {}); // Silent fail — not critical
+      }
     }).catch(() => setIsConnected(false));
   }, []);
 
@@ -985,7 +999,7 @@ function Glasses() {
                 Detected: <span className="text-purple-400">{monitorContext}</span>
               </div>
             )}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <button
                 onClick={checkAlerts}
                 className="flex-1 px-3 py-2 rounded-lg bg-purple-500/20 text-purple-400 text-xs font-medium"
@@ -997,6 +1011,29 @@ function Glasses() {
                 className="flex-1 px-3 py-2 rounded-lg bg-cyan-500/20 text-cyan-400 text-xs font-medium"
               >
                 Briefing
+              </button>
+              <button
+                onClick={async () => {
+                  setDisplayText('Running proactive scan...');
+                  try {
+                    const r = await fetch(`${API_URL}/api/proactive/check`, { method: 'POST' });
+                    if (r.ok) {
+                      const data = await r.json();
+                      const issues = data.detectedIssues?.length || 0;
+                      const sugs = data.suggestions?.length || 0;
+                      const msg = issues > 0 || sugs > 0
+                        ? `Found ${issues} issue${issues !== 1 ? 's' : ''} and ${sugs} suggestion${sugs !== 1 ? 's' : ''}.`
+                        : 'All clear. No issues detected.';
+                      setDisplayText(msg);
+                      speakResponse(null, msg);
+                    } else {
+                      setDisplayText('Scan failed.');
+                    }
+                  } catch { setDisplayText('Scan failed.'); }
+                }}
+                className="flex-1 px-3 py-2 rounded-lg bg-yellow-500/20 text-yellow-400 text-xs font-medium"
+              >
+                AI Scan
               </button>
               <button
                 onClick={screenSharing ? stopScreenShare : startScreenShare}
