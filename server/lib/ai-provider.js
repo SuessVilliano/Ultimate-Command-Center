@@ -334,8 +334,8 @@ function parseProviderError(provider, error) {
  * Get fallback provider order (excluding the failed one)
  */
 function getFallbackProviders(failedProvider) {
-  // Fallback order: free/cheap first, Claude last (most expensive — save for code)
-  const allProviders = ['groq', 'gemini', 'kimi', 'openai', 'claude'];
+  // Fallback order: Gemini first (free + reliable), then others, Claude last (expensive)
+  const allProviders = ['gemini', 'groq', 'kimi', 'openai', 'claude'];
   const availableMap = { claude: !!anthropicClient, openai: !!openaiClient, gemini: !!geminiClient, kimi: !!kimiApiKey, groq: !!groqApiKey };
   return allProviders.filter(p => p !== failedProvider && availableMap[p]);
 }
@@ -392,15 +392,14 @@ export async function chat(messages, options = {}) {
   let provider = options.provider || currentProvider;
   let model = options.model || currentModel;
 
-  // Auto-route to Claude for code tasks if available, otherwise stay on Gemini
+  // Auto-route to Claude for code tasks, Gemini for everything else
   if (!options.provider && isCodeRelated(messages) && anthropicClient) {
     provider = 'claude';
     model = getDefaultModel('claude');
-  } else if (!options.provider) {
-    // Default to cheapest available for non-code
-    const cheap = getCostEffectiveProvider();
-    provider = cheap.provider;
-    model = cheap.model;
+  } else if (!options.provider && geminiClient) {
+    // Default to Gemini (free and reliable) — NOT cheapest rotation
+    provider = 'gemini';
+    model = getDefaultModel('gemini');
   }
   const maxTokens = options.maxTokens || 1024;
   const temperature = options.temperature || 0.7;
@@ -558,9 +557,14 @@ async function chatWithGemini(messages, options) {
     }
   };
 
-  // Use Gemini's native systemInstruction so it persists across all turns
-  if (options.systemPrompt) {
-    modelConfig.systemInstruction = options.systemPrompt;
+  // Try native systemInstruction (newer SDK), fall back to prepending
+  let systemInstruction = options.systemPrompt || '';
+  try {
+    if (systemInstruction) {
+      modelConfig.systemInstruction = systemInstruction;
+    }
+  } catch {
+    // Older SDK version — will prepend to prompt instead
   }
 
   const model = geminiClient.getGenerativeModel(modelConfig);
@@ -577,7 +581,12 @@ async function chatWithGemini(messages, options) {
 
   // Get the last message as the current prompt
   const lastMessage = messages[messages.length - 1];
-  const prompt = lastMessage?.content || '';
+  let prompt = lastMessage?.content || '';
+
+  // If systemInstruction wasn't set in config (older SDK), prepend to prompt
+  if (systemInstruction && !modelConfig.systemInstruction) {
+    prompt = `${systemInstruction}\n\n${prompt}`;
+  }
 
   try {
     const chat = model.startChat({ history });
