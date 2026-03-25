@@ -669,11 +669,16 @@ function ChatWidget({ onNavigate }) {
   const processLocalCommand = (input) => {
     const lower = input.toLowerCase();
 
-    // Full context commands - use commander endpoint
+    // Full context commands - use commander endpoint (which has real ticket/business data)
     const fullContextTriggers = [
       'execution plan', 'summarize tickets', 'ticket summary', 'all tickets',
       'what are my tickets', 'show me tickets', 'ticket overview', 'priorities',
-      'what should i work on', 'my workload', 'support queue', 'urgent tickets'
+      'what should i work on', 'my workload', 'support queue', 'urgent tickets',
+      'ticket', 'tickets', 'freshdesk', 'ghl', 'go high level', 'gohighlevel',
+      'open ticket', 'recent ticket', 'latest ticket', 'new ticket',
+      'how many ticket', 'check ticket', 'my ticket', 'support ticket',
+      'escalat', 'triage', 'queue', 'customer issue', 'client issue',
+      'pending issue', 'open issue', 'unresolved'
     ];
 
     if (fullContextTriggers.some(t => lower.includes(t))) {

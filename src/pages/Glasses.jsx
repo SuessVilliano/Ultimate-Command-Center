@@ -17,7 +17,7 @@ const ALERT_CHECK_INTERVAL = 60000; // Check for alerts every 60s
 const SCREEN_MONITOR_INTERVAL = 15000; // Capture screen every 15s
 const MONITOR_COOLDOWN = 30000; // Don't speak more than once every 30s
 
-function Glasses() {
+function Glasses({ onExit }) {
   // Core state
   const [status, setStatus] = useState('idle'); // idle | listening | thinking | speaking | error
   const [displayText, setDisplayText] = useState('Say something or tap the mic...');
@@ -48,8 +48,19 @@ function Glasses() {
   const [autoListen, setAutoListen] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [voiceId, setVoiceId] = useState(() =>
-    localStorage.getItem('liv8_edge_voice') || 'en-US-AvaMultilingualNeural'
+    localStorage.getItem('liv8_edge_voice') || 'en-US-EmmaMultilingualNeural'
   );
+  const [availableVoices] = useState([
+    { id: 'en-US-EmmaMultilingualNeural', name: 'Emma (Natural, Warm)' },
+    { id: 'en-US-AvaMultilingualNeural', name: 'Ava (Clear, Professional)' },
+    { id: 'en-US-AndrewMultilingualNeural', name: 'Andrew (Deep, Confident)' },
+    { id: 'en-US-BrianMultilingualNeural', name: 'Brian (Friendly)' },
+    { id: 'en-US-AriaNeural', name: 'Aria (Expressive)' },
+    { id: 'en-US-JennyNeural', name: 'Jenny (Conversational)' },
+    { id: 'en-US-GuyNeural', name: 'Guy (Casual)' },
+    { id: 'en-GB-SoniaNeural', name: 'Sonia (British)' },
+    { id: 'en-GB-RyanNeural', name: 'Ryan (British Male)' },
+  ]);
 
   // Refs
   const recognitionRef = useRef(null);
@@ -280,9 +291,17 @@ function Glasses() {
           audio.play().catch(resolve);
         });
       } else if ('speechSynthesis' in window) {
-        // Browser TTS fallback
+        // Browser TTS fallback — pick the best available voice
         const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = 1.1;
+        utterance.rate = 1.05;
+        utterance.pitch = 1.0;
+        const voices = window.speechSynthesis.getVoices();
+        const preferred = voices.find(v => v.name.includes('Samantha')) ||
+          voices.find(v => v.name.includes('Karen')) ||
+          voices.find(v => v.name.includes('Daniel') && v.lang.startsWith('en')) ||
+          voices.find(v => v.name.includes('Google') && v.lang.startsWith('en')) ||
+          voices.find(v => v.lang.startsWith('en'));
+        if (preferred) utterance.voice = preferred;
         await new Promise((resolve) => {
           utterance.onend = resolve;
           utterance.onerror = resolve;
@@ -401,7 +420,7 @@ function Glasses() {
     }
   }, [cameraActive, conversationId, voiceId, speakResponse]);
 
-  // ── Screen Share: Start sharing your computer screen ──
+  // ── Screen Share: Start sharing your computer screen + auto-enable AI monitoring ──
   const startScreenShare = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -412,6 +431,13 @@ function Glasses() {
       if (screenVideoRef.current) {
         screenVideoRef.current.srcObject = stream;
         setScreenSharing(true);
+
+        // Auto-enable AI screen monitoring when sharing starts
+        setMonitorActive(true);
+        clearInterval(monitorIntervalRef.current);
+        monitorIntervalRef.current = setInterval(captureScreen, SCREEN_MONITOR_INTERVAL);
+        setDisplayText('Screen sharing active. AI is watching your screen.');
+        speakResponse(null, 'Screen sharing active. I can now see your screen and will alert you when I notice something important.');
 
         // Detect when user stops sharing
         stream.getVideoTracks()[0].onended = () => {
@@ -424,7 +450,7 @@ function Glasses() {
       console.error('Screen share error:', err);
       setDisplayText('Screen share cancelled or not available.');
     }
-  }, []);
+  }, [captureScreen, speakResponse]);
 
   const stopScreenShare = useCallback(() => {
     if (screenVideoRef.current?.srcObject) {
@@ -834,6 +860,17 @@ function Glasses() {
       }
     }
 
+    // Exit glasses mode
+    if (lower.includes('exit glasses') || lower.includes('go to dashboard') ||
+        lower.includes('go back') || lower.includes('command center') ||
+        lower.includes('exit') || lower.includes('go home')) {
+      if (onExit) {
+        speakResponse(null, 'Returning to Command Center.');
+        setTimeout(() => onExit(), 1500);
+        return;
+      }
+    }
+
     // Live streaming commands
     if (lower.includes('go live') || lower.includes('start streaming') ||
         lower.includes('start the stream') || lower.includes('start broadcast')) {
@@ -1032,9 +1069,21 @@ function Glasses() {
       <canvas ref={canvasRef} className="hidden" />
       <canvas ref={screenCanvasRef} className="hidden" />
 
-      {/* Top bar — status + connection */}
+      {/* Top bar — status + connection + exit */}
       <div className="w-full flex items-center justify-between">
         <div className="flex items-center gap-3">
+          {onExit && (
+            <button
+              onClick={onExit}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all text-white/50 hover:text-white/80"
+              title="Back to Command Center"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M19 12H5M12 19l-7-7 7-7"/>
+              </svg>
+              <span className="text-xs font-mono">EXIT</span>
+            </button>
+          )}
           <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
           <span className="text-white/40 text-xs font-mono">
             {isConnected ? 'CONNECTED' : 'OFFLINE'}
@@ -1097,6 +1146,21 @@ function Glasses() {
                 Detected: <span className="text-purple-400">{monitorContext}</span>
               </div>
             )}
+            <label className="flex flex-col gap-1">
+              <span className="text-white/60 text-sm">Voice</span>
+              <select
+                value={voiceId}
+                onChange={(e) => {
+                  setVoiceId(e.target.value);
+                  localStorage.setItem('liv8_edge_voice', e.target.value);
+                }}
+                className="bg-white/10 text-white/80 text-xs rounded-lg px-2 py-1.5 border border-white/10 outline-none"
+              >
+                {availableVoices.map(v => (
+                  <option key={v.id} value={v.id} className="bg-gray-900">{v.name}</option>
+                ))}
+              </select>
+            </label>
             <div className="flex items-center gap-2 flex-wrap">
               <button
                 onClick={checkAlerts}

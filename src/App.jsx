@@ -103,7 +103,7 @@ function AppContent() {
       case 'admin':
         return <AdminPanel />;
       case 'glasses':
-        return <Glasses />;
+        return <Glasses onExit={() => setActivePage('dashboard')} />;
       default:
         return <Dashboard />;
     }
@@ -111,7 +111,7 @@ function AppContent() {
 
   // Glasses mode is full-screen, no sidebar/chrome
   if (activePage === 'glasses') {
-    return <Glasses />;
+    return <Glasses onExit={() => setActivePage('dashboard')} />;
   }
 
   return (

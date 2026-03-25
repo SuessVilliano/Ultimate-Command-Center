@@ -1077,7 +1077,7 @@ app.post('/api/tts/speak', async (req, res) => {
     const { text, voice, rate, pitch, volume } = req.body;
     if (!text) return res.status(400).json({ error: 'Text is required' });
 
-    const voiceId = voice || 'en-US-AvaMultilingualNeural';
+    const voiceId = voice || 'en-US-EmmaMultilingualNeural';
     const tts = new MsEdgeTTS();
     await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
 
@@ -1144,8 +1144,27 @@ app.post('/api/voice', async (req, res) => {
     // Store user message
     memory.addMessage(convId, 'user', message);
 
+    // Build real-time context for voice responses
+    let liveContext = memoryContext || '';
+    try {
+      const ticketsWithAnalysis = db.getAllTicketsWithAnalysis();
+      const tickets = ticketsWithAnalysis.map(t => t.ticket ? JSON.parse(t.ticket) : t);
+      const active = tickets.filter(t => [2, 3, 6, 7].includes(t.status));
+      if (active.length > 0) {
+        const statusLabels = { 2: 'Open', 3: 'Pending', 6: 'Waiting on Customer', 7: 'On Hold' };
+        const ticketList = active.slice(0, 15).map(t =>
+          `#${t.id}: ${t.subject} (${statusLabels[t.status] || 'Unknown'}) - ${t.source || 'Freshdesk'}`
+        ).join('\n');
+        liveContext += `\n\nREAL TICKET DATA (from Freshdesk/GHL — use ONLY this data, never invent ticket numbers):\n${active.length} active tickets:\n${ticketList}`;
+      } else {
+        liveContext += '\n\nTICKET STATUS: No active tickets in the queue right now.';
+      }
+    } catch (e) {
+      console.warn('Could not load ticket context for voice:', e.message);
+    }
+
     // Use voice-optimized prompt (short answers)
-    const systemPrompt = getVoicePrompt(memoryContext);
+    const systemPrompt = getVoicePrompt(liveContext);
 
     const result = await ai.chat(messages, { systemPrompt, maxTokens: 512 });
 
@@ -1158,7 +1177,7 @@ app.post('/api/voice', async (req, res) => {
     // Generate TTS audio
     let audioBase64 = null;
     try {
-      const voiceId = voice || 'en-US-AvaMultilingualNeural';
+      const voiceId = voice || 'en-US-EmmaMultilingualNeural';
       const tts = new MsEdgeTTS();
       await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
       const readable = tts.toStream(result.text);
@@ -1222,7 +1241,7 @@ app.post('/api/vision', async (req, res) => {
     // Generate TTS audio
     let audioBase64 = null;
     try {
-      const voiceId = voice || 'en-US-AvaMultilingualNeural';
+      const voiceId = voice || 'en-US-EmmaMultilingualNeural';
       const tts = new MsEdgeTTS();
       await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
       const readable = tts.toStream(result.text);
@@ -1385,7 +1404,7 @@ If nothing noteworthy, respond: {"detectedTool": "...", "shouldSpeak": false, "i
 
       // Generate TTS
       try {
-        const voiceId = voice || 'en-US-AvaMultilingualNeural';
+        const voiceId = voice || 'en-US-EmmaMultilingualNeural';
         const tts = new MsEdgeTTS();
         await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
         const readable = tts.toStream(parsed.insight);
@@ -1569,7 +1588,7 @@ app.post('/api/telegram/voice', async (req, res) => {
 
     // Generate TTS
     try {
-      const voiceId = voice || 'en-US-AvaMultilingualNeural';
+      const voiceId = voice || 'en-US-EmmaMultilingualNeural';
       const tts = new MsEdgeTTS();
       await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
       const readable = tts.toStream(replyText);
@@ -1818,7 +1837,24 @@ app.post('/api/chat', async (req, res) => {
       { role: 'user', content: message }
     ];
 
-    const defaultSystemPrompt = getChatPrompt(memoryContext);
+    // Enrich system prompt with real ticket data
+    let enrichedContext = memoryContext || '';
+    try {
+      const ticketsWithAnalysis = db.getAllTicketsWithAnalysis();
+      const tickets = ticketsWithAnalysis.map(t => t.ticket ? JSON.parse(t.ticket) : t);
+      const active = tickets.filter(t => [2, 3, 6, 7].includes(t.status));
+      if (active.length > 0) {
+        const statusLabels = { 2: 'Open', 3: 'Pending', 6: 'Waiting on Customer', 7: 'On Hold' };
+        const ticketList = active.slice(0, 15).map(t =>
+          `#${t.id}: ${t.subject} (${statusLabels[t.status] || 'Unknown'})`
+        ).join('\n');
+        enrichedContext += `\n\nREAL TICKET DATA (use ONLY this data, never fabricate ticket info):\n${active.length} active tickets:\n${ticketList}`;
+      } else {
+        enrichedContext += '\n\nTICKET STATUS: No active tickets in the queue.';
+      }
+    } catch (e) {}
+
+    const defaultSystemPrompt = getChatPrompt(enrichedContext);
 
     // Store user message
     memory.addMessage(convId, 'user', message, { agentId, context });
