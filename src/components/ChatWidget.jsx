@@ -678,7 +678,9 @@ function ChatWidget({ onNavigate }) {
       'open ticket', 'recent ticket', 'latest ticket', 'new ticket',
       'how many ticket', 'check ticket', 'my ticket', 'support ticket',
       'escalat', 'triage', 'queue', 'customer issue', 'client issue',
-      'pending issue', 'open issue', 'unresolved'
+      'pending issue', 'open issue', 'unresolved',
+      'signal', 'signals', 'trading signal', 'tradingview', 'copygram',
+      'trade setup', 'entry', 'stop loss', 'take profit'
     ];
 
     if (fullContextTriggers.some(t => lower.includes(t))) {

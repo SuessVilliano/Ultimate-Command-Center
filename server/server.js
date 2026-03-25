@@ -1163,6 +1163,23 @@ app.post('/api/voice', async (req, res) => {
       console.warn('Could not load ticket context for voice:', e.message);
     }
 
+    // Include real trading signal data
+    try {
+      const signals = telegram.getSignalHistory(10);
+      if (signals.length > 0) {
+        const signalList = signals.slice(-10).map(s => {
+          const sig = s.signal || {};
+          const time = s.date ? new Date(s.date).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Unknown time';
+          return `[${time}] ${sig.direction || '?'} ${sig.instrument || '?'}${sig.entry ? ` @ ${sig.entry}` : ''}${sig.stopLoss ? ` SL: ${sig.stopLoss}` : ''}${sig.targets?.length ? ` TP: ${sig.targets.join(', ')}` : ''} — Raw: "${(s.text || s.signal?.raw || '').substring(0, 120)}"`;
+        }).join('\n');
+        liveContext += `\n\nREAL TRADING SIGNALS (from TradingView via Copygram → Telegram — use ONLY this data, NEVER invent signals, prices, or trade setups):\n${signals.length} signals tracked:\n${signalList}`;
+      } else {
+        liveContext += '\n\nTRADING SIGNALS: No signals have been received yet. Do NOT make up any signal data.';
+      }
+    } catch (e) {
+      console.warn('Could not load signal context for voice:', e.message);
+    }
+
     // Use voice-optimized prompt (short answers)
     const systemPrompt = getVoicePrompt(liveContext);
 
@@ -1851,6 +1868,21 @@ app.post('/api/chat', async (req, res) => {
         enrichedContext += `\n\nREAL TICKET DATA (use ONLY this data, never fabricate ticket info):\n${active.length} active tickets:\n${ticketList}`;
       } else {
         enrichedContext += '\n\nTICKET STATUS: No active tickets in the queue.';
+      }
+    } catch (e) {}
+
+    // Enrich with real trading signal data
+    try {
+      const signals = telegram.getSignalHistory(10);
+      if (signals.length > 0) {
+        const signalList = signals.slice(-10).map(s => {
+          const sig = s.signal || {};
+          const time = s.date ? new Date(s.date).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Unknown time';
+          return `[${time}] ${sig.direction || '?'} ${sig.instrument || '?'}${sig.entry ? ` @ ${sig.entry}` : ''}${sig.stopLoss ? ` SL: ${sig.stopLoss}` : ''}${sig.targets?.length ? ` TP: ${sig.targets.join(', ')}` : ''} — Raw: "${(s.text || s.signal?.raw || '').substring(0, 120)}"`;
+        }).join('\n');
+        enrichedContext += `\n\nREAL TRADING SIGNALS (from TradingView via Copygram — ONLY reference this data, NEVER fabricate signals):\n${signals.length} signals:\n${signalList}`;
+      } else {
+        enrichedContext += '\n\nTRADING SIGNALS: No signals received yet. Do NOT invent signal data.';
       }
     } catch (e) {}
 
