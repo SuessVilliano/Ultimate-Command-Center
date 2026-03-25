@@ -131,12 +131,14 @@ function Trading() {
   };
 
   const formatPrice = (price) => {
-    if (!price || isNaN(price)) return '$0.00';
+    if (price === null || price === undefined || isNaN(Number(price))) return '$0.00';
+    const p = Number(price);
+    const decimals = p > 100 ? 0 : p > 1 ? 2 : p > 0.01 ? 4 : 6;
     return new Intl.NumberFormat('en-US', {
       style: 'currency', currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: price > 100 ? 0 : 2
-    }).format(price);
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals
+    }).format(p);
   };
 
   const formatChange = (change) => {
