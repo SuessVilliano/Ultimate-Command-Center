@@ -17,7 +17,47 @@ const ALERT_CHECK_INTERVAL = 60000; // Check for alerts every 60s
 const SCREEN_MONITOR_INTERVAL = 15000; // Capture screen every 15s
 const MONITOR_COOLDOWN = 30000; // Don't speak more than once every 30s
 
-function Glasses({ onExit }) {
+// Error boundary
+class GlassesErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="fixed inset-0 bg-black flex flex-col items-center justify-center p-6">
+          <p className="text-red-400 text-lg mb-4">Glasses Mode encountered an error</p>
+          <pre className="text-xs text-red-300 bg-white/5 p-3 rounded-lg mb-4 max-w-md overflow-x-auto">
+            {this.state.error?.message || 'Unknown error'}
+          </pre>
+          <div className="flex gap-3">
+            <button
+              onClick={() => this.setState({ hasError: false, error: null })}
+              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-500"
+            >
+              Retry
+            </button>
+            {this.props.onExit && (
+              <button
+                onClick={this.props.onExit}
+                className="px-4 py-2 bg-white/10 text-white rounded-lg hover:bg-white/20"
+              >
+                Back to Dashboard
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function GlassesInner({ onExit }) {
   // Core state
   const [status, setStatus] = useState('idle'); // idle | listening | thinking | speaking | error
   const [displayText, setDisplayText] = useState('Say something or tap the mic...');
@@ -420,6 +460,9 @@ function Glasses({ onExit }) {
     }
   }, [cameraActive, conversationId, voiceId, speakResponse]);
 
+  // Ref to hold captureScreen for use in startScreenShare (avoids circular deps)
+  const captureScreenRef = useRef(null);
+
   // ── Screen Share: Start sharing your computer screen + auto-enable AI monitoring ──
   const startScreenShare = useCallback(async () => {
     try {
@@ -435,7 +478,9 @@ function Glasses({ onExit }) {
         // Auto-enable AI screen monitoring when sharing starts
         setMonitorActive(true);
         clearInterval(monitorIntervalRef.current);
-        monitorIntervalRef.current = setInterval(captureScreen, SCREEN_MONITOR_INTERVAL);
+        monitorIntervalRef.current = setInterval(() => {
+          captureScreenRef.current?.();
+        }, SCREEN_MONITOR_INTERVAL);
         setDisplayText('Screen sharing active. AI is watching your screen.');
         speakResponse(null, 'Screen sharing active. I can now see your screen and will alert you when I notice something important.');
 
@@ -450,7 +495,7 @@ function Glasses({ onExit }) {
       console.error('Screen share error:', err);
       setDisplayText('Screen share cancelled or not available.');
     }
-  }, [captureScreen, speakResponse]);
+  }, [speakResponse]);
 
   const stopScreenShare = useCallback(() => {
     if (screenVideoRef.current?.srcObject) {
@@ -529,6 +574,9 @@ function Glasses({ onExit }) {
       console.error('Monitor capture error:', err);
     }
   }, [conversationId, voiceId, speakResponse, getFrameHash]);
+
+  // Keep captureScreen ref in sync for startScreenShare
+  useEffect(() => { captureScreenRef.current = captureScreen; }, [captureScreen]);
 
   // ── Toggle screen monitor on/off ──
   const toggleMonitor = useCallback(() => {
@@ -1365,6 +1413,14 @@ function Glasses({ onExit }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function Glasses({ onExit }) {
+  return (
+    <GlassesErrorBoundary onExit={onExit}>
+      <GlassesInner onExit={onExit} />
+    </GlassesErrorBoundary>
   );
 }
 

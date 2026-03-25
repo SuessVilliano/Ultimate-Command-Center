@@ -79,15 +79,20 @@ function Trading() {
 
       const [overviewResult, newsResult] = results;
 
-      if (overviewResult.status === 'fulfilled') {
+      if (overviewResult.status === 'fulfilled' && overviewResult.value) {
         const overview = overviewResult.value;
         setMarketOverview(overview);
-        if (overview.crypto) setCryptoData(overview.crypto);
-        if (overview.movers) setMovers(overview.movers);
+        // Defensive: ensure crypto is an object, not array or null
+        if (overview.crypto && typeof overview.crypto === 'object' && !Array.isArray(overview.crypto)) {
+          setCryptoData(overview.crypto);
+        }
+        if (overview.movers && typeof overview.movers === 'object') {
+          setMovers(overview.movers);
+        }
       }
 
-      if (newsResult.status === 'fulfilled') {
-        setMarketNews(newsResult.value.news || []);
+      if (newsResult.status === 'fulfilled' && newsResult.value) {
+        setMarketNews(Array.isArray(newsResult.value.news) ? newsResult.value.news : []);
       }
 
       setLastUpdate(new Date());
@@ -352,7 +357,8 @@ function Trading() {
                           </tr>
                         </thead>
                         <tbody>
-                          {Object.entries(cryptoData).map(([symbol, data]) => {
+                          {Object.entries(cryptoData || {}).map(([symbol, data]) => {
+                            if (!data || typeof data !== 'object') return null;
                             const isPositive = (data.change24h || 0) >= 0;
                             return (
                               <tr key={symbol} className={`border-t ${isDark ? 'border-purple-900/10 hover:bg-white/5' : 'border-gray-100 hover:bg-gray-50'}`}>
