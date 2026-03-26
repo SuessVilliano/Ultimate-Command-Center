@@ -31,7 +31,8 @@ import {
   X,
   Upload,
   FileText,
-  Trash2
+  Trash2,
+  Download
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -220,6 +221,9 @@ function Tickets() {
   const [sopTextTitle, setSopTextTitle] = useState('');
   const [sopTextContent, setSopTextContent] = useState('');
   const [sopMessage, setSopMessage] = useState({ type: '', text: '' });
+  // Freshdesk canned response extraction state
+  const [extractingCanned, setExtractingCanned] = useState(false);
+  const [extractionResult, setExtractionResult] = useState(null);
 
   // Check AI server status and load persisted data
   const checkAiServer = async () => {
@@ -463,6 +467,54 @@ function Tickets() {
       }
     } catch (err) {
       setSopMessage({ type: 'error', text: 'Failed to delete SOP' });
+    }
+  };
+
+  // Extract canned responses from Freshdesk ticket history
+  const extractCannedFromFreshdesk = async () => {
+    const domain = freshdeskDomain || localStorage.getItem(STORAGE_KEYS.FRESHDESK_DOMAIN);
+    const apiKey = freshdeskApiKey || localStorage.getItem(STORAGE_KEYS.FRESHDESK_API_KEY);
+    if (!domain || !apiKey) {
+      setExtractionResult({ type: 'error', message: 'Configure Freshdesk credentials first (Freshdesk tab).' });
+      return;
+    }
+
+    setExtractingCanned(true);
+    setExtractionResult(null);
+
+    try {
+      const integrations = aiService.getIntegrations();
+      const agentId = integrations?.freshdesk?.agentId || '155014160586';
+
+      const response = await fetch(`${AI_SERVER_URL}/api/freshdesk/extract-canned-responses`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ domain, apiKey, agentId })
+      });
+
+      const data = await response.json();
+
+      if (data.success && data.cannedResponses) {
+        // Merge with existing canned responses
+        const existing = localStorage.getItem('liv8_canned_responses') || '';
+        const merged = existing
+          ? `${existing}\n\n=== AUTO-EXTRACTED FROM FRESHDESK (${new Date().toLocaleDateString()}) ===\n\n${data.cannedResponses}`
+          : data.cannedResponses;
+        localStorage.setItem('liv8_canned_responses', merged);
+
+        setExtractionResult({
+          type: 'success',
+          message: data.message,
+          styleProfile: data.styleProfile,
+          categories: data.categories
+        });
+      } else {
+        setExtractionResult({ type: 'error', message: data.message || 'No responses could be extracted.' });
+      }
+    } catch (err) {
+      setExtractionResult({ type: 'error', message: `Failed to connect to AI server: ${err.message}` });
+    } finally {
+      setExtractingCanned(false);
     }
   };
 
@@ -1940,6 +1992,73 @@ function Tickets() {
                       <strong>How it works:</strong> Your signature is appended to every AI response. Your canned responses teach the AI your writing style — the more examples you provide, the more accurately the AI will match your voice. The full conversation thread is also sent so the AI responds to the latest message, not just the ticket description.
                     </p>
                   </div>
+
+                  {/* Auto-learn from Freshdesk */}
+                  <div className={`p-4 rounded-lg border ${isDark ? 'bg-blue-500/10 border-blue-500/30' : 'bg-blue-50 border-blue-200'}`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div>
+                        <p className={`text-sm font-medium ${isDark ? 'text-blue-300' : 'text-blue-700'}`}>
+                          Auto-Learn from Freshdesk Tickets
+                        </p>
+                        <p className={`text-xs mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                          Analyze your resolved/closed tickets to extract your writing style, personality, and generate canned response templates automatically.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={extractCannedFromFreshdesk}
+                      disabled={extractingCanned || aiServerStatus !== 'online'}
+                      className={`mt-2 w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${
+                        extractingCanned
+                          ? 'bg-blue-500/30 text-blue-300 cursor-wait'
+                          : aiServerStatus !== 'online'
+                          ? 'bg-gray-500/20 text-gray-500 cursor-not-allowed'
+                          : isDark
+                          ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                          : 'bg-blue-600 hover:bg-blue-700 text-white'
+                      }`}
+                    >
+                      {extractingCanned ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          Analyzing your tickets... (this may take a minute)
+                        </>
+                      ) : (
+                        <>
+                          <Download className="w-4 h-4" />
+                          Learn My Style from Freshdesk Tickets
+                        </>
+                      )}
+                    </button>
+
+                    {extractionResult && (
+                      <div className={`mt-3 p-3 rounded-lg text-sm ${
+                        extractionResult.type === 'success'
+                          ? isDark ? 'bg-green-500/20 text-green-300' : 'bg-green-50 text-green-700'
+                          : isDark ? 'bg-red-500/20 text-red-300' : 'bg-red-50 text-red-700'
+                      }`}>
+                        <p>{extractionResult.message}</p>
+                        {extractionResult.styleProfile && (
+                          <details className="mt-2">
+                            <summary className="cursor-pointer font-medium">Your Writing Style Profile</summary>
+                            <pre className={`mt-2 text-xs whitespace-pre-wrap ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
+                              {extractionResult.styleProfile}
+                            </pre>
+                          </details>
+                        )}
+                        {extractionResult.categories && extractionResult.categories.length > 0 && (
+                          <p className="mt-1 text-xs">
+                            Categories covered: {extractionResult.categories.join(', ')}
+                          </p>
+                        )}
+                        {extractionResult.type === 'success' && (
+                          <p className="mt-2 text-xs font-medium">
+                            Canned responses have been added to the text box above. The AI will now use your writing style automatically.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </>
               )}
 
@@ -2069,6 +2188,12 @@ function Tickets() {
                   <div className={`p-3 rounded-lg ${isDark ? 'bg-green-500/10 border border-green-500/20' : 'bg-green-50'}`}>
                     <p className={`text-xs ${isDark ? 'text-green-400' : 'text-green-700'}`}>
                       SOPs are automatically injected into all AI ticket analyses and response generation. Agents will follow your protocols and rules.
+                    </p>
+                    <p className={`text-xs mt-2 ${isDark ? 'text-green-300/70' : 'text-green-600'}`}>
+                      <strong>Best formats for AI access:</strong> PDF, TXT, MD, CSV, JSON (text is fully extracted). DOCX files are also supported. For best results, use PDF or paste text directly.
+                    </p>
+                    <p className={`text-xs mt-1 ${isDark ? 'text-yellow-400/70' : 'text-yellow-600'}`}>
+                      <strong>Note:</strong> XLSX, PPT, and image files cannot be text-extracted yet. Re-upload as PDF or paste the content as text for full AI access.
                     </p>
                   </div>
                 </>

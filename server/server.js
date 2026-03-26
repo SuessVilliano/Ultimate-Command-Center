@@ -368,18 +368,25 @@ app.get('/api/sop', (req, res) => {
 app.get('/api/sop/content', (req, res) => {
   try {
     const sops = JSON.parse(db.getSetting('sop_documents', '[]'));
-    // Combine all SOP content for AI context (limit to 8000 chars total)
+    // Combine all SOP content for AI context (limit to 12000 chars total)
     let combined = '';
+    let unparsedFiles = [];
     for (const sop of sops) {
       const sopContent = sop.content || '';
-      if (combined.length + sopContent.length < 8000) {
+      // Flag files that weren't actually parsed
+      if (sopContent.startsWith('[Word Document:') || sopContent.startsWith('[Excel Spreadsheet:') ||
+          sopContent.startsWith('[PowerPoint Presentation:') || sopContent.startsWith('[Image File:')) {
+        unparsedFiles.push(sop.title);
+        continue;
+      }
+      if (combined.length + sopContent.length < 12000) {
         combined += `\n--- ${sop.title} ---\n${sopContent}\n`;
       } else {
-        combined += `\n--- ${sop.title} (truncated) ---\n${sopContent.substring(0, 2000)}\n`;
+        combined += `\n--- ${sop.title} (truncated) ---\n${sopContent.substring(0, 3000)}\n`;
         break;
       }
     }
-    res.json({ content: combined, sopCount: sops.length });
+    res.json({ content: combined, sopCount: sops.length, unparsedFiles });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -392,6 +399,231 @@ app.delete('/api/sop/:sopId', (req, res) => {
     const filtered = sops.filter(s => s.id !== req.params.sopId);
     db.setSetting('sop_documents', JSON.stringify(filtered));
     res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// FRESHDESK CANNED RESPONSE EXTRACTION
+// ============================================
+
+// Extract agent writing style & canned responses from resolved Freshdesk tickets
+app.post('/api/freshdesk/extract-canned-responses', async (req, res) => {
+  try {
+    const { domain, apiKey, agentId } = req.body;
+
+    if (!domain || !apiKey) {
+      return res.status(400).json({ error: 'Freshdesk domain and API key are required' });
+    }
+
+    const authHeader = Buffer.from(`${apiKey}:X`).toString('base64');
+    const targetAgentId = agentId || process.env.FRESHDESK_AGENT_ID;
+
+    // Fetch resolved + closed tickets for this agent
+    const fetchPages = async (status) => {
+      let results = [];
+      let page = 1;
+      while (page <= 3) { // Limit to 3 pages (90 tickets) per status
+        try {
+          let url;
+          if (targetAgentId) {
+            url = `https://${domain}.freshdesk.com/api/v2/search/tickets?query="agent_id:${targetAgentId} AND status:${status}"&page=${page}`;
+          } else {
+            url = `https://${domain}.freshdesk.com/api/v2/search/tickets?query="status:${status}"&page=${page}`;
+          }
+          const response = await fetch(url, {
+            headers: { 'Authorization': `Basic ${authHeader}`, 'Content-Type': 'application/json' }
+          });
+          if (!response.ok) break;
+          const data = await response.json();
+          const tickets = data.results || [];
+          results = [...results, ...tickets];
+          if (tickets.length < 30) break;
+          page++;
+          await new Promise(r => setTimeout(r, 500)); // Rate limit
+        } catch (e) { break; }
+      }
+      return results;
+    };
+
+    // Fetch resolved (4) and closed (5) tickets
+    const [resolved, closed] = await Promise.all([fetchPages(4), fetchPages(5)]);
+    const allTickets = [...resolved, ...closed];
+
+    if (allTickets.length === 0) {
+      return res.json({
+        success: false,
+        message: 'No resolved/closed tickets found for this agent. Make sure your Freshdesk Agent ID is correct.',
+        cannedResponses: '',
+        styleProfile: null,
+        ticketsAnalyzed: 0
+      });
+    }
+
+    // Fetch conversations for up to 30 tickets (most recent first, for speed)
+    const sortedTickets = allTickets.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)).slice(0, 30);
+
+    const agentResponses = [];
+    for (const ticket of sortedTickets) {
+      try {
+        const convResponse = await fetch(
+          `https://${domain}.freshdesk.com/api/v2/tickets/${ticket.id}/conversations`,
+          { headers: { 'Authorization': `Basic ${authHeader}`, 'Content-Type': 'application/json' } }
+        );
+        if (!convResponse.ok) continue;
+        const conversations = await convResponse.json();
+
+        // Extract outgoing (agent) replies
+        const agentReplies = conversations.filter(c => c.incoming === false);
+        for (const reply of agentReplies) {
+          const body = (reply.body_text || reply.body || '')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          if (body.length > 50 && body.length < 5000) {
+            agentResponses.push({
+              ticketSubject: ticket.subject,
+              category: knowledgeBuilder.categorizeTicket(ticket.subject, ticket.description_text || ''),
+              response: body
+            });
+          }
+        }
+        await new Promise(r => setTimeout(r, 300)); // Rate limit
+      } catch (e) {
+        console.log(`Could not fetch conversations for ticket ${ticket.id}`);
+      }
+    }
+
+    if (agentResponses.length === 0) {
+      return res.json({
+        success: false,
+        message: 'Found tickets but could not extract agent responses. The agent may not have replied to these tickets.',
+        cannedResponses: '',
+        styleProfile: null,
+        ticketsAnalyzed: sortedTickets.length
+      });
+    }
+
+    // Use AI to analyze writing style and generate canned responses
+    const sampleResponses = agentResponses
+      .slice(0, 20) // Limit to 20 best examples
+      .map((r, i) => `--- Example ${i + 1} (${r.category}: ${r.ticketSubject}) ---\n${r.response.substring(0, 800)}`)
+      .join('\n\n');
+
+    let styleProfile = null;
+    let generatedCanned = '';
+
+    try {
+      const analysisPrompt = `Analyze the following real support agent responses and extract their writing personality, tone, and style patterns. Then generate a set of canned response templates that perfectly match this agent's voice.
+
+AGENT'S ACTUAL RESPONSES:
+${sampleResponses}
+
+Respond in this EXACT format (plain text, no JSON):
+
+=== STYLE PROFILE ===
+Tone: [describe their tone - formal/casual/friendly/etc]
+Greeting style: [how they open emails]
+Sign-off style: [how they close emails]
+Key phrases: [list 5-10 phrases they commonly use]
+Personality traits: [3-5 traits visible in their writing]
+
+=== CANNED RESPONSES ===
+
+--- Greeting / Opening ---
+[Write 2-3 greeting templates matching their style]
+
+--- Acknowledging Issues ---
+[Write 2-3 templates for acknowledging customer problems in their style]
+
+--- Providing Solutions ---
+[Write 2-3 solution templates in their style]
+
+--- Escalation / Follow-up ---
+[Write 2-3 templates for when they need to escalate or follow up]
+
+--- Closing / Sign-off ---
+[Write 2-3 closing templates matching their style]
+
+--- Common Scenario: Account/Access Issues ---
+[Write a full response template for access/login issues in their style]
+
+--- Common Scenario: Technical Troubleshooting ---
+[Write a full response template for technical issues in their style]
+
+--- Common Scenario: Billing/Payment ---
+[Write a full response template for billing questions in their style]
+
+IMPORTANT: Match the EXACT tone, vocabulary, sentence structure, and personality of the original responses. Do NOT make them more formal or generic — preserve their authentic voice.`;
+
+      const result = await ai.chat([{ role: 'user', content: analysisPrompt }], {
+        maxTokens: 3000,
+        agentId: 'style-analyzer'
+      });
+
+      const fullText = result.text || '';
+
+      // Extract style profile
+      const profileMatch = fullText.match(/=== STYLE PROFILE ===([\s\S]*?)(?:=== CANNED|$)/);
+      if (profileMatch) {
+        styleProfile = profileMatch[1].trim();
+      }
+
+      // Extract canned responses
+      const cannedMatch = fullText.match(/=== CANNED RESPONSES ===([\s\S]*)/);
+      if (cannedMatch) {
+        generatedCanned = cannedMatch[1].trim();
+      } else {
+        generatedCanned = fullText; // Fallback: use the full response
+      }
+    } catch (aiError) {
+      console.error('AI analysis failed, using raw responses as canned examples:', aiError.message);
+      // Fallback: just use the best agent responses as-is
+      generatedCanned = agentResponses
+        .slice(0, 10)
+        .map((r, i) => `--- ${r.category}: ${r.ticketSubject} ---\n${r.response.substring(0, 1000)}`)
+        .join('\n\n');
+    }
+
+    // Store the generated canned responses in the database for persistence
+    db.setSetting('auto_canned_responses', generatedCanned);
+    if (styleProfile) {
+      db.setSetting('agent_style_profile', styleProfile);
+    }
+    db.setSetting('canned_responses_extracted_at', new Date().toISOString());
+    db.setSetting('canned_responses_ticket_count', String(agentResponses.length));
+
+    res.json({
+      success: true,
+      message: `Analyzed ${agentResponses.length} responses from ${sortedTickets.length} tickets. Writing style extracted and canned responses generated.`,
+      cannedResponses: generatedCanned,
+      styleProfile,
+      ticketsAnalyzed: sortedTickets.length,
+      responsesExtracted: agentResponses.length,
+      categories: [...new Set(agentResponses.map(r => r.category))]
+    });
+
+  } catch (error) {
+    console.error('Canned response extraction error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get previously extracted canned responses
+app.get('/api/freshdesk/canned-responses', (req, res) => {
+  try {
+    const cannedResponses = db.getSetting('auto_canned_responses', '');
+    const styleProfile = db.getSetting('agent_style_profile', '');
+    const extractedAt = db.getSetting('canned_responses_extracted_at', '');
+    const ticketCount = db.getSetting('canned_responses_ticket_count', '0');
+
+    res.json({
+      cannedResponses,
+      styleProfile,
+      extractedAt,
+      ticketCount: parseInt(ticketCount)
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

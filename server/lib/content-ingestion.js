@@ -12,6 +12,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
+import { execSync } from 'child_process';
 import pdfParse from 'pdf-parse';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -167,7 +168,36 @@ export async function parseDocument(filePath, originalName) {
 
       case '.doc':
       case '.docx':
-        content = `[Word Document: ${fileName}]\n\nNote: Word document content extraction requires additional processing. The file has been stored for reference.`;
+        try {
+          // DOCX files are ZIP archives — extract text from word/document.xml
+          const tmpDir = path.join(uploadsDir, `docx-${Date.now()}`);
+          fs.mkdirSync(tmpDir, { recursive: true });
+          execSync(`unzip -o "${filePath}" word/document.xml -d "${tmpDir}" 2>/dev/null`, { timeout: 10000 });
+          const xmlPath = path.join(tmpDir, 'word', 'document.xml');
+          if (fs.existsSync(xmlPath)) {
+            const xml = fs.readFileSync(xmlPath, 'utf8');
+            // Extract text content from XML, preserving paragraph breaks
+            content = xml
+              .replace(/<w:p[^>]*>/g, '\n')           // Paragraph breaks
+              .replace(/<w:tab\/>/g, '\t')             // Tabs
+              .replace(/<w:br[^>]*\/>/g, '\n')         // Line breaks
+              .replace(/<[^>]+>/g, '')                  // Strip all XML tags
+              .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+              .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+              .replace(/\n{3,}/g, '\n\n')              // Collapse excessive newlines
+              .trim();
+            if (content.length > 100000) {
+              content = content.substring(0, 100000) + '\n\n[Content truncated - full document stored]';
+            }
+          } else {
+            content = `[Word Document: ${fileName}]\n\nNote: Could not extract XML content from DOCX. Please re-upload as PDF or TXT.`;
+          }
+          // Cleanup temp dir
+          try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) {}
+        } catch (docxErr) {
+          console.error('DOCX parsing error:', docxErr.message);
+          content = `[Word Document: ${fileName}]\n\nNote: Could not extract text. Error: ${docxErr.message}. Please re-upload as PDF or TXT for full AI access.`;
+        }
         fileType = 'word';
         break;
 

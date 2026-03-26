@@ -741,11 +741,18 @@ function getSOPContext() {
         let combined = '';
         for (const sop of sops) {
           const content = sop.content || '';
-          // Limit total SOP context to avoid token overuse
-          if (combined.length + content.length < 6000) {
-            combined += `\n${content}\n`;
+          // Skip placeholder entries that weren't actually parsed
+          if (content.startsWith('[Word Document:') || content.startsWith('[Excel Spreadsheet:') ||
+              content.startsWith('[PowerPoint Presentation:') || content.startsWith('[Image File:') ||
+              content.startsWith('[Binary File:')) {
+            combined += `\n--- ${sop.title} ---\n[Document uploaded but content could not be extracted. Please re-upload as PDF or TXT for full AI access.]\n`;
+            continue;
+          }
+          // Increased limit from 6000 to 12000 chars for better SOP coverage
+          if (combined.length + content.length < 12000) {
+            combined += `\n--- ${sop.title} ---\n${content}\n`;
           } else {
-            combined += `\n${content.substring(0, 2000)}\n[...truncated]\n`;
+            combined += `\n--- ${sop.title} (truncated) ---\n${content.substring(0, 3000)}\n[...truncated — upload smaller documents or split into parts]\n`;
             break;
           }
         }
@@ -884,11 +891,21 @@ ${conversationThread.map((msg, i) => {
 \nIMPORTANT: Your response should address the MOST RECENT customer message. Acknowledge the full conversation history.\n`;
   }
 
-  // Build canned response examples
+  // Build canned response examples (manual + auto-extracted from Freshdesk)
   let cannedContext = '';
-  if (cannedResponses && cannedResponses.trim()) {
-    cannedContext = `\n\nYOUR CANNED RESPONSES (use these as your writing style reference — match this tone, vocabulary, and structure):
-${cannedResponses.substring(0, 4000)}
+  const manualCanned = cannedResponses && cannedResponses.trim() ? cannedResponses.substring(0, 4000) : '';
+  let autoCanned = '';
+  try {
+    autoCanned = getSetting('auto_canned_responses', '');
+    const styleProfile = getSetting('agent_style_profile', '');
+    if (styleProfile) {
+      autoCanned = `AGENT WRITING STYLE:\n${styleProfile}\n\n${autoCanned}`;
+    }
+  } catch (e) {}
+  const combinedCanned = [manualCanned, autoCanned.substring(0, 4000)].filter(Boolean).join('\n\n---\n\n');
+  if (combinedCanned) {
+    cannedContext = `\n\nYOUR CANNED RESPONSES & WRITING STYLE (use these as your writing style reference — match this tone, vocabulary, and structure):
+${combinedCanned.substring(0, 8000)}
 \nIMPORTANT: Write in the SAME style as the canned responses above. Use similar phrases, structure, and tone.\n`;
   }
 
