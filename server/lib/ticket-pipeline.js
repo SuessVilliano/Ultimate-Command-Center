@@ -72,12 +72,33 @@ export async function processTicket(ticketId, options = {}) {
     pipelineResult.steps.push({ step: 'casebook_search', found: 0, error: e.message });
   }
 
+  // Step 4b: KNOWLEDGE BASE SEARCH (resolved ticket resolutions)
+  let kbMatches = [];
+  try {
+    const searchTerms = ticket.subject.split(/\s+/).filter(w => w.length > 3);
+    kbMatches = db.searchKnowledgeBase(searchTerms, 5);
+    pipelineResult.steps.push({ step: 'knowledge_base_search', found: kbMatches.length });
+  } catch (e) {
+    pipelineResult.steps.push({ step: 'knowledge_base_search', found: 0, error: e.message });
+  }
+
   // Step 5: DRAFT GENERATION (reuse existing generateResponse — now includes casebook context)
   let draftText = '';
   let draftProvider = '';
   try {
+    // Get agent signature from settings so auto-drafts include it
+    let agentSignature = options.agentSignature || '';
+    if (!agentSignature) {
+      try {
+        agentSignature = db.getSetting('agent_signature') || '';
+      } catch (e) {
+        // Signature not configured yet
+      }
+    }
+
     const draftResult = await ai.generateResponse(
       {
+        id: ticket.id || ticket.freshdesk_id,
         subject: ticket.subject,
         description: ticket.description,
         requester_name: ticket.requester_name,
@@ -85,18 +106,33 @@ export async function processTicket(ticketId, options = {}) {
       },
       {
         agentName: options.agentName || 'Support Agent',
+        agentSignature,
         ticketType: (analysis.ESCALATION_TYPE || analysis.escalation_type || 'general').toLowerCase(),
         analysis: {
           SUMMARY: analysis.SUMMARY || analysis.summary,
           URGENCY_SCORE: analysis.URGENCY_SCORE || analysis.urgency_score,
           ESCALATION_TYPE: analysis.ESCALATION_TYPE || analysis.escalation_type
         },
-        similarTickets: similarDocs.map(d => ({
-          id: d.metadata?.ticketId,
-          subject: d.metadata?.subject,
-          score: d.score,
-          keywords: []
-        }))
+        similarTickets: [
+          // RAG vector similarity matches
+          ...similarDocs.map(d => ({
+            id: d.metadata?.ticketId,
+            subject: d.metadata?.subject,
+            score: d.score,
+            resolution: d.content?.match(/Resolution:\s*(.*)/)?.[1] || '',
+            keywords: []
+          })),
+          // Knowledge base keyword matches (with resolutions from resolved tickets)
+          ...kbMatches
+            .filter(kb => !similarDocs.some(d => d.metadata?.ticketId === kb.ticket_id))
+            .map(kb => ({
+              id: kb.ticket_id,
+              subject: kb.subject,
+              score: kb.score,
+              resolution: kb.resolution || '',
+              keywords: kb.keywords || []
+            }))
+        ].slice(0, 8)
       }
     );
     draftText = draftResult.response || draftResult.text || '';

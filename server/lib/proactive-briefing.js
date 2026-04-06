@@ -175,7 +175,36 @@ ETH: $${eth?.price?.toLocaleString() || 'N/A'} (${eth?.change24h?.toFixed(2) || 
   }
 }
 
-function getTicketContext() {
+async function getTicketContext() {
+  // Try fresh Freshdesk data first, fall back to DB
+  try {
+    const domain = process.env.FRESHDESK_DOMAIN;
+    const apiKey = process.env.FRESHDESK_API_KEY;
+    const agentId = process.env.FRESHDESK_AGENT_ID;
+
+    if (domain && apiKey) {
+      const baseUrl = `https://${domain}.freshdesk.com/api/v2`;
+      const auth = Buffer.from(`${apiKey}:X`).toString('base64');
+      const headers = { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/json' };
+
+      const counts = { open: 0, pending: 0, waiting: 0 };
+      for (const [status, key] of [[2, 'open'], [3, 'pending'], [6, 'waiting']]) {
+        try {
+          let query = `"status:${status}"`;
+          if (agentId) query = `"agent_id:${agentId} AND status:${status}"`;
+          const resp = await fetch(`${baseUrl}/search/tickets?query=${encodeURIComponent(query)}`, { headers });
+          if (resp.ok) {
+            const data = await resp.json();
+            counts[key] = data.total || (data.results || []).length;
+          }
+          await new Promise(r => setTimeout(r, 300));
+        } catch (e) {}
+      }
+      return `${counts.open} open, ${counts.pending} pending, ${counts.waiting} waiting on customer`;
+    }
+  } catch (e) {}
+
+  // Fallback to DB
   try {
     const dbInstance = db.getDb();
     const stmt = dbInstance.prepare(`

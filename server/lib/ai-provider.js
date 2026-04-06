@@ -837,14 +837,15 @@ export async function generateResponse(ticket, options = {}) {
   if (similarTickets && similarTickets.length > 0) {
     similarContext = `
 
-SIMILAR RESOLVED TICKETS FROM YOUR HISTORY (use these as reference):
+SIMILAR RESOLVED TICKETS FROM YOUR HISTORY (use these as reference — these are REAL tickets):
 ${similarTickets.map((s, i) => `
 ${i + 1}. Ticket #${s.id}: "${s.subject}"
+   ${s.resolution ? `Resolution: ${s.resolution}` : ''}
    Keywords: ${(s.keywords || []).slice(0, 5).join(', ')}
    Match Score: ${s.score} keywords matched
 `).join('')}
 
-Use insights from these similar tickets to inform your response.`;
+Use the resolutions and insights from these similar tickets to inform your response. Reference their solutions where applicable.`;
   }
 
   // Search casebook for human-approved responses to similar issues
@@ -899,17 +900,22 @@ ${cannedResponses.substring(0, 4000)}
 
   const prompt = `You are ${agentName || 'a support agent'}, a GoHighLevel Support Agent responding to a customer ticket. Write a professional, helpful response.
 
-CRITICAL FORMATTING RULES:
+CRITICAL RULES:
 - Write PLAIN TEXT only - absolutely NO markdown
 - NO asterisks (*), NO hashtags (#), NO backticks (\`)
 - Use simple line breaks for paragraphs
 - Keep it conversational and professional
 - The response should be ready to copy and paste directly into Freshdesk
+- NEVER invent, guess, or fabricate ticket numbers, case IDs, or reference numbers
+- ONLY reference ticket IDs, solutions, or past cases that are explicitly provided below in the context
+- If no similar resolved tickets are provided, do NOT mention any past tickets or case numbers
+- Base your response ONLY on the information given — if you do not know something, say you will look into it rather than guessing
 ${sopSection}${signatureSection}
 YOUR NAME: ${agentName || 'Support Agent'}
 CUSTOMER NAME: ${ticket.requester?.name || ticket.requester_name || 'there'}
 
 TICKET DETAILS:
+${ticket.id ? `Ticket ID: #${ticket.id}` : ''}
 Subject: ${ticket.subject}
 Description: ${ticket.description || ticket.description_text || 'No description provided'}
 Ticket Type: ${ticketType}

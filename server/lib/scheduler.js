@@ -8,6 +8,8 @@
 import cron from 'node-cron';
 import * as db from './database.js';
 import * as ai from './ai-provider.js';
+import * as rag from './langchain-rag.js';
+import * as knowledgeBuilder from './knowledge-builder.js';
 import * as dailyReport from './daily-report.js';
 import * as emailService from './email-service.js';
 
@@ -166,7 +168,7 @@ export async function runScheduledAnalysis(scheduleName = 'manual') {
   try {
     // 1. Fetch tickets from Freshdesk (include resolved for knowledge base)
     console.log('\n1. Fetching tickets from Freshdesk...');
-    const tickets = await fetchFreshdeskTickets([2, 3, 6, 7, 4]); // Open, Pending, Waiting on Customer, Waiting on 3rd Party, Resolved
+    const tickets = await fetchFreshdeskTickets([2, 3, 6, 7, 4, 5]); // Open, Pending, Waiting on Customer, Waiting on 3rd Party, Resolved, Closed
     stats.ticketsFetched = tickets.length;
     console.log(`   Fetched ${tickets.length} tickets`);
 
@@ -186,6 +188,24 @@ export async function runScheduledAnalysis(scheduleName = 'manual') {
     try {
       db.upsertTickets(tickets);
       console.log(`   Stored ${tickets.length} tickets`);
+
+      // Mark stale tickets as closed — if a ticket is open/pending in DB
+      // but NOT returned by Freshdesk, it was resolved/closed externally
+      const freshIds = new Set(tickets.map(t => t.id));
+      const dbOpenTickets = db.getAllTicketsWithAnalysis([2, 3, 6, 7]) || [];
+      let staleClosed = 0;
+      for (const dbTicket of dbOpenTickets) {
+        if (!freshIds.has(dbTicket.freshdesk_id)) {
+          try {
+            const dbInstance = db.getDb();
+            dbInstance.prepare('UPDATE tickets SET status = 5 WHERE freshdesk_id = ?').run(dbTicket.freshdesk_id);
+            staleClosed++;
+          } catch (e) {}
+        }
+      }
+      if (staleClosed > 0) {
+        console.log(`   Marked ${staleClosed} stale tickets as closed (no longer in Freshdesk)`);
+      }
     } catch (e) {
       console.log('   Database storage skipped:', e.message);
     }
@@ -320,15 +340,43 @@ export async function runScheduledAnalysis(scheduleName = 'manual') {
       console.log('\n6. Notifications skipped (n8n webhook not configured)');
     }
 
-    // 7. Index resolved tickets to knowledge base
+    // 7. Index resolved tickets to knowledge base + RAG vector store
     console.log('\n7. Indexing resolved tickets to knowledge base...');
     try {
       const resolvedTickets = tickets.filter(t => t.status === 4 || t.status === 5);
+      let newlyIndexed = 0;
+
       for (const ticket of resolvedTickets) {
-        const keywords = extractKeywords(`${ticket.subject} ${ticket.description_text || ''}`);
-        db.addToKnowledgeBase(ticket, '', keywords);
+        // Check if already in RAG vector store
+        const alreadyInRAG = rag.searchSimilar(`#${ticket.id} ${ticket.subject}`, 1, 0.9);
+        if (alreadyInRAG.length > 0 && alreadyInRAG[0].metadata?.ticketId === ticket.id) {
+          continue; // Already fully indexed
+        }
+
+        // Use knowledge-builder for smart AI summary with conversation context
+        try {
+          const summary = await knowledgeBuilder.processResolvedTicket(ticket, {
+            domain: freshdeskConfig.domain,
+            apiKey: freshdeskConfig.apiKey
+          });
+
+          // Index into RAG vector store for semantic search
+          const resolution = summary?.solution || summary?.issue || '';
+          rag.indexTicketForRAG(ticket, resolution);
+          newlyIndexed++;
+
+          // Rate limit
+          await new Promise(r => setTimeout(r, 300));
+        } catch (e) {
+          // Fallback: basic indexing without conversation context
+          const keywords = extractKeywords(`${ticket.subject} ${ticket.description_text || ''}`);
+          db.addToKnowledgeBase(ticket, '', keywords);
+          rag.indexTicketForRAG(ticket);
+          newlyIndexed++;
+        }
       }
-      console.log(`   Indexed ${resolvedTickets.length} resolved tickets`);
+
+      console.log(`   Indexed ${newlyIndexed} new resolved tickets (${resolvedTickets.length} total resolved)`);
     } catch (e) {
       console.log('   Knowledge base indexing skipped:', e.message);
     }

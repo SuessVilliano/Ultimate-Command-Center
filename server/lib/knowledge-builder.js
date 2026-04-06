@@ -5,6 +5,7 @@
 
 import * as db from './database.js';
 import * as ai from './ai-provider.js';
+import * as rag from './langchain-rag.js';
 
 // Common ticket categories for GoHighLevel support
 const TICKET_CATEGORIES = {
@@ -297,6 +298,16 @@ export async function buildKnowledgeBase(config, options = {}) {
         summary.category
       );
 
+      // Index into RAG vector store for semantic similarity search
+      try {
+        rag.indexTicketForRAG(
+          { id: ticket.id, subject: ticket.subject, description_text: summary.issue, status: ticket.status, priority: ticket.priority },
+          summary.solution || ''
+        );
+      } catch (e) {
+        console.log(`RAG indexing failed for ticket ${ticket.id}:`, e.message);
+      }
+
       console.log(`Indexed ticket ${ticket.id}: ${summary.category} - ${ticket.subject.substring(0, 50)}...`);
 
       // Rate limiting
@@ -340,6 +351,13 @@ export async function processResolvedTicket(ticket, config) {
       summary.keywords,
       summary.category
     );
+
+    // Index into RAG vector store for semantic similarity search
+    try {
+      rag.indexTicketForRAG(ticket, summary.solution || summary.issue || '');
+    } catch (e) {
+      console.log(`RAG indexing failed for ticket ${ticket.id}:`, e.message);
+    }
 
     // Log for agent learning
     db.logAgentInteraction('knowledge-builder', 'ticket_learned', {

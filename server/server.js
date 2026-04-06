@@ -49,6 +49,7 @@ import * as proactiveEngine from './lib/proactive-ai-engine.js';
 import * as eventBus from './lib/cross-platform-event-bus.js';
 import * as workflowOrchestrator from './lib/unified-workflow-orchestrator.js';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
+import * as ttsService from './lib/tts-service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -121,6 +122,15 @@ const langchainStatus = rag.initLangChain({
   openaiKey: process.env.OPENAI_API_KEY
 });
 console.log('LangChain RAG:', langchainStatus);
+
+// Initialize TTS (OpenAI → Kokoro → Edge fallback)
+const ttsStatus = ttsService.initTTS();
+console.log('TTS Providers:', ttsStatus);
+
+// Sync resolved tickets from DB into RAG vector store on startup
+rag.syncKnowledgeBase().then(result => {
+  console.log(`RAG Knowledge Sync: ${result.indexed} new tickets indexed, ${result.total} total in vector store`);
+}).catch(e => console.log('RAG sync skipped:', e.message));
 
 // Initialize scheduler with TaskMagic webhook
 scheduler.initScheduler({
@@ -1035,85 +1045,41 @@ app.post('/api/proactive-analysis', async (req, res) => {
 // TEXT-TO-SPEECH (Edge TTS — free, natural voices)
 // ============================================
 
-// List available voices
+// List available voices (all providers)
 app.get('/api/tts/voices', async (req, res) => {
   try {
-    const tts = new MsEdgeTTS();
-    const voices = await tts.getVoices();
-    // Return curated list with best English voices first
-    const english = voices.filter(v => v.Locale.startsWith('en-'));
-    const curated = [
-      // Best natural-sounding voices
-      ...english.filter(v => v.ShortName.includes('Neural') || v.ShortName.includes('Multilingual')),
-      ...english.filter(v => !v.ShortName.includes('Neural') && !v.ShortName.includes('Multilingual')),
-    ];
+    const voices = await ttsService.getAvailableVoices();
+    const status = ttsService.getTTSStatus();
     res.json({
-      voices: curated.map(v => ({
-        id: v.ShortName,
-        name: v.FriendlyName || v.ShortName,
-        locale: v.Locale,
-        gender: v.Gender,
-      })),
+      voices,
       recommended: [
-        'en-US-AriaNeural',
-        'en-US-GuyNeural',
-        'en-US-JennyNeural',
+        'nova', 'coral', 'sage', 'shimmer', 'alloy',  // OpenAI (premium)
+        'kokoro_af_nova', 'kokoro_af_heart',             // Kokoro (free)
+        'en-US-AvaMultilingualNeural',                    // Edge (fallback)
         'en-US-AndrewMultilingualNeural',
-        'en-US-AvaMultilingualNeural',
-        'en-US-BrianMultilingualNeural',
-        'en-US-EmmaMultilingualNeural',
-        'en-GB-SoniaNeural',
-        'en-GB-RyanNeural',
-      ]
+      ],
+      providers: status
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Generate speech audio
+// Generate speech audio (OpenAI → Kokoro → Edge TTS)
 app.post('/api/tts/speak', async (req, res) => {
   try {
-    const { text, voice, rate, pitch, volume } = req.body;
+    const { text, voice, provider } = req.body;
     if (!text) return res.status(400).json({ error: 'Text is required' });
 
-    const voiceId = voice || 'en-US-EmmaMultilingualNeural';
-    const tts = new MsEdgeTTS();
-    await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
+    const result = await ttsService.generateSpeech(text, { voice: voice || 'juno', provider });
 
-    // Build SSML rate/pitch
-    const rateStr = rate ? `${rate > 0 ? '+' : ''}${Math.round((rate - 1) * 100)}%` : '+0%';
-    const pitchStr = pitch ? `${pitch > 0 ? '+' : ''}${Math.round((pitch - 1) * 50)}Hz` : '+0Hz';
-
-    const readable = tts.toStream(text);
-
-    // Collect audio chunks
-    const chunks = [];
-    readable.on('data', (chunk) => {
-      // msedge-tts emits objects with audio property
-      if (chunk.audio) {
-        chunks.push(chunk.audio);
-      } else if (Buffer.isBuffer(chunk)) {
-        chunks.push(chunk);
-      }
+    res.set({
+      'Content-Type': result.format,
+      'Content-Length': result.audio.length,
+      'Cache-Control': 'public, max-age=3600',
+      'X-TTS-Provider': result.provider,
     });
-
-    readable.on('end', () => {
-      const audioBuffer = Buffer.concat(chunks);
-      res.set({
-        'Content-Type': 'audio/mpeg',
-        'Content-Length': audioBuffer.length,
-        'Cache-Control': 'public, max-age=3600',
-      });
-      res.send(audioBuffer);
-    });
-
-    readable.on('error', (err) => {
-      console.error('TTS stream error:', err);
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'TTS generation failed' });
-      }
-    });
+    res.send(result.audio);
   } catch (error) {
     console.error('TTS error:', error);
     res.status(500).json({ error: error.message });
@@ -1191,27 +1157,15 @@ app.post('/api/voice', async (req, res) => {
       model: result.model
     });
 
-    // Generate TTS audio
+    // Generate TTS audio (OpenAI → Kokoro → Edge)
     let audioBase64 = null;
+    let audioFormat = 'audio/mp3';
+    let ttsProvider = null;
     try {
-      const voiceId = voice || 'en-US-EmmaMultilingualNeural';
-      const tts = new MsEdgeTTS();
-      await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
-      const readable = tts.toStream(result.text);
-      const chunks = [];
-      await new Promise((resolve, reject) => {
-        readable.on('data', (chunk) => {
-          // msedge-tts emits objects with audio property
-          if (chunk.audio) {
-            chunks.push(chunk.audio);
-          } else if (Buffer.isBuffer(chunk)) {
-            chunks.push(chunk);
-          }
-        });
-        readable.on('end', resolve);
-        readable.on('error', reject);
-      });
-      audioBase64 = Buffer.concat(chunks).toString('base64');
+      const ttsResult = await ttsService.generateSpeechBase64(result.text, { voice: voice || 'juno' });
+      audioBase64 = ttsResult.audio;
+      audioFormat = ttsResult.format;
+      ttsProvider = ttsResult.provider;
     } catch (ttsErr) {
       console.warn('Voice TTS failed, returning text only:', ttsErr.message);
     }
@@ -1219,9 +1173,10 @@ app.post('/api/voice', async (req, res) => {
     res.json({
       response: result.text,
       audio: audioBase64,
-      audioFormat: 'audio/mp3',
+      audioFormat,
       provider: result.provider,
       model: result.model,
+      ttsProvider,
       conversationId: convId
     });
   } catch (error) {
@@ -1255,26 +1210,13 @@ app.post('/api/vision', async (req, res) => {
       model: result.model,
     });
 
-    // Generate TTS audio
+    // Generate TTS audio (OpenAI → Kokoro → Edge)
     let audioBase64 = null;
+    let audioFormat = 'audio/mp3';
     try {
-      const voiceId = voice || 'en-US-EmmaMultilingualNeural';
-      const tts = new MsEdgeTTS();
-      await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
-      const readable = tts.toStream(result.text);
-      const chunks = [];
-      await new Promise((resolve, reject) => {
-        readable.on('data', (chunk) => {
-          if (chunk.audio) {
-            chunks.push(chunk.audio);
-          } else if (Buffer.isBuffer(chunk)) {
-            chunks.push(chunk);
-          }
-        });
-        readable.on('end', resolve);
-        readable.on('error', reject);
-      });
-      audioBase64 = Buffer.concat(chunks).toString('base64');
+      const ttsResult = await ttsService.generateSpeechBase64(result.text, { voice: voice || 'juno' });
+      audioBase64 = ttsResult.audio;
+      audioFormat = ttsResult.format;
     } catch (ttsErr) {
       console.warn('Vision TTS failed:', ttsErr.message);
     }
@@ -1419,22 +1361,10 @@ If nothing noteworthy, respond: {"detectedTool": "...", "shouldSpeak": false, "i
         model: result.model,
       });
 
-      // Generate TTS
+      // Generate TTS (OpenAI → Kokoro → Edge)
       try {
-        const voiceId = voice || 'en-US-EmmaMultilingualNeural';
-        const tts = new MsEdgeTTS();
-        await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
-        const readable = tts.toStream(parsed.insight);
-        const chunks = [];
-        await new Promise((resolve, reject) => {
-          readable.on('data', (chunk) => {
-            if (chunk.audio) chunks.push(chunk.audio);
-            else if (Buffer.isBuffer(chunk)) chunks.push(chunk);
-          });
-          readable.on('end', resolve);
-          readable.on('error', reject);
-        });
-        audioBase64 = Buffer.concat(chunks).toString('base64');
+        const ttsResult = await ttsService.generateSpeechBase64(parsed.insight, { voice: voice || 'juno' });
+        audioBase64 = ttsResult.audio;
       } catch {}
     }
 
@@ -1603,22 +1533,10 @@ app.post('/api/telegram/voice', async (req, res) => {
       }
     }
 
-    // Generate TTS
+    // Generate TTS (OpenAI → Kokoro → Edge)
     try {
-      const voiceId = voice || 'en-US-EmmaMultilingualNeural';
-      const tts = new MsEdgeTTS();
-      await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
-      const readable = tts.toStream(replyText);
-      const chunks = [];
-      await new Promise((resolve, reject) => {
-        readable.on('data', (chunk) => {
-          if (chunk.audio) chunks.push(chunk.audio);
-          else if (Buffer.isBuffer(chunk)) chunks.push(chunk);
-        });
-        readable.on('end', resolve);
-        readable.on('error', reject);
-      });
-      audioBase64 = Buffer.concat(chunks).toString('base64');
+      const ttsResult = await ttsService.generateSpeechBase64(replyText, { voice: voice || 'juno' });
+      audioBase64 = ttsResult.audio;
     } catch {}
 
     res.json({
@@ -1854,39 +1772,26 @@ app.post('/api/chat', async (req, res) => {
       { role: 'user', content: message }
     ];
 
-    // Enrich system prompt with real ticket data
-    let enrichedContext = memoryContext || '';
-    try {
-      const ticketsWithAnalysis = db.getAllTicketsWithAnalysis();
-      const tickets = ticketsWithAnalysis.map(t => t.ticket ? JSON.parse(t.ticket) : t);
-      const active = tickets.filter(t => [2, 3, 6, 7].includes(t.status));
-      if (active.length > 0) {
-        const statusLabels = { 2: 'Open', 3: 'Pending', 6: 'Waiting on Customer', 7: 'On Hold' };
-        const ticketList = active.slice(0, 15).map(t =>
-          `#${t.id}: ${t.subject} (${statusLabels[t.status] || 'Unknown'})`
-        ).join('\n');
-        enrichedContext += `\n\nREAL TICKET DATA (use ONLY this data, never fabricate ticket info):\n${active.length} active tickets:\n${ticketList}`;
-      } else {
-        enrichedContext += '\n\nTICKET STATUS: No active tickets in the queue.';
-      }
-    } catch (e) {}
+    let defaultSystemPrompt = getChatPrompt(memoryContext);
 
-    // Enrich with real trading signal data
-    try {
-      const signals = telegram.getSignalHistory(10);
-      if (signals.length > 0) {
-        const signalList = signals.slice(-10).map(s => {
-          const sig = s.signal || {};
-          const time = s.date ? new Date(s.date).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Unknown time';
-          return `[${time}] ${sig.direction || '?'} ${sig.instrument || '?'}${sig.entry ? ` @ ${sig.entry}` : ''}${sig.stopLoss ? ` SL: ${sig.stopLoss}` : ''}${sig.targets?.length ? ` TP: ${sig.targets.join(', ')}` : ''} — Raw: "${(s.text || s.signal?.raw || '').substring(0, 120)}"`;
-        }).join('\n');
-        enrichedContext += `\n\nREAL TRADING SIGNALS (from TradingView via Copygram — ONLY reference this data, NEVER fabricate signals):\n${signals.length} signals:\n${signalList}`;
-      } else {
-        enrichedContext += '\n\nTRADING SIGNALS: No signals received yet. Do NOT invent signal data.';
+    // Inject real ticket data when user asks about tickets
+    const ticketKeywords = /ticket|freshdesk|open.*ticket|pending|support.*queue|how many|escalat/i;
+    if (ticketKeywords.test(message)) {
+      try {
+        const ticketsWithAnalysis = db.getAllTicketsWithAnalysis([2, 3, 6, 7]);
+        if (ticketsWithAnalysis && ticketsWithAnalysis.length > 0) {
+          let ticketContext = `\n\nREAL FRESHDESK TICKET DATA (use ONLY these real ticket numbers — NEVER make up ticket IDs):\n`;
+          ticketContext += `Active tickets: ${ticketsWithAnalysis.length}\n`;
+          for (const t of ticketsWithAnalysis.slice(0, 20)) {
+            const statusName = { 2: 'Open', 3: 'Pending', 6: 'Waiting on Customer', 7: 'Waiting on Third Party' }[t.status] || 'Unknown';
+            ticketContext += `- #${t.freshdesk_id}: "${t.subject}" | Status: ${statusName} | Requester: ${t.requester_name || 'Unknown'}\n`;
+          }
+          defaultSystemPrompt += ticketContext;
+        }
+      } catch (e) {
+        console.log('Could not inject ticket context:', e.message);
       }
-    } catch (e) {}
-
-    const defaultSystemPrompt = getChatPrompt(enrichedContext);
+    }
 
     // Store user message
     memory.addMessage(convId, 'user', message, { agentId, context });

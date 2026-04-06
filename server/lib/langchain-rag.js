@@ -244,7 +244,9 @@ ${doc.content}
   const promptTemplate = PromptTemplate.fromTemplate(`
 You are a professional support agent helping with a customer ticket.
 
-${context ? 'Use the following similar resolved tickets as reference:' : ''}
+CRITICAL: ONLY reference ticket numbers, solutions, or past cases that are explicitly listed below. NEVER invent or guess ticket IDs or information.
+
+${context ? 'Use the following similar resolved tickets as reference:' : 'No similar resolved tickets found — do NOT reference any past tickets.'}
 {context}
 
 CURRENT TICKET:
@@ -252,7 +254,7 @@ Subject: {subject}
 Description: {description}
 Customer: {customerName}
 
-Generate a helpful, professional response. Be concise but thorough.
+Generate a helpful, professional response based ONLY on the information provided. If you are unsure about something, say you will investigate rather than guessing. Be concise but thorough.
 Sign off as: {agentName}
 
 Response:

@@ -36,6 +36,7 @@ import {
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import DraftQueue from '../components/DraftQueue';
+import PortingTool from '../components/PortingTool';
 import { aiService } from '../services/aiService';
 
 // Storage keys
@@ -212,6 +213,8 @@ function Tickets() {
   const [sendingToPA, setSendingToPA] = useState(false); // Sending to Personal Assistant
   const [sentToPA, setSentToPA] = useState({}); // Track which tickets were sent
   const [quickLinksCollapsed, setQuickLinksCollapsed] = useState(false); // Collapsible quick links
+  const [mainView, setMainView] = useState('tickets'); // 'tickets' or 'porting'
+  const [portingPrefill, setPortingPrefill] = useState(null); // Pre-fill data from port request tickets
   const [ticketConversations, setTicketConversations] = useState({}); // Cache conversations by ticket ID
   const [loadingConversation, setLoadingConversation] = useState(false);
   // SOP Management state
@@ -1338,6 +1341,29 @@ function Tickets() {
           <p className={`mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
             GoHighLevel Support Hub - Tickets, Tools & Resources
           </p>
+          {/* View Toggle */}
+          <div className="flex gap-1 mt-2">
+            <button
+              onClick={() => setMainView('tickets')}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
+                mainView === 'tickets'
+                  ? 'bg-purple-600 text-white'
+                  : isDark ? 'bg-white/10 text-gray-400 hover:bg-white/20' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              <Ticket className="w-3 h-3 inline mr-1" /> Tickets
+            </button>
+            <button
+              onClick={() => setMainView('porting')}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
+                mainView === 'porting'
+                  ? 'bg-blue-600 text-white'
+                  : isDark ? 'bg-white/10 text-gray-400 hover:bg-white/20' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              <Phone className="w-3 h-3 inline mr-1" /> Porting
+            </button>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           {/* AI Server Status Indicator */}
@@ -1440,6 +1466,14 @@ function Tickets() {
           </button>
         </div>
       </div>
+
+      {/* ─── Porting View ─── */}
+      {mainView === 'porting' && (
+        <PortingTool isDark={isDark} prefillData={portingPrefill} />
+      )}
+
+      {/* ─── Tickets View ─── */}
+      {mainView === 'tickets' && (<>
 
       {/* GHL Quick Links - Collapsible */}
       <div className={`rounded-xl border transition-all ${
@@ -1910,7 +1944,14 @@ function Tickets() {
                     </p>
                     <textarea
                       defaultValue={localStorage.getItem('liv8_agent_signature') || ''}
-                      onBlur={e => localStorage.setItem('liv8_agent_signature', e.target.value)}
+                      onBlur={e => {
+                        localStorage.setItem('liv8_agent_signature', e.target.value);
+                        fetch(`${AI_SERVER_URL}/api/settings`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ key: 'agent_signature', value: e.target.value })
+                        }).catch(() => {});
+                      }}
                       placeholder={`Best regards,\nSV - GoHighLevel Support\nPhone: (XXX) XXX-XXXX\nhttps://gohighlevel.com`}
                       rows={5}
                       className={`w-full px-3 py-2 rounded-lg border text-sm ${
@@ -2804,6 +2845,29 @@ function Tickets() {
                     >
                       <ExternalLink className="w-4 h-4" />
                     </button>
+                    {/* Port This — shows for tickets with port-related keywords */}
+                    {selectedTicket.subject && /port|porting|transfer|number\s*transfer|phone\s*number/i.test(selectedTicket.subject + ' ' + (selectedTicket.description_text || '')) && (
+                      <button
+                        onClick={() => {
+                          // Extract what we can from the ticket and switch to porting view
+                          const prefill = {
+                            firstName: selectedTicket.requester?.name?.split(' ')[0] || '',
+                            lastName: selectedTicket.requester?.name?.split(' ').slice(1).join(' ') || '',
+                            email: selectedTicket.requester?.email || '',
+                            locationId: selectedTicket.custom_fields?.cf_location_id || selectedTicket.custom_fields?.location_id || '',
+                          };
+                          setPortingPrefill(prefill);
+                          setMainView('porting');
+                        }}
+                        className={`px-4 py-2 rounded-lg flex items-center gap-2 ${
+                          isDark ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-blue-500 hover:bg-blue-600 text-white'
+                        }`}
+                        title="Open in AutoPort with ticket data"
+                      >
+                        <Phone className="w-4 h-4" />
+                        Port This
+                      </button>
+                    )}
                     <button
                       onClick={() => sendToPA(selectedTicket)}
                       disabled={sendingToPA}
@@ -2876,6 +2940,8 @@ function Tickets() {
           )}
         </div>
       </div>
+
+      </>)}
     </div>
   );
 }
