@@ -1082,6 +1082,39 @@ export function getAllDrafts(filters = {}) {
 }
 
 /**
+ * Get resolved/approved drafts for style learning
+ * Returns the most recent approved or sent drafts to learn the agent's writing style
+ */
+export function getResolvedDrafts(limit = 5) {
+  try {
+    const stmt = db.prepare(`
+      SELECT ticket_subject, draft_text, status, created_at
+      FROM drafts
+      WHERE status IN ('APPROVED', 'SENT', 'RESOLVED')
+      AND draft_text IS NOT NULL AND draft_text != ''
+      ORDER BY created_at DESC
+      LIMIT ?
+    `);
+    return stmt.all(limit);
+  } catch (e) {
+    // Fallback: try any drafts that were reviewed
+    try {
+      const fallback = db.prepare(`
+        SELECT ticket_subject, draft_text, status, created_at
+        FROM drafts
+        WHERE draft_text IS NOT NULL AND draft_text != ''
+        AND qa_passed = 1
+        ORDER BY created_at DESC
+        LIMIT ?
+      `);
+      return fallback.all(limit);
+    } catch {
+      return [];
+    }
+  }
+}
+
+/**
  * Get draft stats (counts by status)
  */
 export function getDraftStats() {
@@ -1145,6 +1178,7 @@ export default {
   saveDraft,
   getDraftsByStatus,
   getDraftForTicket,
+  getResolvedDrafts,
   updateDraftStatus,
   getAllDrafts,
   getDraftStats,

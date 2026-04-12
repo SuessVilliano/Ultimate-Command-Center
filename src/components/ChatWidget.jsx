@@ -1056,7 +1056,7 @@ function ChatWidget({ onNavigate }) {
                   {/* TTS Provider selector */}
                   <div className="flex gap-1">
                     {[
-                      { id: 'edge', label: 'Edge Neural', desc: 'Natural' },
+                      { id: 'edge', label: 'Server TTS', desc: 'VoxCPM/Edge' },
                       { id: 'voicebox', label: 'Voicebox', desc: 'Cloned' },
                       { id: 'browser', label: 'Browser', desc: 'Basic' },
                     ].map(p => (
@@ -1082,7 +1082,13 @@ function ChatWidget({ onNavigate }) {
                       disabled={voiceActive}
                       className={`w-full px-2 py-1 rounded text-sm ${isDark ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'} border disabled:opacity-50`}
                     >
-                      <optgroup label="Recommended (Most Natural)">
+                      <optgroup label="VoxCPM — Free, Studio Quality (48kHz)">
+                        <option value="commander">Commander (Male, Authoritative)</option>
+                        <option value="support">Support Agent (Female, Empathetic)</option>
+                        <option value="analyst">Analyst (Male, Precise)</option>
+                        <option value="juno">Juno (Female, Warm Assistant)</option>
+                      </optgroup>
+                      <optgroup label="Edge Neural Voices">
                         <option value="en-US-AvaMultilingualNeural">Ava (Female, Multilingual)</option>
                         <option value="en-US-AndrewMultilingualNeural">Andrew (Male, Multilingual)</option>
                         <option value="en-US-EmmaMultilingualNeural">Emma (Female, Multilingual)</option>
@@ -1117,7 +1123,7 @@ function ChatWidget({ onNavigate }) {
                     </select>
                   )}
                   <div className={`text-[10px] ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                    {ttsProvider === 'edge' ? 'Free neural voices via Microsoft Edge TTS' :
+                    {ttsProvider === 'edge' ? `Server: VoxCPM (free, 48kHz) → Edge TTS fallback` :
                      ttsProvider === 'voicebox' ? `Server: ${VOICEBOX_URL}` :
                      'Built-in browser speech synthesis'}
                   </div>

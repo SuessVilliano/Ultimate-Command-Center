@@ -769,17 +769,41 @@ export async function analyzeTicket(ticket, options = {}) {
     ? `\n\nCOMPANY STANDARD OPERATING PROCEDURES (follow these strictly):\n${sopContent}\n`
     : '';
 
+  // Pre-extract links and IDs from ticket body using regex (fast, no AI needed)
+  const fullText = `${ticket.subject || ''} ${ticket.description || ticket.description_text || ''}`;
+  const extractedLinks = {
+    loom: [...fullText.matchAll(/https?:\/\/(?:www\.)?loom\.com\/share\/[a-zA-Z0-9-]+/g)].map(m => m[0]),
+    google_drive: [...fullText.matchAll(/https?:\/\/(?:drive|docs)\.google\.com\/[^\s<"')]+/g)].map(m => m[0]),
+    screenshots: [...fullText.matchAll(/https?:\/\/[^\s<"')]+\.(?:png|jpg|jpeg|gif|webp|bmp)/gi)].map(m => m[0]),
+    videos: [...fullText.matchAll(/https?:\/\/[^\s<"')]+\.(?:mp4|mov|avi|webm)/gi)].map(m => m[0]),
+    any_urls: [...fullText.matchAll(/https?:\/\/[^\s<"')]+/g)].map(m => m[0]),
+    location_ids: [...fullText.matchAll(/(?:location[_ ]?id|loc[_ ]?id|locationId)[:\s]*([a-zA-Z0-9_-]{10,})/gi)].map(m => m[1]),
+    sub_account_ids: [...fullText.matchAll(/(?:sub[_ ]?account|subaccount)[:\s]*([a-zA-Z0-9_-]{10,})/gi)].map(m => m[1]),
+    phone_numbers: [...fullText.matchAll(/(?:\+1|1)?[\s.-]?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g)].map(m => m[0]),
+    email_addresses: [...fullText.matchAll(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g)].map(m => m[0]),
+  };
+
+  // Build extracted data summary for the AI
+  const extractedSummary = Object.entries(extractedLinks)
+    .filter(([_, vals]) => vals.length > 0)
+    .map(([key, vals]) => `${key}: ${vals.join(', ')}`)
+    .join('\n');
+
   const prompt = `You are a support ticket analyzer for a GoHighLevel SaaS support team. Analyze this support ticket and provide:
-1. ESCALATION_TYPE: One of [DEV, TWILIO, BILLING, FEATURE, BUG, SUPPORT]
+1. ESCALATION_TYPE: One of [DEV, TWILIO, BILLING, FEATURE, BUG, SUPPORT, PORTING, API, INTEGRATION]
 2. URGENCY_SCORE: 1-10 (10 being most urgent)
 3. SUGGESTED_RESPONSE: A brief suggested response to the customer
-4. ACTION_ITEMS: List of specific actions to resolve this
+4. ACTION_ITEMS: List of specific actions to resolve this (be specific — include checking links, reviewing screenshots, looking up location IDs)
 5. SUMMARY: One sentence summary of the issue
+6. KEY_RESOURCES: List any Loom links, Google Drive links, screenshots, location IDs, or phone numbers found in the ticket
+7. QUICK_DIAGNOSIS: Based on the issue type, what is the most likely root cause? What should the agent check first?
+8. ESTIMATED_EFFORT: One of [QUICK_FIX, MODERATE, INVESTIGATION_NEEDED, ESCALATION]
 ${sopSection}
 Ticket Subject: ${ticket.subject}
 Ticket Description: ${ticket.description || ticket.description_text || 'No description'}
 Priority: ${ticket.priority || 'Unknown'}
 Status: ${ticket.status || 'Unknown'}
+${extractedSummary ? `\nEXTRACTED DATA (auto-parsed from ticket):\n${extractedSummary}` : ''}
 
 Respond in JSON format only. No markdown, just the raw JSON object.`;
 
@@ -795,6 +819,8 @@ Respond in JSON format only. No markdown, just the raw JSON object.`;
     const analysis = JSON.parse(jsonMatch[0]);
     return {
       ...analysis,
+      // Always include regex-extracted links (even if AI misses them)
+      extracted_links: extractedLinks,
       provider: result.provider,
       model: result.model
     };
@@ -893,6 +919,33 @@ ${cannedResponses.substring(0, 4000)}
 \nIMPORTANT: Write in the SAME style as the canned responses above. Use similar phrases, structure, and tone.\n`;
   }
 
+  // STYLE LEARNING: Pull agent's actual past responses from resolved tickets
+  let styleContext = '';
+  try {
+    const { getResolvedDrafts } = await import('./database.js');
+    if (typeof getResolvedDrafts === 'function') {
+      const pastResponses = getResolvedDrafts(5); // last 5 approved/sent drafts
+      if (pastResponses && pastResponses.length > 0) {
+        styleContext = `\n\nYOUR ACTUAL PAST RESPONSES (learn from these — this is how YOU write):
+${pastResponses.map((r, i) => `--- Response ${i + 1} (Ticket: "${r.ticket_subject}") ---
+${(r.draft_text || '').substring(0, 800)}
+---`).join('\n')}
+
+CRITICAL STYLE RULES based on your past responses:
+- Match the greeting style you use (e.g. "Hi [Name]," vs "Hello [Name]," vs "Hey [Name],")
+- Match your paragraph length and structure
+- Match your sign-off style
+- Use similar phrases and vocabulary
+- Match your level of technical detail
+- Match how you acknowledge issues (empathetic vs direct vs casual)
+- If you use contractions (don't, can't, won't), keep using them
+- If you're concise, stay concise. If you're detailed, stay detailed.\n`;
+      }
+    }
+  } catch (e) {
+    // Past responses not available yet — no style learning
+  }
+
   // Build signature
   const signatureSection = agentSignature && agentSignature.trim()
     ? `\nYOUR EMAIL SIGNATURE (use this EXACTLY at the end of every response):\n${agentSignature}\n`
@@ -921,7 +974,7 @@ Description: ${ticket.description || ticket.description_text || 'No description 
 Ticket Type: ${ticketType}
 ${analysis?.SUMMARY ? `Issue Summary: ${analysis.SUMMARY}` : ''}
 ${threadContext}${similarContext}
-${casebookContext}${cannedContext}
+${casebookContext}${cannedContext}${styleContext}
 RESPONSE GUIDELINES FOR ${ticketType.toUpperCase()} TICKETS:
 ${typeGuidelines[ticketType] || typeGuidelines.general}
 
