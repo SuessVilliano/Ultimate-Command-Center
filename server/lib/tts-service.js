@@ -1,6 +1,9 @@
 /**
  * LIV8 Command Center - Unified TTS Service
- * Priority: OpenAI TTS (best quality) → Kokoro (free/open-source) → Edge TTS (legacy fallback)
+ * Priority: VoxCPM (free, voice cloning, 48kHz) → OpenAI TTS (paid) → Kokoro (free) → Edge TTS (fallback)
+ *
+ * VoxCPM is self-hosted on a GPU server. Set VOXCPM_BASE_URL env var to your instance.
+ * Supports: basic TTS, voice design from text descriptions, voice cloning from audio samples.
  */
 
 import OpenAI from 'openai';
@@ -10,18 +13,24 @@ let openaiClient = null;
 let kokoroInstance = null;
 let kokoroLoading = false;
 let kokoroFailed = false;
+let voxcpmBaseUrl = null;
+let voxcpmHealthy = false;
 
 // Voice mapping: friendly name → provider-specific voice ID
 const VOICE_MAP = {
   // OpenAI voices (natural, expressive)
-  'alloy': { openai: 'alloy', kokoro: 'af_heart', edge: 'en-US-AvaMultilingualNeural' },
-  'ash': { openai: 'ash', kokoro: 'af_heart', edge: 'en-US-AndrewMultilingualNeural' },
-  'coral': { openai: 'coral', kokoro: 'af_heart', edge: 'en-US-EmmaMultilingualNeural' },
-  'nova': { openai: 'nova', kokoro: 'af_nova', edge: 'en-US-JennyNeural' },
-  'sage': { openai: 'sage', kokoro: 'af_heart', edge: 'en-US-AriaNeural' },
-  'shimmer': { openai: 'shimmer', kokoro: 'af_heart', edge: 'en-US-AvaMultilingualNeural' },
+  'alloy': { openai: 'alloy', kokoro: 'af_heart', edge: 'en-US-AvaMultilingualNeural', voxcpm: 'A calm professional male voice' },
+  'ash': { openai: 'ash', kokoro: 'af_heart', edge: 'en-US-AndrewMultilingualNeural', voxcpm: 'A confident young male voice' },
+  'coral': { openai: 'coral', kokoro: 'af_heart', edge: 'en-US-EmmaMultilingualNeural', voxcpm: 'A warm friendly female voice' },
+  'nova': { openai: 'nova', kokoro: 'af_nova', edge: 'en-US-JennyNeural', voxcpm: 'A bright energetic female voice' },
+  'sage': { openai: 'sage', kokoro: 'af_heart', edge: 'en-US-AriaNeural', voxcpm: 'A wise authoritative female voice' },
+  'shimmer': { openai: 'shimmer', kokoro: 'af_heart', edge: 'en-US-AvaMultilingualNeural', voxcpm: 'A soft gentle female voice' },
   // Juno's default voice
-  'juno': { openai: 'nova', kokoro: 'af_nova', edge: 'en-US-AvaMultilingualNeural' },
+  'juno': { openai: 'nova', kokoro: 'af_nova', edge: 'en-US-AvaMultilingualNeural', voxcpm: 'A confident warm female assistant voice' },
+  // VoxCPM custom voices (describe any voice)
+  'commander': { openai: 'ash', kokoro: 'af_heart', edge: 'en-US-GuyNeural', voxcpm: 'A deep authoritative male command center operator voice' },
+  'support': { openai: 'coral', kokoro: 'af_heart', edge: 'en-US-JennyNeural', voxcpm: 'A patient empathetic female customer support agent voice' },
+  'analyst': { openai: 'sage', kokoro: 'af_heart', edge: 'en-US-AriaNeural', voxcpm: 'A precise analytical male voice with measured cadence' },
 };
 
 // Edge TTS voice IDs pass through directly
@@ -32,7 +41,22 @@ function isEdgeVoice(voice) {
 /**
  * Initialize TTS providers
  */
-export function initTTS() {
+export async function initTTS() {
+  // VoxCPM (highest priority — free, self-hosted, voice cloning)
+  voxcpmBaseUrl = process.env.VOXCPM_BASE_URL || process.env.VOXCPM_URL || null;
+  if (voxcpmBaseUrl) {
+    try {
+      const health = await fetch(`${voxcpmBaseUrl}/api/health`, { signal: AbortSignal.timeout(3000) });
+      voxcpmHealthy = health.ok;
+      console.log(`TTS: VoxCPM ${voxcpmHealthy ? '✅ ready' : '❌ unreachable'} at ${voxcpmBaseUrl}`);
+    } catch (e) {
+      console.log(`TTS: VoxCPM configured but offline at ${voxcpmBaseUrl}`);
+      voxcpmHealthy = false;
+    }
+  } else {
+    console.log('TTS: VoxCPM not configured (set VOXCPM_BASE_URL for free voice cloning)');
+  }
+
   // OpenAI
   const openaiKey = process.env.OPENAI_API_KEY;
   if (openaiKey) {
@@ -45,6 +69,7 @@ export function initTTS() {
   console.log('TTS: Edge TTS available as fallback');
 
   return {
+    voxcpm: voxcpmHealthy ? 'ready' : (voxcpmBaseUrl ? 'offline' : 'not configured'),
     openai: !!openaiClient,
     kokoro: 'lazy',
     edge: true
@@ -91,7 +116,7 @@ async function loadKokoro() {
  * @returns {Promise<{ audio: Buffer, provider: string, format: string }>}
  */
 export async function generateSpeech(text, options = {}) {
-  const { voice, provider: preferredProvider } = options;
+  const { voice, provider: preferredProvider, referenceAudioUrl, referenceText, voiceDescription, emotion, speed } = options;
 
   // Determine voice mapping
   const voiceKey = voice?.toLowerCase();
@@ -100,7 +125,23 @@ export async function generateSpeech(text, options = {}) {
   // If user explicitly passed an Edge voice ID, skip to edge
   const forceEdge = isEdgeVoice(voice);
 
-  // Try OpenAI first (best quality)
+  // Try VoxCPM first (free, highest quality, voice cloning)
+  if (!forceEdge && voxcpmBaseUrl && preferredProvider !== 'openai' && preferredProvider !== 'kokoro' && preferredProvider !== 'edge') {
+    try {
+      const result = await generateWithVoxCPM(text, {
+        voiceDescription: mapping?.voxcpm || voiceDescription,
+        referenceAudioUrl,
+        referenceText,
+        emotion,
+        speed
+      });
+      if (result) return result;
+    } catch (e) {
+      console.warn('TTS VoxCPM failed, trying OpenAI:', e.message);
+    }
+  }
+
+  // Try OpenAI (paid, high quality)
   if (!forceEdge && openaiClient && preferredProvider !== 'kokoro' && preferredProvider !== 'edge') {
     try {
       const openaiVoice = mapping?.openai || 'nova';
@@ -199,6 +240,17 @@ export async function getAvailableVoices() {
     })));
   }
 
+  // VoxCPM voices (free, highest quality, voice cloning capable)
+  if (voxcpmBaseUrl) {
+    voices.push(
+      { id: 'commander', name: 'Commander (VoxCPM)', provider: 'voxcpm', quality: 'studio', gender: 'Male', description: 'Deep authoritative command center operator', cloneable: true },
+      { id: 'support', name: 'Support Agent (VoxCPM)', provider: 'voxcpm', quality: 'studio', gender: 'Female', description: 'Patient empathetic customer support', cloneable: true },
+      { id: 'analyst', name: 'Analyst (VoxCPM)', provider: 'voxcpm', quality: 'studio', gender: 'Male', description: 'Precise analytical voice', cloneable: true },
+      { id: 'voxcpm_custom', name: 'Custom Voice Design (VoxCPM)', provider: 'voxcpm', quality: 'studio', gender: 'Any', description: 'Describe any voice in natural language', cloneable: true },
+      { id: 'voxcpm_clone', name: 'Cloned Voice (VoxCPM)', provider: 'voxcpm', quality: 'studio', gender: 'Any', description: 'Clone from your own audio sample', cloneable: true },
+    );
+  }
+
   // Kokoro voices
   voices.push(
     { id: 'kokoro_af_nova', name: 'Nova (Kokoro)', provider: 'kokoro', quality: 'high', gender: 'Female' },
@@ -227,6 +279,137 @@ export async function getAvailableVoices() {
   }
 
   return voices;
+}
+
+// ============ VoxCPM Integration ============
+
+/**
+ * Generate speech with VoxCPM
+ * Supports: TTS, voice design, voice cloning, ultimate cloning
+ */
+async function generateWithVoxCPM(text, options = {}) {
+  if (!voxcpmBaseUrl) return null;
+
+  const { voiceDescription, referenceAudioUrl, referenceText, emotion, speed } = options;
+
+  let endpoint;
+  let body;
+
+  if (referenceAudioUrl && referenceText) {
+    // Ultimate cloning: reference audio + transcript
+    endpoint = `${voxcpmBaseUrl}/api/clone`;
+    body = {
+      text,
+      prompt_audio: referenceAudioUrl,
+      prompt_text: referenceText,
+      sample_rate: 48000
+    };
+  } else if (referenceAudioUrl) {
+    // Voice cloning with optional style control
+    endpoint = `${voxcpmBaseUrl}/api/clone`;
+    body = {
+      text,
+      reference_audio: referenceAudioUrl,
+      control: emotion || undefined,
+      sample_rate: 48000
+    };
+  } else {
+    // Voice design or basic TTS
+    endpoint = `${voxcpmBaseUrl}/api/tts`;
+    const textWithDesign = voiceDescription
+      ? `(${voiceDescription})${text}`
+      : text;
+
+    body = {
+      text: textWithDesign,
+      cfg_value: 2.0,
+      inference_timesteps: 10,
+      sample_rate: 48000
+    };
+  }
+
+  if (speed) body.speed = speed;
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30000)
+  });
+
+  if (!response.ok) {
+    throw new Error(`VoxCPM returned ${response.status}`);
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+
+  if (contentType.includes('audio') || contentType.includes('octet-stream')) {
+    const arrayBuffer = await response.arrayBuffer();
+    const audio = Buffer.from(arrayBuffer);
+    const format = contentType.includes('wav') ? 'audio/wav' : 'audio/mpeg';
+
+    return { audio, provider: 'voxcpm', format, voice: voiceDescription || 'default' };
+  }
+
+  // JSON response with URL
+  const data = await response.json();
+  if (data.audio_url || data.url) {
+    const audioResponse = await fetch(data.audio_url || data.url);
+    const audio = Buffer.from(await audioResponse.arrayBuffer());
+    return { audio, provider: 'voxcpm', format: 'audio/wav', voice: voiceDescription || 'default' };
+  }
+
+  return null;
+}
+
+/**
+ * Clone a voice from reference audio
+ * @param {string} referenceAudioUrl - URL to voice sample (5+ seconds)
+ * @param {string} text - Text to speak in the cloned voice
+ * @param {Object} options - { referenceText, emotion, speed }
+ * @returns {Promise<{ audio: Buffer, provider: string, format: string }>}
+ */
+export async function cloneVoice(referenceAudioUrl, text, options = {}) {
+  if (!voxcpmBaseUrl) throw new Error('VoxCPM not configured. Set VOXCPM_BASE_URL.');
+
+  return generateWithVoxCPM(text, {
+    referenceAudioUrl,
+    referenceText: options.referenceText,
+    emotion: options.emotion,
+    speed: options.speed
+  });
+}
+
+/**
+ * Design a new voice from a text description
+ * @param {string} description - Natural language voice description (e.g. "young confident male, deep tone")
+ * @param {string} text - Text to speak with the designed voice
+ * @returns {Promise<{ audio: Buffer, provider: string, format: string }>}
+ */
+export async function designVoice(description, text, options = {}) {
+  if (!voxcpmBaseUrl) throw new Error('VoxCPM not configured. Set VOXCPM_BASE_URL.');
+
+  return generateWithVoxCPM(text, {
+    voiceDescription: description,
+    speed: options.speed
+  });
+}
+
+/**
+ * Check VoxCPM server health
+ */
+export async function checkVoxCPMHealth() {
+  if (!voxcpmBaseUrl) return { online: false, configured: false };
+
+  try {
+    const response = await fetch(`${voxcpmBaseUrl}/api/health`, { signal: AbortSignal.timeout(5000) });
+    voxcpmHealthy = response.ok;
+    const data = response.ok ? await response.json().catch(() => ({})) : {};
+    return { online: response.ok, configured: true, url: voxcpmBaseUrl, model: data.model || 'VoxCPM2' };
+  } catch (e) {
+    voxcpmHealthy = false;
+    return { online: false, configured: true, url: voxcpmBaseUrl, error: e.message };
+  }
 }
 
 /**
@@ -271,10 +454,12 @@ function float32ToWav(float32Array, sampleRate = 24000) {
  */
 export function getTTSStatus() {
   return {
+    voxcpm: voxcpmBaseUrl ? (voxcpmHealthy ? 'ready' : 'offline') : 'not_configured',
+    voxcpmUrl: voxcpmBaseUrl || null,
     openai: !!openaiClient,
     kokoro: kokoroInstance ? 'loaded' : kokoroFailed ? 'failed' : 'not_loaded',
     edge: true,
-    primary: openaiClient ? 'openai' : 'kokoro'
+    primary: (voxcpmBaseUrl && voxcpmHealthy) ? 'voxcpm' : openaiClient ? 'openai' : 'kokoro'
   };
 }
 
@@ -283,5 +468,8 @@ export default {
   generateSpeech,
   generateSpeechBase64,
   getAvailableVoices,
-  getTTSStatus
+  getTTSStatus,
+  cloneVoice,
+  designVoice,
+  checkVoxCPMHealth
 };

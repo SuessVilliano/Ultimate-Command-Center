@@ -1053,8 +1053,9 @@ app.get('/api/tts/voices', async (req, res) => {
     res.json({
       voices,
       recommended: [
-        'nova', 'coral', 'sage', 'shimmer', 'alloy',  // OpenAI (premium)
-        'kokoro_af_nova', 'kokoro_af_heart',             // Kokoro (free)
+        'commander', 'support', 'analyst',                // VoxCPM (free, studio quality)
+        'nova', 'coral', 'sage', 'shimmer', 'alloy',     // OpenAI (premium)
+        'kokoro_af_nova', 'kokoro_af_heart',              // Kokoro (free)
         'en-US-AvaMultilingualNeural',                    // Edge (fallback)
         'en-US-AndrewMultilingualNeural',
       ],
@@ -1082,6 +1083,90 @@ app.post('/api/tts/speak', async (req, res) => {
     res.send(result.audio);
   } catch (error) {
     console.error('TTS error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// VOXCPM VOICE CLONING & DESIGN
+// Free, self-hosted TTS with voice cloning
+// ============================================
+
+// Clone a voice from audio sample
+app.post('/api/tts/clone', async (req, res) => {
+  try {
+    const { text, referenceAudioUrl, referenceText, emotion, speed } = req.body;
+    if (!text) return res.status(400).json({ error: 'text is required' });
+    if (!referenceAudioUrl) return res.status(400).json({ error: 'referenceAudioUrl is required (URL to voice sample)' });
+
+    const result = await ttsService.cloneVoice(referenceAudioUrl, text, { referenceText, emotion, speed });
+
+    res.set({
+      'Content-Type': result.format,
+      'Content-Length': result.audio.length,
+      'X-TTS-Provider': 'voxcpm',
+      'X-Clone-Mode': referenceText ? 'ultimate' : 'standard',
+    });
+    res.send(result.audio);
+  } catch (error) {
+    console.error('Voice clone error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Design a voice from text description
+app.post('/api/tts/design', async (req, res) => {
+  try {
+    const { text, description, speed } = req.body;
+    if (!text) return res.status(400).json({ error: 'text is required' });
+    if (!description) return res.status(400).json({ error: 'description is required (e.g. "young confident male, deep tone")' });
+
+    const result = await ttsService.designVoice(description, text, { speed });
+
+    res.set({
+      'Content-Type': result.format,
+      'Content-Length': result.audio.length,
+      'X-TTS-Provider': 'voxcpm',
+    });
+    res.send(result.audio);
+  } catch (error) {
+    console.error('Voice design error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Check VoxCPM server health
+app.get('/api/tts/voxcpm/health', async (req, res) => {
+  try {
+    const health = await ttsService.checkVoxCPMHealth();
+    res.json(health);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Speak with voice cloning (shortcut: text + voice sample → audio)
+app.post('/api/tts/speak-as', async (req, res) => {
+  try {
+    const { text, referenceAudioUrl, voice, voiceDescription, emotion, speed } = req.body;
+    if (!text) return res.status(400).json({ error: 'text is required' });
+
+    const result = await ttsService.generateSpeech(text, {
+      voice: voice || 'commander',
+      referenceAudioUrl,
+      voiceDescription,
+      emotion,
+      speed
+    });
+
+    res.set({
+      'Content-Type': result.format,
+      'Content-Length': result.audio.length,
+      'X-TTS-Provider': result.provider,
+    });
+    res.send(result.audio);
+  } catch (error) {
+    console.error('Speak-as error:', error);
     res.status(500).json({ error: error.message });
   }
 });
