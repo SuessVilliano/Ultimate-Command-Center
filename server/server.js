@@ -3534,21 +3534,24 @@ app.post('/api/commander/chat', async (req, res) => {
     const analysisMap = db.getAllAnalysisMap();
 
     if (tickets.length > 0) {
-      context += `\n\n=== CURRENT SUPPORT TICKETS (${tickets.length} total) ===\n`;
+      // Only include ACTIVE tickets in context to stay within token limits
+      const activeTickets = tickets.filter(t => [2, 3, 6, 7].includes(t.status));
+      const resolvedCount = tickets.filter(t => [4, 5].includes(t.status)).length;
+
+      context += `\n\n=== SUPPORT QUEUE (${activeTickets.length} active, ${resolvedCount} resolved/closed) ===\n`;
 
       // Group by status
       const statusGroups = {
-        'Open': tickets.filter(t => t.status === 2),
-        'Pending': tickets.filter(t => t.status === 3),
-        'Waiting on Customer': tickets.filter(t => t.status === 6),
-        'On Hold': tickets.filter(t => t.status === 7),
-        'Resolved': tickets.filter(t => t.status === 4)
+        'Open': activeTickets.filter(t => t.status === 2),
+        'Pending': activeTickets.filter(t => t.status === 3),
+        'Waiting on Customer': activeTickets.filter(t => t.status === 6),
+        'On Hold': activeTickets.filter(t => t.status === 7)
       };
 
       for (const [status, group] of Object.entries(statusGroups)) {
         if (group.length > 0) {
           context += `\n${status} (${group.length}):\n`;
-          for (const ticket of group) {
+          for (const ticket of group.slice(0, 20)) { // Cap at 20 per status to limit tokens
             const analysis = analysisMap[String(ticket.id)];
             context += `  - #${ticket.id}: ${ticket.subject}\n`;
             context += `    Requester: ${ticket.requester?.name || 'Unknown'}\n`;
