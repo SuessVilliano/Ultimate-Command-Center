@@ -137,6 +137,18 @@ function loadVectorStore() {
  * Add document to vector store
  */
 export function addDocument(content, metadata = {}, sourceId = null) {
+  // Prevent duplicate entries for the same source (ticket/casebook)
+  if (sourceId) {
+    const existing = vectorStore.findIndex(doc => doc.sourceId === sourceId);
+    if (existing !== -1) {
+      // Update existing instead of adding duplicate
+      vectorStore[existing].content = content;
+      vectorStore[existing].embedding = createSimpleEmbedding(content);
+      vectorStore[existing].metadata = metadata;
+      return vectorStore[existing].id;
+    }
+  }
+
   const id = uuidv4();
   const embedding = createSimpleEmbedding(content);
 
@@ -210,9 +222,17 @@ export function searchSimilar(query, limit = 5, threshold = 0.1) {
     score: cosineSimilarity(queryEmbedding, doc.embedding)
   }));
 
+  // Deduplicate by ticket ID — keep only the highest-scoring entry per ticket
+  const seen = new Set();
   return scored
     .filter(doc => doc.score >= threshold)
     .sort((a, b) => b.score - a.score)
+    .filter(doc => {
+      const ticketId = doc.metadata?.ticketId || doc.metadata?.casebookId || doc.content;
+      if (seen.has(ticketId)) return false;
+      seen.add(ticketId);
+      return true;
+    })
     .slice(0, limit);
 }
 
