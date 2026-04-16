@@ -334,8 +334,8 @@ function parseProviderError(provider, error) {
  * Get fallback provider order (excluding the failed one)
  */
 function getFallbackProviders(failedProvider) {
-  // Fallback order: Gemini first (free + reliable), then others, Claude last (expensive)
-  const allProviders = ['gemini', 'groq', 'kimi', 'openai', 'claude'];
+  // Fallback order: FREE providers first, then paid ones. Claude LAST (most expensive).
+  const allProviders = ['groq', 'gemini', 'kimi', 'openai', 'claude'];
   const availableMap = { claude: !!anthropicClient, openai: !!openaiClient, gemini: !!geminiClient, kimi: !!kimiApiKey, groq: !!groqApiKey };
   return allProviders.filter(p => p !== failedProvider && availableMap[p]);
 }
@@ -383,97 +383,79 @@ function isCodeRelated(messages) {
 }
 
 /**
- * Main chat completion function - works with all providers
- * Routes: Gemini for general chat (free), Claude for code tasks only
- * Includes automatic fallback to other available providers on failure
+ * Main chat completion function — BULLETPROOF provider routing
+ *
+ * Priority: groq (free, fast) → gemini (free) → kimi (free) → openai → claude (expensive, last resort)
+ * ALWAYS tries every available provider before giving up.
+ * Rate limits get exponential backoff retry (15s, then 30s).
+ * Never stops at one provider failure.
  */
 export async function chat(messages, options = {}) {
-  // Smart routing: use Claude for code, Gemini for everything else
-  let provider = options.provider || currentProvider;
-  let model = options.model || currentModel;
-
-  // Auto-route to Claude for code tasks, Gemini for everything else
-  if (!options.provider && isCodeRelated(messages) && anthropicClient) {
-    provider = 'claude';
-    model = getDefaultModel('claude');
-  } else if (!options.provider && geminiClient) {
-    // Default to Gemini (free and reliable) — NOT cheapest rotation
-    provider = 'gemini';
-    model = getDefaultModel('gemini');
-  }
+  const provider = options.provider || currentProvider;
+  const model = options.model || currentModel;
   const maxTokens = options.maxTokens || 1024;
   const temperature = options.temperature || 0.7;
   const systemPrompt = options.systemPrompt || null;
   const agentId = options.agentId || null;
-
   const chatOptions = { model, maxTokens, temperature, systemPrompt };
+
+  // Build the full provider chain: primary first, then all available fallbacks
+  const primaryProvider = { name: provider, model };
+  const fallbacks = getFallbackProviders(provider).map(p => ({ name: p, model: getDefaultModel(p) }));
+  const allProviders = [primaryProvider, ...fallbacks];
+
   const errors = [];
 
-  // Try primary provider first (with one retry for rate limits)
-  try {
-    const result = await callProvider(provider, messages, chatOptions);
-
-    if (agentId) {
-      try { logAgentInteraction(agentId, 'chat', { messages, options }, { text: result.text, model, provider }, '', true); } catch (e) {}
-    }
-
-    return { text: result.text, provider, model, usage: result.usage };
-  } catch (error) {
-    const parsed = parseProviderError(provider, error);
-    console.warn(`Primary provider ${provider} failed (${parsed.type}): ${parsed.userMessage}`);
-    errors.push({ provider, error: parsed });
-
-    // For rate limits, retry once after a short delay
-    if (parsed.type === 'rate_limit') {
+  for (const p of allProviders) {
+    // Try this provider with up to 2 retries for rate limits
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        console.log(`Retrying ${provider} after rate limit (2s delay)...`);
-        await sleep(2000);
-        const result = await callProvider(provider, messages, chatOptions);
+        const result = await callProvider(p.name, messages, { ...chatOptions, model: p.model });
 
         if (agentId) {
-          try { logAgentInteraction(agentId, 'chat', { messages, options }, { text: result.text, model, provider }, '', true); } catch (e) {}
+          try { logAgentInteraction(agentId, 'chat', { messages, options }, { text: result.text, model: p.model, provider: p.name }, '', true); } catch (e) {}
         }
 
-        return { text: result.text, provider, model, usage: result.usage };
-      } catch (retryError) {
-        console.warn(`Retry for ${provider} also failed, trying fallback providers...`);
-      }
-    }
-
-    // If error is not retryable (bad key), or retry failed, try fallback providers
-    if (parsed.retryable || parsed.type === 'auth') {
-      const fallbacks = getFallbackProviders(provider);
-      for (const fallbackProvider of fallbacks) {
-        try {
-          console.log(`Trying fallback provider: ${fallbackProvider}`);
-          const fallbackModel = getDefaultModel(fallbackProvider);
-          const result = await callProvider(fallbackProvider, messages, { ...chatOptions, model: fallbackModel });
-
-          if (agentId) {
-            try { logAgentInteraction(agentId, 'chat', { messages, options }, { text: result.text, model: fallbackModel, provider: fallbackProvider }, '', true); } catch (e) {}
-          }
-
-          return { text: result.text, provider: fallbackProvider, model: fallbackModel, usage: result.usage, fallbackFrom: provider };
-        } catch (fallbackError) {
-          const fallbackParsed = parseProviderError(fallbackProvider, fallbackError);
-          console.warn(`Fallback provider ${fallbackProvider} also failed: ${fallbackParsed.userMessage}`);
-          errors.push({ provider: fallbackProvider, error: fallbackParsed });
+        if (p.name !== provider) {
+          console.log(`[AI] Used fallback: ${p.name} (primary ${provider} failed)`);
         }
+
+        return { text: result.text, provider: p.name, model: p.model, usage: result.usage, fallbackFrom: p.name !== provider ? provider : undefined };
+      } catch (error) {
+        const parsed = parseProviderError(p.name, error);
+        const isRateLimit = parsed.type === 'rate_limit' || /rate.?limit|quota|429|too many/i.test(error.message || '');
+        const isAuthError = parsed.type === 'auth' || /credit|balance|unauthorized|invalid.*key|api.*key/i.test(error.message || '');
+
+        if (isRateLimit && attempt < 2) {
+          // Exponential backoff for rate limits: 15s, then 30s
+          const backoffMs = (attempt + 1) * 15000;
+          console.log(`[AI] ${p.name} rate limited, waiting ${backoffMs / 1000}s (attempt ${attempt + 1}/3)...`);
+          await sleep(backoffMs);
+          continue; // Retry same provider
+        }
+
+        if (isAuthError) {
+          // Don't retry auth errors — provider is dead, move to next
+          console.warn(`[AI] ${p.name} auth/billing error: ${parsed.userMessage.substring(0, 100)}`);
+          errors.push({ provider: p.name, error: parsed });
+          break; // Move to next provider
+        }
+
+        // Any other error — log and move on
+        console.warn(`[AI] ${p.name} failed (${parsed.type}): ${parsed.userMessage.substring(0, 100)}`);
+        errors.push({ provider: p.name, error: parsed });
+        break; // Move to next provider
       }
     }
-
-    // All providers failed - throw a user-friendly error
-    if (agentId) {
-      try { logAgentInteraction(agentId, 'chat', { messages, options }, { error: errors[0].error.userMessage }, '', false); } catch (e) {}
-    }
-
-    // Build a helpful combined error message
-    const primaryError = errors[0].error;
-    if (errors.length === 1) {
-      throw new Error(primaryError.userMessage);
-    }
-    throw new Error(`All AI providers failed. ${primaryError.userMessage} ${errors.length - 1} fallback provider(s) also failed.`);
   }
+
+  // ALL providers exhausted
+  if (agentId) {
+    try { logAgentInteraction(agentId, 'chat', { messages, options }, { error: 'All providers failed' }, '', false); } catch (e) {}
+  }
+
+  const triedProviders = errors.map(e => `${e.provider}: ${e.error.userMessage.substring(0, 60)}`).join(' | ');
+  throw new Error(`All ${errors.length} AI providers failed. Tried: ${triedProviders}`);
 }
 
 /**

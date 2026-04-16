@@ -644,12 +644,23 @@ function Tickets() {
 
       setTickets(uniqueTickets);
 
-      // Cache tickets locally
-      localStorage.setItem(STORAGE_KEYS.TICKETS_CACHE, JSON.stringify({
-        tickets: uniqueTickets,
-        analysis: aiAnalysis,
-        timestamp: Date.now()
-      }));
+      // Cache tickets locally (only active tickets, stripped descriptions to avoid quota)
+      try {
+        const activeOnly = uniqueTickets.filter(t => [2,3,6,7].includes(t.status)).slice(0, 50);
+        const lightweight = activeOnly.map(t => ({
+          id: t.id, subject: t.subject, status: t.status, priority: t.priority,
+          created_at: t.created_at, updated_at: t.updated_at, type: t.type,
+          requester_name: t.requester_name, requester_email: t.requester_email
+        }));
+        localStorage.setItem(STORAGE_KEYS.TICKETS_CACHE, JSON.stringify({
+          tickets: lightweight,
+          analysis: aiAnalysis,
+          timestamp: Date.now()
+        }));
+      } catch (e) {
+        console.warn('Ticket cache too large for localStorage, skipping cache');
+        try { localStorage.removeItem(STORAGE_KEYS.TICKETS_CACHE); } catch {}
+      }
 
       // Sync all tickets to backend for persistence (v2.0)
       syncTicketsToBackend(uniqueTickets);
@@ -793,11 +804,15 @@ function Tickets() {
       setAiAnalysis(prev => {
         const updated = { ...prev, [ticket.id]: analysis };
         // Update cache with latest state
-        localStorage.setItem(STORAGE_KEYS.TICKETS_CACHE, JSON.stringify({
-          tickets,
-          analysis: updated,
-          timestamp: Date.now()
-        }));
+        try {
+          localStorage.setItem(STORAGE_KEYS.TICKETS_CACHE, JSON.stringify({
+            tickets: [], // analyses stored separately, tickets fetched from backend
+            analysis: updated,
+            timestamp: Date.now()
+          }));
+        } catch (e) {
+          try { localStorage.removeItem(STORAGE_KEYS.TICKETS_CACHE); } catch {}
+        }
         return updated;
       });
 

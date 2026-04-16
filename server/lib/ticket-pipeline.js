@@ -211,15 +211,31 @@ export async function processTicket(ticketId, options = {}) {
  */
 export async function processMultipleTickets(ticketIds, options = {}) {
   const results = [];
-  const delayMs = options.delayMs || 500;
+  const delayMs = options.delayMs || 2000; // Bumped from 500ms to 2s to stay under Groq rate limits
 
   for (let i = 0; i < ticketIds.length; i++) {
-    try {
-      const result = await processTicket(ticketIds[i], options);
-      results.push(result);
-    } catch (error) {
-      results.push({ ticketId: ticketIds[i], error: error.message });
+    let retries = 0;
+    let result = null;
+
+    while (retries < 3) {
+      try {
+        result = await processTicket(ticketIds[i], options);
+        break;
+      } catch (error) {
+        const isRateLimit = /rate limit|quota|429|too many/i.test(error.message || '');
+        if (isRateLimit && retries < 2) {
+          const backoffMs = (retries + 1) * 15000; // 15s, then 30s
+          console.log(`[Pipeline] Rate limited on ticket ${ticketIds[i]}, backing off ${backoffMs}ms (retry ${retries + 1}/2)`);
+          await new Promise(r => setTimeout(r, backoffMs));
+          retries++;
+        } else {
+          result = { ticketId: ticketIds[i], error: error.message };
+          break;
+        }
+      }
     }
+
+    results.push(result);
 
     // Rate limit between tickets
     if (i < ticketIds.length - 1) {
