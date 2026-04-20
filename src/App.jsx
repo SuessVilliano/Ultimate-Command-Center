@@ -23,6 +23,7 @@ import Trading from './pages/Trading';
 import VoiceAgents from './pages/VoiceAgents';
 import APIBuilder from './pages/APIBuilder';
 import Glasses from './pages/Glasses';
+import ContentEngine from './pages/ContentEngine';
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -102,6 +103,8 @@ function AppContent() {
         return <APIBuilder />;
       case 'admin':
         return <AdminPanel />;
+      case 'content-engine':
+        return <ContentEngine />;
       case 'glasses':
         return <Glasses onExit={() => setActivePage('dashboard')} />;
       default:

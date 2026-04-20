@@ -34,6 +34,7 @@ const menuItems = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'agent-team', label: 'Agent Team', icon: Bot },
   { id: 'trading', label: 'Trading Hub', icon: BarChart3 },
+  { id: 'content-engine', label: 'Content Engine', icon: TrendingUp },
   { id: 'voice-agents', label: 'Voice Agents', icon: Mic },
   { id: 'api-builder', label: 'API / MCP Builder', icon: Terminal },
   { id: 'inbox', label: 'Team Inbox', icon: MessageSquare },
