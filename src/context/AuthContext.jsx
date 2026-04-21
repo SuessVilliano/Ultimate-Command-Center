@@ -9,47 +9,80 @@ const AUTH_KEYS = {
   ADMIN_SETUP: 'liv8_admin_setup'
 };
 
-// Default admin account
-const DEFAULT_ADMIN = {
-  id: 'admin_001',
-  username: 'admin',
-  password: 'LIV8Command2026!', // Change this after first login
-  name: 'SV',
-  email: 'liv8ent@gmail.com',
-  role: 'admin',
-  agentName: 'SV - GoHighLevel Support',
-  createdAt: new Date().toISOString(),
-  lastLogin: null
-};
+// Legacy default admin password that was shipped in the public bundle.
+// Any existing user still carrying this credential is forced back through
+// first-run setup so they pick a private password.
+const LEAKED_ADMIN_PASSWORD = 'LIV8Command2026!';
 
 export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
   const [users, setUsers] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Initialize auth state
+  // Initialize auth state. We no longer seed a default admin — the user is
+  // prompted to create one on first launch via `setupAdmin`.
   useEffect(() => {
     const storedUsers = localStorage.getItem(AUTH_KEYS.USERS);
     const storedCurrentUser = localStorage.getItem(AUTH_KEYS.CURRENT_USER);
-    const adminSetup = localStorage.getItem(AUTH_KEYS.ADMIN_SETUP);
 
-    // Initialize with default admin if first time
-    if (!adminSetup) {
-      const initialUsers = [DEFAULT_ADMIN];
-      localStorage.setItem(AUTH_KEYS.USERS, JSON.stringify(initialUsers));
-      localStorage.setItem(AUTH_KEYS.ADMIN_SETUP, 'true');
-      setUsers(initialUsers);
-    } else if (storedUsers) {
-      setUsers(JSON.parse(storedUsers));
+    let loadedUsers = storedUsers ? JSON.parse(storedUsers) : [];
+
+    // Scrub any account still using the leaked default password.
+    const scrubbed = loadedUsers.filter(u => u.password !== LEAKED_ADMIN_PASSWORD);
+    if (scrubbed.length !== loadedUsers.length) {
+      localStorage.setItem(AUTH_KEYS.USERS, JSON.stringify(scrubbed));
+      localStorage.removeItem(AUTH_KEYS.CURRENT_USER);
+      localStorage.removeItem(AUTH_KEYS.ADMIN_SETUP);
+      loadedUsers = scrubbed;
     }
 
-    // Restore session if exists
+    setUsers(loadedUsers);
+
+    // Only restore the session if that user still exists after scrubbing.
     if (storedCurrentUser) {
-      setCurrentUser(JSON.parse(storedCurrentUser));
+      const parsed = JSON.parse(storedCurrentUser);
+      if (loadedUsers.some(u => u.id === parsed.id)) {
+        setCurrentUser(parsed);
+      } else {
+        localStorage.removeItem(AUTH_KEYS.CURRENT_USER);
+      }
     }
 
     setIsLoading(false);
   }, []);
+
+  // First-run admin creation. Callable only while no admin exists, so an
+  // attacker with network access can't use it to seize an already-configured
+  // instance.
+  const setupAdmin = ({ username, password, name, email }) => {
+    if (users.some(u => u.role === 'admin')) {
+      return { success: false, error: 'Admin already exists' };
+    }
+    if (!username || !password) {
+      return { success: false, error: 'Username and password required' };
+    }
+    if (password === LEAKED_ADMIN_PASSWORD) {
+      return { success: false, error: 'Choose a different password' };
+    }
+    const admin = {
+      id: 'admin_001',
+      username,
+      password,
+      name: name || username,
+      email: email || '',
+      role: 'admin',
+      agentName: name || username,
+      createdAt: new Date().toISOString(),
+      lastLogin: new Date().toISOString()
+    };
+    const next = [admin];
+    setUsers(next);
+    setCurrentUser(admin);
+    localStorage.setItem(AUTH_KEYS.USERS, JSON.stringify(next));
+    localStorage.setItem(AUTH_KEYS.CURRENT_USER, JSON.stringify(admin));
+    localStorage.setItem(AUTH_KEYS.ADMIN_SETUP, 'true');
+    return { success: true, user: admin };
+  };
 
   // Login function
   const login = (username, password) => {
@@ -175,8 +208,10 @@ export function AuthProvider({ children }) {
     isLoading,
     isAuthenticated: !!currentUser,
     isAdmin: currentUser?.role === 'admin',
+    isSetupNeeded: !users.some(u => u.role === 'admin'),
     login,
     logout,
+    setupAdmin,
     createUser,
     updateUser,
     deleteUser,

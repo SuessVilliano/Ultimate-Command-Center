@@ -74,6 +74,27 @@ const upload = multer({
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// Guard for mutation endpoints that write secrets or server settings.
+// Set ADMIN_TOKEN in the server environment and the client sends it as
+// `X-Admin-Token` (or `Authorization: Bearer …`). If ADMIN_TOKEN is unset the
+// server refuses to open these endpoints at all rather than silently allowing
+// everyone, so a missing config fails closed.
+function requireAdminToken(req, res, next) {
+  const expected = process.env.ADMIN_TOKEN;
+  if (!expected) {
+    return res.status(503).json({
+      error: 'ADMIN_TOKEN not configured on server. Refusing to expose privileged endpoint.'
+    });
+  }
+  const header = req.get('x-admin-token') || '';
+  const bearer = (req.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  const provided = header || bearer;
+  if (!provided || provided !== expected) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+}
+
 // ============================================
 // INITIALIZATION
 // ============================================
@@ -231,7 +252,7 @@ app.post('/api/ai/switch', (req, res) => {
 });
 
 // Update API key
-app.post('/api/ai/key', (req, res) => {
+app.post('/api/ai/key', requireAdminToken, (req, res) => {
   try {
     const { provider, apiKey } = req.body;
 
@@ -2285,7 +2306,7 @@ app.get('/api/settings', (req, res) => {
 });
 
 // Update setting
-app.post('/api/settings', (req, res) => {
+app.post('/api/settings', requireAdminToken, (req, res) => {
   try {
     const { key, value } = req.body;
     db.setSetting(key, value);
@@ -2296,7 +2317,7 @@ app.post('/api/settings', (req, res) => {
 });
 
 // Bulk update settings
-app.post('/api/settings/bulk', (req, res) => {
+app.post('/api/settings/bulk', requireAdminToken, (req, res) => {
   try {
     const { settings } = req.body;
     for (const [key, value] of Object.entries(settings)) {
@@ -2330,6 +2351,77 @@ app.get('/api/agents/:agentId/history', (req, res) => {
     res.json({ history });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// FRESHDESK PROXY — keeps the API key server-side
+// ============================================
+
+// List tickets assigned to the configured agent across all active statuses.
+// This is what the Tickets page calls on load; the API key never touches the
+// browser.
+app.get('/api/freshdesk/my-tickets', async (req, res) => {
+  const domain = process.env.FRESHDESK_DOMAIN;
+  const apiKey = process.env.FRESHDESK_API_KEY;
+  const agentId = process.env.FRESHDESK_AGENT_ID;
+  if (!domain || !apiKey || !agentId) {
+    return res.status(503).json({ error: 'Freshdesk not configured on server' });
+  }
+  const baseUrl = `https://${domain}.freshdesk.com/api/v2`;
+  const auth = Buffer.from(`${apiKey}:X`).toString('base64');
+  const headers = { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' };
+  const statuses = [2, 3, 6, 7, 4, 5]; // open, pending, waiting-customer, waiting-3p, resolved, closed
+
+  const fetchAllPages = async (status) => {
+    const all = [];
+    for (let page = 1; page <= 5; page++) {
+      try {
+        const query = encodeURIComponent(`"agent_id:${agentId} AND status:${status}"`);
+        const r = await fetch(`${baseUrl}/search/tickets?query=${query}&page=${page}`, { headers });
+        if (!r.ok) break;
+        const data = await r.json();
+        const results = data.results || [];
+        all.push(...results);
+        if (results.length < 30) break;
+      } catch {
+        break;
+      }
+    }
+    return all;
+  };
+
+  try {
+    const batches = await Promise.all(statuses.map(fetchAllPages));
+    const unique = Array.from(new Map(batches.flat().map(t => [t.id, t])).values());
+    unique.sort((a, b) =>
+      (b.priority - a.priority) ||
+      (a.status - b.status) ||
+      (new Date(b.created_at) - new Date(a.created_at))
+    );
+    res.json({ tickets: unique, domain });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// Fetch the conversation thread for a single ticket.
+app.get('/api/freshdesk/tickets/:id/conversations', async (req, res) => {
+  const domain = process.env.FRESHDESK_DOMAIN;
+  const apiKey = process.env.FRESHDESK_API_KEY;
+  if (!domain || !apiKey) {
+    return res.status(503).json({ error: 'Freshdesk not configured on server' });
+  }
+  const auth = Buffer.from(`${apiKey}:X`).toString('base64');
+  try {
+    const r = await fetch(
+      `https://${domain}.freshdesk.com/api/v2/tickets/${req.params.id}/conversations`,
+      { headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' } }
+    );
+    if (!r.ok) return res.status(r.status).json({ error: `Freshdesk ${r.status}` });
+    res.json(await r.json());
+  } catch (err) {
+    res.status(502).json({ error: err.message });
   }
 });
 
@@ -2960,7 +3052,7 @@ app.get('/api/integrations/status', async (req, res) => {
 });
 
 // Store integration credential
-app.post('/api/integrations/credential', (req, res) => {
+app.post('/api/integrations/credential', requireAdminToken, (req, res) => {
   try {
     const { service, key, value } = req.body;
     integrations.setIntegrationCredential(service, key, value);

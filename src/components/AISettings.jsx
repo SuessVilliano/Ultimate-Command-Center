@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, Check, X, Eye, EyeOff, RefreshCw } from 'lucide-react';
-import { API_URL } from '../config';
+import { API_URL, adminAuthHeaders } from '../config';
 
 const BACKEND_URL = API_URL;
 
@@ -101,7 +101,7 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
       setSaving(true);
       const response = await fetch(`${BACKEND_URL}/api/ai/key`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...adminAuthHeaders() },
         body: JSON.stringify({ provider: providerId, apiKey: key })
       });
 

@@ -21,23 +21,39 @@ const STORAGE_KEYS = {
   INTEGRATIONS: 'liv8_integrations'
 };
 
-// Pre-configured integrations (will be stored in localStorage)
-const DEFAULT_INTEGRATIONS = {
-  freshdesk: {
-    domain: 'gohighlevelassist',
-    apiKey: 'jtPOes8ocVu4sv98Gf7s',
-    agentId: '155014160586'
-  },
-  clickup: {
-    apiKey: 'pk_94888363_PUI34L440WNP55XCJ9HZMXX22U7X05ED'
-  },
-  twilio: {
-    userSid: 'USfc019fdcbcee43d3ad6bc3c2f47e0b'
-  },
-  taskmagic: {
-    mcpToken: '8gYMmWQYO4NM2oLg7NRJN'
-  }
+// Integration config is loaded from localStorage only. Real credentials live
+// server-side in environment variables; the browser never holds them. Users
+// configure non-secret fields (domain, agent ID, list IDs) via the
+// Integrations UI.
+const EMPTY_INTEGRATIONS = {
+  freshdesk: { domain: '', agentId: '' },
+  clickup: {},
+  twilio: {},
+  taskmagic: {}
 };
+
+// Values that were shipped in an earlier build and must be scrubbed from any
+// existing user's localStorage on load.
+const LEAKED_VALUES = new Set([
+  'jtPOes8ocVu4sv98Gf7s',
+  'pk_94888363_PUI34L440WNP55XCJ9HZMXX22U7X05ED',
+  'USfc019fdcbcee43d3ad6bc3c2f47e0b',
+  '8gYMmWQYO4NM2oLg7NRJN'
+]);
+
+function sanitizeLegacyIntegrations(stored) {
+  if (!stored || typeof stored !== 'object') return null;
+  const cleaned = {};
+  for (const [service, cfg] of Object.entries(stored)) {
+    if (!cfg || typeof cfg !== 'object') continue;
+    cleaned[service] = {};
+    for (const [k, v] of Object.entries(cfg)) {
+      if (typeof v === 'string' && LEAKED_VALUES.has(v)) continue; // drop
+      cleaned[service][k] = v;
+    }
+  }
+  return cleaned;
+}
 
 // System context for the AI
 const SYSTEM_CONTEXT = `You are LIV8 Commander, an AI orchestrator and business partner helping the user build their empire and become a multi-millionaire.
@@ -96,12 +112,11 @@ class AIService {
     this.memoryFacts = [];
     this.integrationStatus = {};
 
-    // Initialize integrations with defaults if not set
-    this.integrations = this.loadFromStorage(STORAGE_KEYS.INTEGRATIONS, null);
-    if (!this.integrations) {
-      this.integrations = DEFAULT_INTEGRATIONS;
-      this.saveToStorage(STORAGE_KEYS.INTEGRATIONS, this.integrations);
-    }
+    // Load integrations from localStorage; migrate any legacy values that
+    // contain the leaked hardcoded secrets so they don't linger in the browser.
+    const stored = this.loadFromStorage(STORAGE_KEYS.INTEGRATIONS, null);
+    this.integrations = sanitizeLegacyIntegrations(stored) || { ...EMPTY_INTEGRATIONS };
+    this.saveToStorage(STORAGE_KEYS.INTEGRATIONS, this.integrations);
 
     // Check backend connection on startup
     this.checkBackendConnection();

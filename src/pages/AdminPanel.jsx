@@ -44,6 +44,22 @@ function AdminPanel() {
   // New password state
   const [newPassword, setNewPassword] = useState('');
 
+  // Server admin token state (used for privileged backend calls)
+  const [adminToken, setAdminToken] = useState(
+    typeof localStorage !== 'undefined' ? (localStorage.getItem('liv8_admin_token') || '') : ''
+  );
+  const [showAdminToken, setShowAdminToken] = useState(false);
+
+  const saveAdminToken = () => {
+    if (adminToken) {
+      localStorage.setItem('liv8_admin_token', adminToken);
+      setMessage({ type: 'success', text: 'Admin token saved locally. Privileged API calls will now authenticate.' });
+    } else {
+      localStorage.removeItem('liv8_admin_token');
+      setMessage({ type: 'success', text: 'Admin token cleared.' });
+    }
+  };
+
   if (!isAdmin) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -158,6 +174,49 @@ function AdminPanel() {
           <UserPlus className="w-4 h-4" />
           Add Team Member
         </button>
+      </div>
+
+      {/* Server Admin Token */}
+      <div className={`p-4 rounded-xl border ${
+        isDark ? 'border-purple-900/30 bg-white/5' : 'border-gray-200 bg-white'
+      }`}>
+        <div className="flex items-center gap-2 mb-2">
+          <Key className={`w-4 h-4 ${isDark ? 'text-purple-400' : 'text-purple-600'}`} />
+          <h2 className={`text-sm font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            Server Admin Token
+          </h2>
+        </div>
+        <p className={`text-xs mb-3 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+          Must match <code>ADMIN_TOKEN</code> in the server environment. Required to
+          save AI provider keys or update server settings. Stored locally in this browser only.
+        </p>
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <input
+              type={showAdminToken ? 'text' : 'password'}
+              value={adminToken}
+              onChange={(e) => setAdminToken(e.target.value)}
+              placeholder="Paste the server ADMIN_TOKEN value"
+              className={`w-full px-3 py-2 pr-10 rounded-lg border text-sm ${
+                isDark ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'
+              }`}
+            />
+            <button
+              type="button"
+              onClick={() => setShowAdminToken(!showAdminToken)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+            >
+              {showAdminToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+          <button
+            onClick={saveAdminToken}
+            className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm"
+          >
+            <Save className="w-4 h-4" />
+            Save
+          </button>
+        </div>
       </div>
 
       {/* Message */}

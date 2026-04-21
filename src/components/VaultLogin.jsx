@@ -13,9 +13,11 @@ import {
 } from 'lucide-react';
 
 function VaultLogin() {
-  const { login, isLoading } = useAuth();
+  const { login, setupAdmin, isSetupNeeded, isLoading } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isUnlocking, setIsUnlocking] = useState(false);
@@ -41,13 +43,27 @@ function VaultLogin() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+
+    if (isSetupNeeded) {
+      if (password.length < 8) {
+        setError('Password must be at least 8 characters');
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError('Passwords do not match');
+        return;
+      }
+    }
+
     setIsUnlocking(true);
     setVaultState('unlocking');
 
     // Simulate vault unlocking animation
     await new Promise(resolve => setTimeout(resolve, 1500));
 
-    const result = login(username, password);
+    const result = isSetupNeeded
+      ? setupAdmin({ username, password, name: displayName || username })
+      : login(username, password);
 
     if (result.success) {
       setVaultState('unlocked');
@@ -120,7 +136,7 @@ function VaultLogin() {
           </h1>
           <p className="text-gray-400 flex items-center justify-center gap-2">
             <Shield className="w-4 h-4" />
-            Secure Access Portal
+            {isSetupNeeded ? 'Create Admin Account' : 'Secure Access Portal'}
           </p>
         </div>
 
@@ -163,10 +179,27 @@ function VaultLogin() {
                 </div>
               </div>
 
+              {/* Display name (setup only) */}
+              {isSetupNeeded && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Display Name
+                  </label>
+                  <input
+                    type="text"
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    className="w-full px-4 py-3 bg-white/5 border border-purple-500/30 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
+                    placeholder="Your name"
+                    disabled={isUnlocking}
+                  />
+                </div>
+              )}
+
               {/* Password field */}
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Password
+                  Password{isSetupNeeded ? ' (min 8 chars)' : ''}
                 </label>
                 <div className="relative">
                   <input
@@ -174,9 +207,10 @@ function VaultLogin() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="w-full px-4 py-3 bg-white/5 border border-purple-500/30 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all pr-12"
-                    placeholder="Enter password"
+                    placeholder={isSetupNeeded ? 'Choose a strong password' : 'Enter password'}
                     required
                     disabled={isUnlocking}
+                    autoComplete={isSetupNeeded ? 'new-password' : 'current-password'}
                   />
                   <button
                     type="button"
@@ -187,6 +221,25 @@ function VaultLogin() {
                   </button>
                 </div>
               </div>
+
+              {/* Confirm password (setup only) */}
+              {isSetupNeeded && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Confirm Password
+                  </label>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="w-full px-4 py-3 bg-white/5 border border-purple-500/30 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
+                    placeholder="Retype password"
+                    required
+                    disabled={isUnlocking}
+                    autoComplete="new-password"
+                  />
+                </div>
+              )}
 
               {/* Error message */}
               {error && (
@@ -209,12 +262,12 @@ function VaultLogin() {
                 {isUnlocking ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin" />
-                    Unlocking Vault...
+                    {isSetupNeeded ? 'Creating Admin...' : 'Unlocking Vault...'}
                   </>
                 ) : (
                   <>
                     <Lock className="w-5 h-5" />
-                    Access Command Center
+                    {isSetupNeeded ? 'Create Admin & Sign In' : 'Access Command Center'}
                   </>
                 )}
               </button>

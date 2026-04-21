@@ -12,6 +12,10 @@ services:
         value: production
       - key: PORT
         value: "3005"
+      # Required: long random string. Privileged endpoints refuse to run
+      # without it. Generate via `openssl rand -hex 32`.
+      - key: ADMIN_TOKEN
+        sync: false
       - key: AI_PROVIDER
         value: gemini
       # AI Provider API Keys - can be set in Render dashboard OR through the app's AI Settings page

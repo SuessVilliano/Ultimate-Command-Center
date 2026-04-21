@@ -31,7 +31,8 @@ import {
   X,
   Upload,
   FileText,
-  Trash2
+  Trash2,
+  Shield
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -144,7 +145,7 @@ const GHL_QUICK_LINKS = [
 ];
 
 // AI Server URL
-import { API_URL } from '../config';
+import { API_URL, adminAuthHeaders } from '../config';
 const AI_SERVER_URL = API_URL;
 
 // Schedule times for display
@@ -189,7 +190,6 @@ function Tickets() {
   const [error, setError] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [freshdeskDomain, setFreshdeskDomain] = useState('');
-  const [freshdeskApiKey, setFreshdeskApiKey] = useState('');
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [aiAnalysis, setAiAnalysis] = useState({});
   const [analyzingTicket, setAnalyzingTicket] = useState(null);
@@ -324,7 +324,7 @@ function Tickets() {
     try {
       const response = await fetch(`${AI_SERVER_URL}/api/ai/key`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...adminAuthHeaders() },
         body: JSON.stringify({ provider, apiKey })
       });
       if (response.ok) {
@@ -486,50 +486,25 @@ function Tickets() {
     loadPersistedAnalyses();
     loadScheduleHistory();
 
-    // First try to load from aiService integrations (pre-configured)
-    const integrations = aiService.getIntegrations();
-    const freshdeskConfig = integrations?.freshdesk || {};
-
-    // Use pre-configured values or fall back to localStorage
-    const domain = freshdeskConfig.domain || localStorage.getItem(STORAGE_KEYS.FRESHDESK_DOMAIN) || '';
-    const apiKey = freshdeskConfig.apiKey || localStorage.getItem(STORAGE_KEYS.FRESHDESK_API_KEY) || '';
+    // Freshdesk credentials live server-side; the browser only needs the
+    // cached ticket snapshot.
     const cached = localStorage.getItem(STORAGE_KEYS.TICKETS_CACHE);
-
-    setFreshdeskDomain(domain);
-    setFreshdeskApiKey(apiKey);
-
     if (cached) {
       try {
         const parsed = JSON.parse(cached);
         setTickets(parsed.tickets || []);
-        // Merge cached analysis with persisted (persisted takes priority)
         setAiAnalysis(prev => ({ ...(parsed.analysis || {}), ...prev }));
+        if (parsed.domain) setFreshdeskDomain(parsed.domain);
       } catch (e) {}
     }
 
-    // Auto-fetch if configured
-    if (domain && apiKey) {
-      fetchTickets(domain, apiKey);
-    } else {
-      setShowSettings(true);
-    }
+    fetchTickets();
   }, []);
 
-  // Save settings
+  // Settings panel is read-only for Freshdesk now; keep the function so the
+  // existing "Save" button still closes the panel cleanly.
   const saveSettings = () => {
-    localStorage.setItem(STORAGE_KEYS.FRESHDESK_DOMAIN, freshdeskDomain);
-    localStorage.setItem(STORAGE_KEYS.FRESHDESK_API_KEY, freshdeskApiKey);
-
-    // Also save to aiService for central management
-    aiService.updateIntegration('freshdesk', {
-      domain: freshdeskDomain,
-      apiKey: freshdeskApiKey
-    });
-
     setShowSettings(false);
-    if (freshdeskDomain && freshdeskApiKey) {
-      fetchTickets(freshdeskDomain, freshdeskApiKey);
-    }
   };
 
   // Create ClickUp task from ticket
@@ -562,85 +537,26 @@ function Tickets() {
     }
   };
 
-  // Fetch tickets from Freshdesk - ONLY for your agent ID
-  const fetchTickets = async (domain, apiKey) => {
+  // Fetch tickets via the server proxy. The Freshdesk API key stays in
+  // server-side env vars and never reaches the browser.
+  const fetchTickets = async () => {
     setLoading(true);
     setError(null);
 
     try {
-      // Get agent ID from integrations config
-      const integrations = aiService.getIntegrations();
-      const agentId = integrations?.freshdesk?.agentId || '155014160586';
-      const authHeader = 'Basic ' + btoa(apiKey + ':X');
+      const response = await fetch(`${AI_SERVER_URL}/api/freshdesk/my-tickets`);
+      if (!response.ok) {
+        let msg = `Freshdesk proxy returned ${response.status}`;
+        try {
+          const err = await response.json();
+          if (err?.error) msg = err.error;
+        } catch {}
+        throw new Error(msg);
+      }
 
-      // Helper function to fetch all pages for a status
-      const fetchAllPages = async (status) => {
-        let allResults = [];
-        let page = 1;
-        const maxPages = 5; // Safety limit
-
-        while (page <= maxPages) {
-          try {
-            const response = await fetch(
-              `https://${domain}.freshdesk.com/api/v2/search/tickets?query="agent_id:${agentId} AND status:${status}"&page=${page}`,
-              { headers: { 'Authorization': authHeader, 'Content-Type': 'application/json' } }
-            );
-
-            if (!response.ok) break;
-
-            const data = await response.json();
-            const results = data.results || [];
-            allResults = [...allResults, ...results];
-
-            // If less than 30 results, we've reached the end
-            if (results.length < 30) break;
-            page++;
-          } catch (e) {
-            console.error(`Error fetching page ${page} for status ${status}:`, e);
-            break;
-          }
-        }
-
-        return allResults;
-      };
-
-      // Fetch tickets in parallel: all active statuses + resolved for knowledge base
-      const [openTickets, pendingTickets, waitingCustomerTickets, waitingThirdPartyTickets, resolvedTicketsList, closedTicketsList] = await Promise.all([
-        fetchAllPages(2), // Open
-        fetchAllPages(3), // Pending
-        fetchAllPages(6), // Waiting on Customer
-        fetchAllPages(7), // Waiting on Third Party (On Hold)
-        fetchAllPages(4), // Resolved (for knowledge base)
-        fetchAllPages(5)  // Closed (recently closed, for knowledge base)
-      ]);
-
-      // Combine all tickets
-      const allTickets = [
-        ...openTickets,
-        ...pendingTickets,
-        ...waitingCustomerTickets,
-        ...waitingThirdPartyTickets,
-        ...resolvedTicketsList,
-        ...closedTicketsList
-      ];
-
-      // Remove duplicates by ticket ID
-      const uniqueTickets = allTickets.reduce((acc, ticket) => {
-        if (!acc.find(t => t.id === ticket.id)) {
-          acc.push(ticket);
-        }
-        return acc;
-      }, []);
-
-      // Sort by priority (urgent first) then by created date (newest first)
-      uniqueTickets.sort((a, b) => {
-        // Priority: 4=urgent, 3=high, 2=medium, 1=low (higher number = higher priority)
-        if (b.priority !== a.priority) return b.priority - a.priority;
-        // Then by status: 2=open, 3=pending (open first)
-        if (a.status !== b.status) return a.status - b.status;
-        // Then by date (newest first)
-        return new Date(b.created_at) - new Date(a.created_at);
-      });
+      const data = await response.json();
+      const uniqueTickets = data.tickets || [];
+      if (data.domain) setFreshdeskDomain(data.domain);
 
       setTickets(uniqueTickets);
 
@@ -655,6 +571,7 @@ function Tickets() {
         localStorage.setItem(STORAGE_KEYS.TICKETS_CACHE, JSON.stringify({
           tickets: lightweight,
           analysis: aiAnalysis,
+          domain: data.domain || '',
           timestamp: Date.now()
         }));
       } catch (e) {
@@ -695,22 +612,13 @@ function Tickets() {
     }
   };
 
-  // Fetch full conversation thread for a ticket from Freshdesk
+  // Fetch full conversation thread via the server proxy.
   const fetchConversations = async (ticketId) => {
-    // Return cached if available
     if (ticketConversations[ticketId]) return;
-
-    const domain = freshdeskDomain || localStorage.getItem(STORAGE_KEYS.FRESHDESK_DOMAIN);
-    const apiKey = freshdeskApiKey || localStorage.getItem(STORAGE_KEYS.FRESHDESK_API_KEY);
-    if (!domain || !apiKey) return;
 
     setLoadingConversation(true);
     try {
-      const authHeader = 'Basic ' + btoa(apiKey + ':X');
-      const response = await fetch(
-        `https://${domain}.freshdesk.com/api/v2/tickets/${ticketId}/conversations`,
-        { headers: { 'Authorization': authHeader, 'Content-Type': 'application/json' } }
-      );
+      const response = await fetch(`${AI_SERVER_URL}/api/freshdesk/tickets/${ticketId}/conversations`);
       if (response.ok) {
         const conversations = await response.json();
         setTicketConversations(prev => ({ ...prev, [ticketId]: conversations }));
@@ -1442,7 +1350,7 @@ function Tickets() {
             {pipelineRunning === 'batch' ? 'Pipeline Running...' : 'Pipeline All'}
           </button>
           <button
-            onClick={() => freshdeskDomain && freshdeskApiKey && fetchTickets(freshdeskDomain, freshdeskApiKey)}
+            onClick={() => fetchTickets()}
             disabled={loading}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg ${
               isDark
@@ -1585,36 +1493,23 @@ function Tickets() {
             <div className="space-y-4 max-h-[60vh] overflow-y-auto">
               {/* Freshdesk Tab */}
               {settingsTab === 'freshdesk' && (
-                <>
-                  <div>
-                    <label className={`block text-sm font-medium mb-1 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                      Freshdesk Domain (without .freshdesk.com)
-                    </label>
-                    <input
-                      type="text"
-                      value={freshdeskDomain}
-                      onChange={(e) => setFreshdeskDomain(e.target.value)}
-                      placeholder="yourcompany"
-                      className={`w-full p-3 rounded-lg border ${
-                        isDark ? 'bg-white/5 border-purple-900/30 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
-                      }`}
-                    />
+                <div className={`p-4 rounded-lg border ${
+                  isDark ? 'bg-white/5 border-purple-900/30 text-gray-300' : 'bg-gray-50 border-gray-200 text-gray-700'
+                }`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Shield className="w-4 h-4" />
+                    <span className="font-medium">Freshdesk credentials live on the server</span>
                   </div>
-                  <div>
-                    <label className={`block text-sm font-medium mb-1 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                      Freshdesk API Key
-                    </label>
-                    <input
-                      type="password"
-                      value={freshdeskApiKey}
-                      onChange={(e) => setFreshdeskApiKey(e.target.value)}
-                      placeholder="Your Freshdesk API key"
-                      className={`w-full p-3 rounded-lg border ${
-                        isDark ? 'bg-white/5 border-purple-900/30 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
-                      }`}
-                    />
-                  </div>
-                </>
+                  <p className="text-sm opacity-80 mb-3">
+                    Set <code>FRESHDESK_DOMAIN</code>, <code>FRESHDESK_API_KEY</code> and
+                    <code> FRESHDESK_AGENT_ID</code> in the server environment (Render dashboard
+                    or <code>server/.env</code>). The browser proxies all Freshdesk calls through
+                    the backend so the API key is never shipped to users.
+                  </p>
+                  {freshdeskDomain && (
+                    <p className="text-xs opacity-60">Current domain: <code>{freshdeskDomain}</code></p>
+                  )}
+                </div>
               )}
 
               {/* AI Provider Tab */}
@@ -1963,7 +1858,7 @@ function Tickets() {
                         localStorage.setItem('liv8_agent_signature', e.target.value);
                         fetch(`${AI_SERVER_URL}/api/settings`, {
                           method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
+                          headers: { 'Content-Type': 'application/json', ...adminAuthHeaders() },
                           body: JSON.stringify({ key: 'agent_signature', value: e.target.value })
                         }).catch(() => {});
                       }}
@@ -2659,9 +2554,9 @@ function Tickets() {
                     </div>
                   ) : (
                     <div className={`p-3 rounded-lg text-sm ${isDark ? 'bg-white/5 text-gray-400' : 'bg-gray-50 text-gray-500'}`}>
-                      {freshdeskDomain && freshdeskApiKey
-                        ? 'No conversation replies yet — only the initial description above.'
-                        : 'Configure Freshdesk credentials to load conversation thread.'}
+                      {loadingConversation
+                        ? 'Loading conversation thread…'
+                        : 'No conversation replies yet — only the initial description above.'}
                     </div>
                   )}
                 </div>
