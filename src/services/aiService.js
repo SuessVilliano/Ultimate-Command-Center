@@ -25,7 +25,7 @@ const STORAGE_KEYS = {
 const DEFAULT_INTEGRATIONS = {
   freshdesk: {
     domain: 'gohighlevelassist',
-    apiKey: 'jtPOes8ocVu4sv98Gf7s',
+    apiKey: '',
     agentId: '155014160586'
   },
   clickup: {

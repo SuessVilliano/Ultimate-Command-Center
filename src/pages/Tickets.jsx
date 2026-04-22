@@ -486,33 +486,65 @@ function Tickets() {
     loadPersistedAnalyses();
     loadScheduleHistory();
 
-    // First try to load from aiService integrations (pre-configured)
-    const integrations = aiService.getIntegrations();
-    const freshdeskConfig = integrations?.freshdesk || {};
+    // Fetch Freshdesk credentials from server env vars (always current after Render key rotation)
+    fetch(`${AI_SERVER_URL}/api/config/freshdesk`)
+      .then(r => r.ok ? r.json() : null)
+      .then(serverConfig => {
+        const integrations = aiService.getIntegrations();
+        const freshdeskConfig = integrations?.freshdesk || {};
 
-    // Use pre-configured values or fall back to localStorage
-    const domain = freshdeskConfig.domain || localStorage.getItem(STORAGE_KEYS.FRESHDESK_DOMAIN) || '';
-    const apiKey = freshdeskConfig.apiKey || localStorage.getItem(STORAGE_KEYS.FRESHDESK_API_KEY) || '';
-    const cached = localStorage.getItem(STORAGE_KEYS.TICKETS_CACHE);
+        // Server env vars take priority over any cached/hardcoded values
+        const domain = serverConfig?.domain || freshdeskConfig.domain || localStorage.getItem(STORAGE_KEYS.FRESHDESK_DOMAIN) || '';
+        const apiKey = serverConfig?.apiKey || freshdeskConfig.apiKey || localStorage.getItem(STORAGE_KEYS.FRESHDESK_API_KEY) || '';
 
-    setFreshdeskDomain(domain);
-    setFreshdeskApiKey(apiKey);
+        // Always update localStorage with server values so rotation is seamless
+        if (serverConfig?.domain) localStorage.setItem(STORAGE_KEYS.FRESHDESK_DOMAIN, serverConfig.domain);
+        if (serverConfig?.apiKey) localStorage.setItem(STORAGE_KEYS.FRESHDESK_API_KEY, serverConfig.apiKey);
 
-    if (cached) {
-      try {
-        const parsed = JSON.parse(cached);
-        setTickets(parsed.tickets || []);
-        // Merge cached analysis with persisted (persisted takes priority)
-        setAiAnalysis(prev => ({ ...(parsed.analysis || {}), ...prev }));
-      } catch (e) {}
-    }
+        setFreshdeskDomain(domain);
+        setFreshdeskApiKey(apiKey);
 
-    // Auto-fetch if configured
-    if (domain && apiKey) {
-      fetchTickets(domain, apiKey);
-    } else {
-      setShowSettings(true);
-    }
+        const cached = localStorage.getItem(STORAGE_KEYS.TICKETS_CACHE);
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached);
+            setTickets(parsed.tickets || []);
+            // Merge cached analysis with persisted (persisted takes priority)
+            setAiAnalysis(prev => ({ ...(parsed.analysis || {}), ...prev }));
+          } catch (e) {}
+        }
+
+        // Auto-fetch if configured
+        if (domain && apiKey) {
+          fetchTickets(domain, apiKey);
+        } else {
+          setShowSettings(true);
+        }
+      })
+      .catch(() => {
+        // Server unreachable — fall back to localStorage / aiService cached values
+        const integrations = aiService.getIntegrations();
+        const freshdeskConfig = integrations?.freshdesk || {};
+        const domain = freshdeskConfig.domain || localStorage.getItem(STORAGE_KEYS.FRESHDESK_DOMAIN) || '';
+        const apiKey = freshdeskConfig.apiKey || localStorage.getItem(STORAGE_KEYS.FRESHDESK_API_KEY) || '';
+        setFreshdeskDomain(domain);
+        setFreshdeskApiKey(apiKey);
+
+        const cached = localStorage.getItem(STORAGE_KEYS.TICKETS_CACHE);
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached);
+            setTickets(parsed.tickets || []);
+            setAiAnalysis(prev => ({ ...(parsed.analysis || {}), ...prev }));
+          } catch (e) {}
+        }
+
+        if (domain && apiKey) {
+          fetchTickets(domain, apiKey);
+        } else {
+          setShowSettings(true);
+        }
+      });
   }, []);
 
   // Save settings

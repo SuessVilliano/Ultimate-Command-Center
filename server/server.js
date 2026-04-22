@@ -2284,6 +2284,15 @@ app.get('/api/settings', (req, res) => {
   }
 });
 
+// Freshdesk config endpoint — frontend fetches this so key rotation only needs Render env var update
+app.get('/api/config/freshdesk', (req, res) => {
+  res.json({
+    domain: process.env.FRESHDESK_DOMAIN || '',
+    apiKey: process.env.FRESHDESK_API_KEY || '',
+    agentId: process.env.FRESHDESK_AGENT_ID || ''
+  });
+});
+
 // Update setting
 app.post('/api/settings', (req, res) => {
   try {
