@@ -30,7 +30,8 @@ export function initDatabase(dbPath = null) {
   }
 
   // Always initialize SQLite for local fallback and complex queries
-  const dataDir = path.join(__dirname, '..', 'data');
+  // Use DB_DATA_DIR env var for persistent storage on Render (mount a disk at /data)
+  const dataDir = process.env.DB_DATA_DIR || path.join(__dirname, '..', 'data');
 
   // Ensure data directory exists
   if (!fs.existsSync(dataDir)) {
