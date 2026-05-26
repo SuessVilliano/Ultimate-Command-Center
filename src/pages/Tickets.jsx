@@ -72,11 +72,25 @@ const GHL_QUICK_LINKS = [
     description: 'Google Gemini AI'
   },
   {
+    id: 'chatgpt',
+    label: 'ChatGPT',
+    url: 'https://chatgpt.com/g/g-68b6f4f1844881918c4892febc6e9a44-highlevel-support-agent',
+    icon: '🤖',
+    description: 'HighLevel Support Agent GPT'
+  },
+  {
     id: 'freshdesk',
     label: 'Freshdesk',
     url: 'https://gohighlevelassist.freshdesk.com/a/dashboard/default',
     icon: '🎫',
     description: 'Freshdesk Dashboard'
+  },
+  {
+    id: 'freshchat',
+    label: 'Fresh Chat',
+    url: 'https://highlevel-team.freshchat.com/a/309618592266199/inbox/3/0',
+    icon: '🆘',
+    description: 'Live Escalations - Freshchat Inbox'
   },
   {
     id: 'support-dashboard',
