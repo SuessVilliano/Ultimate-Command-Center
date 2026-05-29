@@ -246,6 +246,9 @@ function ChatWidget({ onNavigate }) {
   const [ttsProvider, setTtsProvider] = useState(() => localStorage.getItem('liv8_tts_provider') || 'edge'); // 'edge', 'voicebox', 'browser'
   const [showVoiceSetup, setShowVoiceSetup] = useState(false);
   const [voiceTranscript, setVoiceTranscript] = useState('');
+  // Focus mode: a natural conversation grounded in one slice of the command center.
+  const [focusArea, setFocusArea] = useState(null); // e.g. "ghl tickets"
+  const [focusConvId, setFocusConvId] = useState(null);
   const [aiAudioLevel, setAiAudioLevel] = useState(0);
   const [userAudioLevel, setUserAudioLevel] = useState(0);
   const [micActive, setMicActive] = useState(false);
@@ -487,12 +490,36 @@ function ChatWidget({ onNavigate }) {
           if (final) {
             setVoiceTranscript('');
             // Process through AI and speak response
-            addMessage('user', final.trim());
+            const spoken = final.trim();
+            addMessage('user', spoken);
+
+            // Focus mode via voice: "let's focus on GHL tickets" / "exit focus".
+            const vFocus = detectFocusCommand(spoken);
+            if (vFocus?.type === 'exit') {
+              setFocusArea(null);
+              setFocusConvId(null);
+              const msg = "Okay, exiting focus mode.";
+              addMessage('commander', msg, 'liv8-commander');
+              speakWithVoicebox(msg);
+              return;
+            }
+            if (vFocus?.type === 'enter') setFocusArea(vFocus.area);
+            const vActiveFocus = vFocus?.type === 'enter' ? vFocus.area : focusArea;
+
             try {
+              if (vActiveFocus) {
+                // Grounded, conversational focus reply (short for voice).
+                const reply = await sendFocusMessage(spoken, vActiveFocus, { voice: true });
+                if (reply) {
+                  addMessage('commander', reply, 'liv8-commander');
+                  speakWithVoicebox(reply);
+                }
+                return;
+              }
               const aiRes = await fetch(`${API_URL}/api/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: final.trim(), systemPrompt: DEFAULT_VOICE_PROMPT }),
+                body: JSON.stringify({ message: spoken, systemPrompt: DEFAULT_VOICE_PROMPT }),
               });
               if (aiRes.ok) {
                 const data = await aiRes.json();
@@ -749,6 +776,32 @@ function ChatWidget({ onNavigate }) {
     return null;
   };
 
+  // Detect "let's focus on X" / "work on X" to enter focus mode, or "exit/stop focus" to leave.
+  const detectFocusCommand = (text) => {
+    const t = text.toLowerCase().trim();
+    if (/\b(exit|stop|leave|end|clear)\b.*\bfocus\b|^(unfocus|back to normal)/.test(t)) {
+      return { type: 'exit' };
+    }
+    const m = t.match(/(?:let'?s\s+)?(?:focus(?:\s+on)?|work(?:ing)?\s+on|switch\s+to|let'?s\s+talk\s+about|dive\s+into|zoom\s+in\s+on)\s+(.+)/);
+    if (m && m[1]) {
+      return { type: 'enter', area: m[1].replace(/[.?!]+$/, '').trim() };
+    }
+    return null;
+  };
+
+  // Send a message through the grounded focus-mode endpoint. Returns the reply text.
+  const sendFocusMessage = async (messageText, area, { voice = false } = {}) => {
+    const res = await fetch(`${API_URL}/api/commander/focus`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: messageText, focus: area, conversationId: focusConvId, voice })
+    });
+    if (!res.ok) throw new Error('focus request failed');
+    const data = await res.json();
+    if (data.conversationId) setFocusConvId(data.conversationId);
+    return data.response || data.text || '';
+  };
+
   const handleSend = async (text = inputText) => {
     if (!text.trim() && uploadedFiles.length === 0) return;
 
@@ -798,6 +851,31 @@ function ChatWidget({ onNavigate }) {
         addMessage('commander', localResult.response, 'liv8-commander');
         setIsProcessing(false);
       }, 300);
+      return;
+    }
+
+    // Focus mode: enter/exit on command, or stay grounded in the active focus.
+    const focusCmd = detectFocusCommand(messageText);
+    if (focusCmd?.type === 'exit') {
+      setFocusArea(null);
+      setFocusConvId(null);
+      addMessage('commander', "Exited focus mode — I'm back to general command center mode.", 'liv8-commander');
+      setIsProcessing(false);
+      return;
+    }
+    if (focusCmd?.type === 'enter') {
+      setFocusArea(focusCmd.area);
+    }
+    const activeFocus = focusCmd?.type === 'enter' ? focusCmd.area : focusArea;
+    if (activeFocus) {
+      try {
+        const reply = await sendFocusMessage(messageText, activeFocus, { voice: false });
+        addMessage('commander', reply || "I don't have data for that focus right now.", 'liv8-commander');
+      } catch (e) {
+        addMessage('commander', `Couldn't reach focus mode (${e.message}). Is the backend running?`, 'liv8-commander');
+      } finally {
+        setIsProcessing(false);
+      }
       return;
     }
 
@@ -1704,6 +1782,21 @@ function ChatWidget({ onNavigate }) {
                 {isScreenSharing ? <StopCircle className="w-5 h-5" /> : <Monitor className="w-5 h-5" />}
               </button>
             </div>
+            {focusArea && (
+              <div className="flex items-center gap-2 mb-2 px-3 py-1.5 rounded-lg bg-purple-600/20 border border-purple-500/40">
+                <Target className="w-4 h-4 text-purple-400 flex-shrink-0" />
+                <span className="text-xs text-purple-200 flex-1 truncate">
+                  Focused on: <span className="font-semibold">{focusArea}</span>
+                </span>
+                <button
+                  onClick={() => { setFocusArea(null); setFocusConvId(null); addMessage('system', 'Exited focus mode.'); }}
+                  className="text-xs text-purple-300 hover:text-white"
+                  title="Exit focus mode"
+                >
+                  Exit
+                </button>
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <button
                 onClick={handleMicButton}

@@ -2039,6 +2039,51 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
+// Focus-mode chat: natural conversation grounded in a chosen slice of the command center.
+// Body: { message, focus, conversationId, userId, voice }
+// The AI gets real ticket data + prepared drafts for the focus so it can summarize and
+// work toward resolution accurately — e.g. "let's focus on GHL tickets".
+app.post('/api/commander/focus', async (req, res) => {
+  try {
+    const { message, focus = '', conversationId, userId, voice } = req.body || {};
+    if (!message) return res.status(400).json({ error: 'Message is required' });
+
+    const convId = conversationId || memory.getActiveConversation(userId || 'default');
+    const history = memory.getConversationHistory(convId, 12);
+    const messages = [
+      ...history.map(h => ({ role: h.role, content: h.content })),
+      { role: 'user', content: message }
+    ];
+
+    // Grounded, real-data context for this focus.
+    let focusContext = '';
+    try { focusContext = buildFocusContext(focus); } catch (e) { console.log('focus context error:', e.message); }
+
+    // Voice answers stay short; text can be fuller. Both stay grounded via commander prompt.
+    const base = getCommanderPrompt(focusContext);
+    const systemPrompt = voice
+      ? `${base}\n\nYou are on a VOICE call — keep replies to 1-3 natural sentences. When the user wants to act on a ticket, tell them the prepared draft is ready to copy in the queue.`
+      : base;
+
+    memory.addMessage(convId, 'user', message, { focus });
+
+    const result = await ai.chat(messages, { systemPrompt, agentId: 'commander-focus' });
+
+    memory.addMessage(convId, 'assistant', result.text, { provider: result.provider, model: result.model });
+
+    res.json({
+      response: result.text,
+      provider: result.provider,
+      model: result.model,
+      conversationId: convId,
+      focus
+    });
+  } catch (error) {
+    console.error('Focus chat error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ============================================
 // DATABASE ENDPOINTS
 // ============================================
@@ -2263,6 +2308,56 @@ app.post('/api/knowledge/ask', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+/**
+ * Build a grounded context block for voice/chat "focus mode".
+ * `focus` is a free-text area the user wants to work (e.g. "ghl tickets", "urgent", "new").
+ * Returns real ticket data + prepared drafts so the AI can summarize and work resolutions
+ * accurately instead of guessing. Caps size to stay within token limits.
+ */
+function buildFocusContext(focus = '') {
+  const f = String(focus || '').toLowerCase();
+  const queue = buildPriorityQueue();
+  const wantsGhl = /ghl|highlevel|high level|gohighlevel/.test(f);
+  const wantsUrgent = /urgent|escalat|fire|priority|important/.test(f);
+  const wantsNew = /\bnew\b|just came|recent arriv/.test(f);
+  const wantsReady = /ready|draft|to copy|to send/.test(f);
+
+  // Pick the most relevant tickets for this focus.
+  let pool = [
+    ...queue.buckets.needs_you,
+    ...queue.buckets.ready,
+    ...queue.buckets.new,
+    ...queue.buckets.recent
+  ];
+  if (wantsUrgent) pool = queue.buckets.needs_you;
+  else if (wantsNew) pool = [...queue.buckets.new, ...queue.buckets.recent];
+  else if (wantsReady) pool = queue.buckets.ready;
+  if (wantsGhl) {
+    const ghlMatch = pool.filter(t => /ghl|highlevel|high ?level|sub.?account|location|snapshot|twilio/i.test(`${t.subject} ${t.summary || ''} ${t.escalationType || ''}`));
+    if (ghlMatch.length) pool = ghlMatch;
+  }
+
+  const focused = pool.slice(0, 12);
+  const lines = [];
+  lines.push(`FOCUS: ${focus || 'whole command center'}`);
+  lines.push(`Queue snapshot — Needs you: ${queue.counts.needs_you}, Ready to copy: ${queue.counts.ready}, New: ${queue.counts.new}, Recent: ${queue.counts.recent}, Total open: ${queue.counts.total}`);
+  if (wantsGhl) {
+    lines.push('GHL tools: Freshdesk dashboard, GHL Knowledgebase (help.gohighlevel.com), HQ, Twilio, Slack. Common GHL escalations: TWILIO (phone/A2P), DEV (sub-account/snapshot), BILLING.');
+  }
+  lines.push('\nFOCUSED TICKETS (real data — never invent ticket numbers or details):');
+  if (focused.length === 0) {
+    lines.push('(none match this focus right now)');
+  } else {
+    for (const t of focused) {
+      lines.push(`\n#${t.freshdeskId || t.ticketId} "${t.subject}"`);
+      lines.push(`  requester: ${t.requester || 'unknown'} | urgency: ${t.urgency || 'n/a'} | type: ${t.escalationType || 'n/a'} | draft: ${t.draftStatus || 'none'}`);
+      if (t.summary) lines.push(`  issue: ${t.summary}`);
+      if (t.draftText) lines.push(`  prepared draft: ${String(t.draftText).slice(0, 600)}`);
+    }
+  }
+  return lines.join('\n');
+}
 
 // ============================================
 // SCHEDULER ENDPOINTS
