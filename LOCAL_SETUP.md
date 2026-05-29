@@ -4,12 +4,31 @@ This is the recommended way to run the Command Center: on **your own computer**,
 AI uses **free local/login engines** (no API credits) and the worker can prep drafts
 **24/7** while you stay off the screen.
 
+## 0. Get the code onto your computer FIRST
+
+> ⚠️ The most common mistake: running `npm install` from your home folder. The commands
+> below only work **inside the project folder**. A desktop *shortcut* to the website is not
+> the code — you have to download the repo.
+
+```bash
+# Clone the repo and switch to the branch with all the new features:
+cd ~
+git clone https://github.com/SuessVilliano/Ultimate-Command-Center.git
+cd Ultimate-Command-Center
+git checkout claude/magical-cerf-1Nd01      # (after it's merged you can use main instead)
+```
+
+If you don't have `git`: on the GitHub page click **Code → Download ZIP**, unzip it, then in
+Terminal type `cd ` (with a space) and drag the unzipped folder onto the window, press Enter.
+
+You should now be "inside" the project — `pwd` should end in `/Ultimate-Command-Center` and
+`ls` should show `package.json`, `server/`, `src/`. Only then continue.
+
 ## 1. One-time setup
 
 ```bash
-# Install app + server dependencies
-npm install
-cd server && npm install && cd ..
+# From INSIDE the Ultimate-Command-Center folder:
+npm run setup          # installs both the app and the server dependencies
 
 # Copy env templates and fill in Freshdesk (so the worker can read tickets)
 cp .env.example .env
@@ -123,6 +142,20 @@ npm run start:all     # runs the web app + backend together
 
 - App: http://localhost:5173 (or the Vite port shown)
 - API: http://localhost:3005
+
+### Run it in the background (no terminal window needed)
+
+`npm run start:all` only runs while that terminal stays open. To keep it running 24/7 and
+auto-restart on reboot, use PM2:
+
+```bash
+npm install -g pm2
+npm run build            # build the web app once
+npm run service:start    # starts server + web in the background and saves them
+pm2 startup              # then run the one line it prints (enables start-on-boot)
+```
+
+Manage it any time: `pm2 ls`, `npm run service:logs`, `pm2 restart all`, `npm run service:stop`.
 
 Leave it running and the **continuous worker** will fetch tickets, analyze them, and prepare
 draft replies on the interval you set — **it never sends anything**. Open the **Tickets** page

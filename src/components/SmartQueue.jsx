@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Zap, Copy, Check, RefreshCw, Play, Pause, AlertTriangle, Clock, Inbox, CheckCircle } from 'lucide-react';
+import { Zap, Copy, Check, RefreshCw, Play, Pause, AlertTriangle, Clock, Inbox, CheckCircle, Radio, Wifi, WifiOff } from 'lucide-react';
 import { API_URL } from '../config';
 
 const BACKEND_URL = API_URL;
@@ -31,6 +31,9 @@ export default function SmartQueue({ isDark = true, onSelectTicket }) {
   }, []);
 
   const [liveEvent, setLiveEvent] = useState(null); // brief banner when something arrives
+  const [streamConnected, setStreamConnected] = useState(false);
+  const [showListen, setShowListen] = useState(false);
+  const [copiedUrl, setCopiedUrl] = useState(null);
 
   useEffect(() => {
     fetchQueue();
@@ -38,7 +41,10 @@ export default function SmartQueue({ isDark = true, onSelectTicket }) {
     let es;
     try {
       es = new EventSource(`${BACKEND_URL}/api/stream/events`);
+      es.onopen = () => setStreamConnected(true);
+      es.onerror = () => setStreamConnected(false);
       const onChange = (label) => () => { setLiveEvent(label); fetchQueue(); setTimeout(() => setLiveEvent(null), 4000); };
+      es.addEventListener('connected', () => setStreamConnected(true));
       es.addEventListener('ticket.created', onChange('New ticket arrived'));
       es.addEventListener('ticket.updated', onChange('Ticket updated'));
       es.addEventListener('draft.ready', onChange('Draft ready to copy'));
@@ -50,6 +56,14 @@ export default function SmartQueue({ isDark = true, onSelectTicket }) {
     const interval = setInterval(fetchQueue, 60000);
     return () => { es?.close(); clearInterval(interval); };
   }, [fetchQueue]);
+
+  const copyUrl = async (url, key) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedUrl(key);
+      setTimeout(() => setCopiedUrl(null), 2000);
+    } catch (e) { /* clipboard blocked */ }
+  };
 
   // Land the user on the first bucket that actually has items.
   useEffect(() => {
@@ -117,6 +131,16 @@ export default function SmartQueue({ isDark = true, onSelectTicket }) {
           )}
         </h3>
         <div className="flex items-center gap-1.5">
+          {/* Live listening indicator */}
+          <span title={streamConnected ? 'Listening live for ticket changes' : 'Live stream disconnected — using fallback polling'}
+            className={`flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded ${streamConnected ? 'text-emerald-400' : 'text-gray-500'}`}>
+            {streamConnected ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
+            {streamConnected ? 'Live' : 'Offline'}
+          </span>
+          <button onClick={() => setShowListen(v => !v)} title="Listening setup (webhooks)"
+            className={`p-1.5 rounded ${showListen ? 'bg-purple-600/30' : ''} ${isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}>
+            <Radio className="w-4 h-4 text-blue-400" />
+          </button>
           <button onClick={runNow} disabled={busy} title="Draft now"
             className={`p-1.5 rounded ${isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'} disabled:opacity-50`}>
             <RefreshCw className={`w-4 h-4 ${busy ? 'animate-spin' : ''} text-purple-400`} />
@@ -127,6 +151,37 @@ export default function SmartQueue({ isDark = true, onSelectTicket }) {
           </button>
         </div>
       </div>
+
+      {/* Listening setup: paste these into Freshdesk → Automations → Trigger Webhook */}
+      {showListen && (
+        <div className={`mb-3 p-3 rounded-lg text-xs ${isDark ? 'bg-black/30 border border-gray-800' : 'bg-gray-50 border border-gray-200'}`}>
+          <div className={`flex items-center justify-between mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+            <span className="font-medium">Listening status</span>
+            <span className={streamConnected ? 'text-emerald-400' : 'text-amber-400'}>
+              {streamConnected ? '● Live stream connected' : '○ Stream reconnecting…'} · Auto-draft {worker?.enabled ? 'on' : 'off'}
+            </span>
+          </div>
+          <p className={`mb-2 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+            Point Freshdesk → Admin → Automations → <em>Trigger Webhook</em> at these URLs so tickets process the instant they change:
+          </p>
+          {[
+            { key: 'created', label: 'New tickets', url: `${BACKEND_URL}/api/webhooks/freshdesk/created` },
+            { key: 'updated', label: 'Ticket updates', url: `${BACKEND_URL}/api/webhooks/freshdesk/updated` }
+          ].map(w => (
+            <div key={w.key} className="flex items-center gap-2 mb-1.5">
+              <span className={`w-24 flex-shrink-0 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>{w.label}</span>
+              <code className={`flex-1 truncate px-2 py-1 rounded ${isDark ? 'bg-gray-900 text-gray-300' : 'bg-white text-gray-700'}`}>{w.url}</code>
+              <button onClick={() => copyUrl(w.url, w.key)}
+                className={`px-2 py-1 rounded ${copiedUrl === w.key ? 'bg-emerald-600 text-white' : 'bg-purple-600 text-white hover:bg-purple-500'}`}>
+                {copiedUrl === w.key ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+          ))}
+          <p className={`mt-2 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+            Body: <code>{`{ "ticket_id": "{{ticket.id}}" }`}</code>. From Freshdesk's servers, expose port 3005 with a tunnel (e.g. <code>ngrok http 3005</code>).
+          </p>
+        </div>
+      )}
 
       {liveEvent && (
         <div className="mb-2 text-[11px] text-emerald-300 bg-emerald-500/10 rounded px-2 py-1 flex items-center gap-1.5 animate-pulse">
