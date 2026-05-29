@@ -105,7 +105,7 @@ const aiStatus = ai.initAIProviders({
   geminiKey: process.env.GEMINI_API_KEY,
   kimiKey: process.env.KIMI_API_KEY || process.env.NVIDIA_API_KEY,
   groqKey: process.env.GROQ_API_KEY,
-  provider: process.env.AI_PROVIDER || 'gemini'
+  provider: process.env.AI_PROVIDER || 'ollama'
 });
 console.log('AI Providers:', aiStatus);
 
@@ -223,7 +223,11 @@ app.post('/api/ai/switch', (req, res) => {
   try {
     const { provider, model } = req.body;
     const result = ai.switchProvider(provider, model);
-    rag.switchLangChainModel(provider);
+    // LangChain (used for RAG retrieval) only knows the cloud providers; local engines
+    // answer through ai.chat() directly, so don't let an unknown provider break the switch.
+    try { rag.switchLangChainModel(provider); } catch (e) {
+      console.log(`LangChain has no adapter for ${provider} (using direct engine) — ${e.message}`);
+    }
     res.json({ success: true, ...result });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -260,6 +264,37 @@ app.post('/api/ai/key', (req, res) => {
   } catch (error) {
     console.error('Error updating API key:', error);
     res.status(400).json({ error: error.message });
+  }
+});
+
+// Configure a local / login-based engine (Ollama, Claude CLI, Gemini CLI).
+// Body: { provider: 'ollama'|'claude-cli'|'gemini-cli', enabled?, baseUrl?, model?, command? }
+// These need NO API key — they run on the user's machine for free.
+app.post('/api/ai/local', (req, res) => {
+  try {
+    const { provider, ...patch } = req.body || {};
+    if (!['ollama', 'claude-cli', 'gemini-cli'].includes(provider)) {
+      return res.status(400).json({ error: 'provider must be ollama, claude-cli, or gemini-cli' });
+    }
+    const config = ai.configureLocalProvider(provider, patch);
+    res.json({ success: true, provider, config });
+  } catch (error) {
+    console.error('Error configuring local engine:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Health-check a local engine so Settings can show green/red status.
+app.get('/api/ai/local/check', async (req, res) => {
+  try {
+    const provider = req.query.provider;
+    if (!['ollama', 'claude-cli', 'gemini-cli'].includes(provider)) {
+      return res.status(400).json({ error: 'provider must be ollama, claude-cli, or gemini-cli' });
+    }
+    const result = await ai.checkLocalEngine(provider);
+    res.json({ provider, ...result });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
   }
 });
 

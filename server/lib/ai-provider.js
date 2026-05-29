@@ -7,6 +7,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getSetting, setSetting, logAgentInteraction } from './database.js';
+import { spawn } from 'child_process';
 
 // Provider instances
 let anthropicClient = null;
@@ -15,8 +16,15 @@ let geminiClient = null;
 let kimiApiKey = null; // NVIDIA NIM API key for Kimi
 let groqApiKey = null; // Groq API key for Llama/Qwen (free tier available)
 
+// Local / login-based providers (no API credits required) — run on the user's machine.
+// ollama: fully local models. claude-cli/gemini-cli: shell out to the locally-installed
+// `claude` / `gemini` CLIs, which use the user's logged-in subscription (no per-token billing).
+let ollamaConfig = { enabled: true, baseUrl: 'http://localhost:11434', model: 'llama3.1' };
+let claudeCliConfig = { enabled: false, command: 'claude', model: 'default' };
+let geminiCliConfig = { enabled: false, command: 'gemini', model: 'gemini-2.5-flash' };
+
 // Current configuration
-let currentProvider = 'gemini';
+let currentProvider = 'ollama';
 let storedKeys = { anthropic: null, openai: null, gemini: null, kimi: null, groq: null };
 let currentModel = null;
 
@@ -76,15 +84,23 @@ export function initAIProviders(config = {}) {
     console.log('Groq API key configured (Llama/Qwen available)');
   }
 
+  // Load local / login-based provider config (Ollama, Claude CLI, Gemini CLI).
+  // These need no API keys — they run on the user's machine for free.
+  loadLocalProviderConfig();
+
   // Set default provider
   let savedProvider = null;
   try { savedProvider = getSetting('ai_provider', null); } catch (e) {}
-  currentProvider = savedProvider || config.provider || process.env.AI_PROVIDER || 'gemini';
+  // Default to the free local engine (Ollama) when nothing is explicitly chosen.
+  currentProvider = savedProvider || config.provider || process.env.AI_PROVIDER || 'ollama';
   currentModel = getDefaultModel(currentProvider);
 
-  console.log(`AI Provider initialized: ${currentProvider} (Claude: ${!!anthropicClient}, OpenAI: ${!!openaiClient}, Gemini: ${!!geminiClient}, Kimi: ${!!kimiApiKey}, Groq: ${!!groqApiKey})`);
+  console.log(`AI Provider initialized: ${currentProvider} (Ollama: ${ollamaConfig.enabled}, ClaudeCLI: ${claudeCliConfig.enabled}, GeminiCLI: ${geminiCliConfig.enabled}, Claude: ${!!anthropicClient}, OpenAI: ${!!openaiClient}, Gemini: ${!!geminiClient}, Kimi: ${!!kimiApiKey}, Groq: ${!!groqApiKey})`);
 
   return {
+    ollama: ollamaConfig.enabled,
+    'claude-cli': claudeCliConfig.enabled,
+    'gemini-cli': geminiCliConfig.enabled,
     claude: !!anthropicClient,
     openai: !!openaiClient,
     gemini: !!geminiClient,
@@ -93,6 +109,62 @@ export function initAIProviders(config = {}) {
     currentProvider,
     currentModel
   };
+}
+
+/**
+ * Load local provider config (Ollama + CLI engines) from persisted settings / env.
+ * Safe to call before the DB is ready — falls back to defaults.
+ */
+function loadLocalProviderConfig() {
+  try {
+    const ollamaEnabled = getSetting('ollama_enabled', null);
+    ollamaConfig = {
+      // Free local engine is on by default unless the user turned it off.
+      enabled: ollamaEnabled === null ? true : ollamaEnabled === 'true' || ollamaEnabled === true,
+      baseUrl: getSetting('ollama_base_url', null) || process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
+      model: getSetting('ollama_model', null) || process.env.OLLAMA_MODEL || 'llama3.1'
+    };
+    claudeCliConfig = {
+      enabled: getSetting('claude_cli_enabled', 'false') === 'true' || process.env.CLAUDE_CLI_ENABLED === 'true',
+      command: getSetting('claude_cli_command', null) || process.env.CLAUDE_CLI_COMMAND || 'claude',
+      model: getSetting('claude_cli_model', null) || process.env.CLAUDE_CLI_MODEL || 'default'
+    };
+    geminiCliConfig = {
+      enabled: getSetting('gemini_cli_enabled', 'false') === 'true' || process.env.GEMINI_CLI_ENABLED === 'true',
+      command: getSetting('gemini_cli_command', null) || process.env.GEMINI_CLI_COMMAND || 'gemini',
+      model: getSetting('gemini_cli_model', null) || process.env.GEMINI_CLI_MODEL || 'gemini-2.5-flash'
+    };
+  } catch (e) {
+    // DB not ready — keep defaults (Ollama enabled, CLIs disabled).
+  }
+}
+
+/**
+ * Update a local/login-based provider's config and persist it.
+ * Used by Settings toggles. `patch` may include { enabled, baseUrl, model, command }.
+ */
+export function configureLocalProvider(provider, patch = {}) {
+  const persist = (key, val) => { try { setSetting(key, String(val)); } catch (e) {} };
+
+  if (provider === 'ollama') {
+    if (patch.enabled !== undefined) { ollamaConfig.enabled = !!patch.enabled; persist('ollama_enabled', !!patch.enabled); }
+    if (patch.baseUrl) { ollamaConfig.baseUrl = patch.baseUrl; persist('ollama_base_url', patch.baseUrl); }
+    if (patch.model) { ollamaConfig.model = patch.model; persist('ollama_model', patch.model); }
+    return { ...ollamaConfig };
+  }
+  if (provider === 'claude-cli') {
+    if (patch.enabled !== undefined) { claudeCliConfig.enabled = !!patch.enabled; persist('claude_cli_enabled', !!patch.enabled); }
+    if (patch.command) { claudeCliConfig.command = patch.command; persist('claude_cli_command', patch.command); }
+    if (patch.model) { claudeCliConfig.model = patch.model; persist('claude_cli_model', patch.model); }
+    return { ...claudeCliConfig };
+  }
+  if (provider === 'gemini-cli') {
+    if (patch.enabled !== undefined) { geminiCliConfig.enabled = !!patch.enabled; persist('gemini_cli_enabled', !!patch.enabled); }
+    if (patch.command) { geminiCliConfig.command = patch.command; persist('gemini_cli_command', patch.command); }
+    if (patch.model) { geminiCliConfig.model = patch.model; persist('gemini_cli_model', patch.model); }
+    return { ...geminiCliConfig };
+  }
+  return null;
 }
 
 /**
@@ -105,6 +177,9 @@ function getDefaultModel(provider) {
   if (provider === 'gemini') return process.env.GEMINI_MODEL || 'gemini-2.0-flash';
   if (provider === 'kimi') return process.env.KIMI_MODEL || 'nvidia/llama-3.1-nemotron-70b-instruct';
   if (provider === 'groq') return process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+  if (provider === 'ollama') return ollamaConfig.model || 'llama3.1';
+  if (provider === 'claude-cli') return claudeCliConfig.model || 'default';
+  if (provider === 'gemini-cli') return geminiCliConfig.model || 'gemini-2.5-flash';
   return process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
 }
 
@@ -113,6 +188,10 @@ function getDefaultModel(provider) {
  * Priority: Groq (free tier Llama/Qwen) > Gemini (free/cheap) > Kimi (free tier) > OpenAI > Claude (most expensive)
  */
 export function getCostEffectiveProvider() {
+  // Local/login engines first — they never cost credits.
+  if (ollamaConfig.enabled) return { provider: 'ollama', model: getDefaultModel('ollama') };
+  if (claudeCliConfig.enabled) return { provider: 'claude-cli', model: getDefaultModel('claude-cli') };
+  if (geminiCliConfig.enabled) return { provider: 'gemini-cli', model: getDefaultModel('gemini-cli') };
   if (groqApiKey) return { provider: 'groq', model: getDefaultModel('groq') };
   if (geminiClient) return { provider: 'gemini', model: getDefaultModel('gemini') };
   if (kimiApiKey) return { provider: 'kimi', model: getDefaultModel('kimi') };
@@ -140,6 +219,15 @@ export function switchProvider(provider, model = null) {
   if (provider === 'groq' && !groqApiKey) {
     throw new Error('Groq API key not configured. Get a free key at console.groq.com');
   }
+  if (provider === 'ollama' && !ollamaConfig.enabled) {
+    throw new Error('Ollama is disabled. Enable it in Settings → AI Engine (install from ollama.com).');
+  }
+  if (provider === 'claude-cli' && !claudeCliConfig.enabled) {
+    throw new Error('Claude CLI engine is disabled. Enable it in Settings (requires the `claude` CLI logged into your subscription).');
+  }
+  if (provider === 'gemini-cli' && !geminiCliConfig.enabled) {
+    throw new Error('Gemini CLI engine is disabled. Enable it in Settings (requires the `gemini` CLI logged into your Google account).');
+  }
 
   currentProvider = provider;
   currentModel = model || getDefaultModel(provider);
@@ -163,6 +251,9 @@ export function getCurrentProvider() {
     provider: currentProvider,
     model: currentModel,
     available: {
+      ollama: ollamaConfig.enabled,
+      'claude-cli': claudeCliConfig.enabled,
+      'gemini-cli': geminiCliConfig.enabled,
       claude: !!anthropicClient,
       openai: !!openaiClient,
       gemini: !!geminiClient,
@@ -176,7 +267,22 @@ export function getCurrentProvider() {
       kimi: !!storedKeys.kimi,
       groq: !!storedKeys.groq
     },
+    local: {
+      ollama: { ...ollamaConfig, free: true },
+      'claude-cli': { ...claudeCliConfig, free: true },
+      'gemini-cli': { ...geminiCliConfig, free: true }
+    },
     models: {
+      ollama: [
+        { id: ollamaConfig.model || 'llama3.1', name: `${ollamaConfig.model || 'llama3.1'} (local)`, default: true }
+      ],
+      'claude-cli': [
+        { id: 'default', name: 'Your Claude subscription', default: true }
+      ],
+      'gemini-cli': [
+        { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (login)', default: true },
+        { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (login)' }
+      ],
       groq: [
         { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B (Free)', default: true },
         { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant (Free)' },
@@ -334,9 +440,18 @@ function parseProviderError(provider, error) {
  * Get fallback provider order (excluding the failed one)
  */
 function getFallbackProviders(failedProvider) {
-  // Fallback order: FREE providers first, then paid ones. Claude LAST (most expensive).
-  const allProviders = ['groq', 'gemini', 'kimi', 'openai', 'claude'];
-  const availableMap = { claude: !!anthropicClient, openai: !!openaiClient, gemini: !!geminiClient, kimi: !!kimiApiKey, groq: !!groqApiKey };
+  // Fallback order: FREE/local engines first, then free APIs, then paid ones. Claude API LAST (most expensive).
+  const allProviders = ['ollama', 'claude-cli', 'gemini-cli', 'groq', 'gemini', 'kimi', 'openai', 'claude'];
+  const availableMap = {
+    ollama: ollamaConfig.enabled,
+    'claude-cli': claudeCliConfig.enabled,
+    'gemini-cli': geminiCliConfig.enabled,
+    claude: !!anthropicClient,
+    openai: !!openaiClient,
+    gemini: !!geminiClient,
+    kimi: !!kimiApiKey,
+    groq: !!groqApiKey
+  };
   return allProviders.filter(p => p !== failedProvider && availableMap[p]);
 }
 
@@ -344,7 +459,16 @@ function getFallbackProviders(failedProvider) {
  * Call a specific provider's chat function
  */
 async function callProvider(provider, messages, options) {
-  if (provider === 'openai') {
+  if (provider === 'ollama') {
+    const response = await chatWithOllama(messages, { ...options, model: options.model || getDefaultModel('ollama') });
+    return { text: response.text || '', usage: response.usage || null };
+  } else if (provider === 'claude-cli') {
+    const response = await chatWithClaudeCLI(messages, { ...options, model: options.model || getDefaultModel('claude-cli') });
+    return { text: response.text || '', usage: null };
+  } else if (provider === 'gemini-cli') {
+    const response = await chatWithGeminiCLI(messages, { ...options, model: options.model || getDefaultModel('gemini-cli') });
+    return { text: response.text || '', usage: null };
+  } else if (provider === 'openai') {
     const response = await chatWithOpenAI(messages, { ...options, model: options.model || getDefaultModel('openai') });
     return { text: response.choices[0]?.message?.content || '', usage: response.usage || null };
   } else if (provider === 'gemini') {
@@ -704,6 +828,177 @@ async function chatWithGroq(messages, options) {
     console.error('Groq chat error:', error);
     throw error;
   }
+}
+
+/**
+ * Chat with a LOCAL Ollama model (free, runs on the user's machine — no credits).
+ * Uses Ollama's OpenAI-compatible /v1/chat/completions endpoint.
+ */
+async function chatWithOllama(messages, options) {
+  if (!ollamaConfig.enabled) {
+    throw new Error('Ollama is disabled. Enable it in Settings → AI Engine.');
+  }
+
+  const formattedMessages = [];
+  if (options.systemPrompt) {
+    formattedMessages.push({ role: 'system', content: options.systemPrompt });
+  }
+  for (const m of messages) {
+    formattedMessages.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content });
+  }
+
+  const base = (ollamaConfig.baseUrl || 'http://localhost:11434').replace(/\/$/, '');
+  let response;
+  try {
+    response = await fetch(`${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: options.model || ollamaConfig.model || 'llama3.1',
+        messages: formattedMessages,
+        max_tokens: options.maxTokens || 1024,
+        temperature: options.temperature ?? 0.7,
+        stream: false
+      })
+    });
+  } catch (e) {
+    throw new Error(`Could not reach Ollama at ${base}. Is it running? (ECONNREFUSED) — install/start it from ollama.com. ${e.message}`);
+  }
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Ollama error: ${response.status} - ${error}`);
+  }
+
+  const data = await response.json();
+  return {
+    text: data.choices?.[0]?.message?.content || '',
+    usage: data.usage || null
+  };
+}
+
+/**
+ * Run a local CLI binary, feed the prompt on stdin, and return stdout.
+ * Used by the Claude-CLI and Gemini-CLI engines so the user's logged-in
+ * subscription answers — no API key, no per-token credits.
+ */
+function runCliEngine(command, args, input, { timeoutMs = 120000, label = 'CLI' } = {}) {
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (e) {
+      reject(new Error(`${label} engine not available: could not run \`${command}\`. Is it installed and on PATH? ${e.message}`));
+      return;
+    }
+
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch (e) {}
+      reject(new Error(`${label} engine timed out after ${timeoutMs / 1000}s`));
+    }, timeoutMs);
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      if (err.code === 'ENOENT') {
+        reject(new Error(`${label} engine not found: \`${command}\` is not installed or not on PATH.`));
+      } else {
+        reject(new Error(`${label} engine error: ${err.message}`));
+      }
+    });
+    child.stdout.on('data', (d) => { stdout += d.toString(); });
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0 && !stdout.trim()) {
+        reject(new Error(`${label} engine exited with code ${code}: ${stderr.slice(0, 300)}`));
+      } else {
+        resolve(stdout.trim());
+      }
+    });
+
+    if (input) {
+      child.stdin.write(input);
+    }
+    child.stdin.end();
+  });
+}
+
+/**
+ * Flatten a system prompt + message thread into a single prompt string for CLI engines.
+ */
+function buildCliPrompt(messages, systemPrompt) {
+  const parts = [];
+  if (systemPrompt) parts.push(`[SYSTEM INSTRUCTIONS]\n${systemPrompt}`);
+  for (const m of messages) {
+    const who = m.role === 'assistant' ? 'Assistant' : 'User';
+    parts.push(`${who}: ${m.content}`);
+  }
+  parts.push('Assistant:');
+  return parts.join('\n\n');
+}
+
+/**
+ * Chat through the locally-installed `claude` CLI (uses the user's Claude subscription, no API credits).
+ */
+async function chatWithClaudeCLI(messages, options) {
+  if (!claudeCliConfig.enabled) {
+    throw new Error('Claude CLI engine is disabled. Enable it in Settings.');
+  }
+  const prompt = buildCliPrompt(messages, options.systemPrompt);
+  // `claude -p` is non-interactive "print" mode; output-format text returns plain text.
+  const args = ['-p', '--output-format', 'text'];
+  if (claudeCliConfig.model && claudeCliConfig.model !== 'default') {
+    args.push('--model', claudeCliConfig.model);
+  }
+  const text = await runCliEngine(claudeCliConfig.command || 'claude', args, prompt, { label: 'Claude CLI' });
+  return { text };
+}
+
+/**
+ * Chat through the locally-installed `gemini` CLI (uses the user's Google login, free tier).
+ */
+async function chatWithGeminiCLI(messages, options) {
+  if (!geminiCliConfig.enabled) {
+    throw new Error('Gemini CLI engine is disabled. Enable it in Settings.');
+  }
+  const prompt = buildCliPrompt(messages, options.systemPrompt);
+  // `gemini -p <prompt>` runs non-interactively; we pass the prompt on stdin via `-p -`-style fallback.
+  const args = ['-p', prompt];
+  if (geminiCliConfig.model) {
+    args.push('-m', geminiCliConfig.model);
+  }
+  const text = await runCliEngine(geminiCliConfig.command || 'gemini', args, null, { label: 'Gemini CLI' });
+  return { text };
+}
+
+/**
+ * Lightweight health check for the local engines (used by Settings UI).
+ */
+export async function checkLocalEngine(provider) {
+  if (provider === 'ollama') {
+    const base = (ollamaConfig.baseUrl || 'http://localhost:11434').replace(/\/$/, '');
+    try {
+      const r = await fetch(`${base}/api/tags`);
+      if (!r.ok) return { ok: false, reason: `HTTP ${r.status}` };
+      const data = await r.json();
+      const models = (data.models || []).map(m => m.name);
+      return { ok: true, models, baseUrl: base };
+    } catch (e) {
+      return { ok: false, reason: `Not reachable at ${base} — install/start Ollama from ollama.com` };
+    }
+  }
+  if (provider === 'claude-cli' || provider === 'gemini-cli') {
+    const cfg = provider === 'claude-cli' ? claudeCliConfig : geminiCliConfig;
+    try {
+      await runCliEngine(cfg.command, ['--version'], null, { timeoutMs: 8000, label: provider });
+      return { ok: true, command: cfg.command };
+    } catch (e) {
+      return { ok: false, reason: e.message };
+    }
+  }
+  return { ok: false, reason: 'Unknown engine' };
 }
 
 /**
