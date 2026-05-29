@@ -27,6 +27,14 @@ FRESHDESK_API_KEY=...
 FRESHDESK_AGENT_ID=...       # optional: only your tickets
 ```
 
+### About the "desktop" shortcut
+
+A shortcut/icon you dragged to your desktop just **opens the website** — it does **not** run
+the engine. For free AI + around-the-clock drafting you need the app **running on your
+machine** (the two commands above / step 3). Once it's running you can absolutely pin a
+desktop shortcut to `http://localhost:5173` and use that as your daily icon — just keep the
+terminal from step 3 open (or set it up as a background service later).
+
 ## 2. Pick a free AI engine (choose one in Settings → AI Engine)
 
 You can toggle these any time from the **AI Settings** panel; the free local one is default.
@@ -40,6 +48,72 @@ You can toggle these any time from the **AI Settings** panel; the free local one
 Each engine has a **Test connection** button in Settings so you can confirm it's reachable
 before making it active. If the active engine ever fails, the app automatically falls back
 to the next available free engine.
+
+### Connecting each engine (step by step)
+
+**Ollama (recommended default — fully local, no login at all):**
+```bash
+# 1. Install from https://ollama.com  (Mac/Windows/Linux installer)
+# 2. Pull a model:
+ollama pull llama3.1            # good general model
+# 3. Ollama auto-runs at http://localhost:11434 — that's it.
+```
+In Settings → AI Engine: toggle **Ollama** on, click **Test connection** (should go green),
+then **Set active**.
+
+**Claude (uses your Claude subscription — no API credits):**
+```bash
+# Install the Claude Code CLI and sign in once:
+npm install -g @anthropic-ai/claude-code
+claude         # follow the login prompt in the browser
+```
+Then in Settings: toggle **Claude Subscription** on → **Test connection** → **Set active**.
+(The server runs `claude -p "..."` under the hood using your logged-in session.)
+
+**Gemini (uses your Google login — free tier):**
+```bash
+# Install the Gemini CLI and sign in once:
+npm install -g @google/gemini-cli
+gemini         # follow the Google login prompt
+```
+Then in Settings: toggle **Gemini CLI** on → **Test connection** → **Set active**.
+
+> You don't have to put any API keys anywhere for these three. They run as you, on your
+> machine. The cloud key boxes (Groq/Gemini/Claude/OpenAI) are only if you'd rather use a
+> hosted key instead.
+
+## Always in sync — your AI never starts over
+
+All conversation history, remembered facts, tickets, analyses and drafts live in a local
+SQLite database (`server/data/liv8.db`). The chat keeps a **persistent conversation id** in
+your browser, so reopening the app or switching tabs continues the *same* conversation with
+full context — you don't start from scratch. Because Voice, the dashboard chat, and the
+background worker all read/write the same database and the same "Juno" identity, they stay in
+sync with each other.
+
+> Keep `server/data/` (don't delete it) to preserve memory. Back it up to keep your history.
+
+## Listening live (no more "every 5 minutes")
+
+The Command Center now **listens** for changes instead of only polling:
+
+1. **Live UI** — the Smart Queue subscribes to a live stream (`/api/stream/events`) and
+   updates the instant a ticket changes or a draft becomes ready.
+2. **Freshdesk webhooks** — point Freshdesk at the app so new/updated tickets are processed
+   immediately:
+   - Freshdesk → **Admin → Workflows → Automations → Ticket creation / Ticket updates**
+   - Add a rule → action **"Trigger Webhook"** → `POST` to:
+     - New tickets: `http://<your-machine>:3005/api/webhooks/freshdesk/created`
+     - Updates: `http://<your-machine>:3005/api/webhooks/freshdesk/updated`
+   - Body: JSON including the ticket id, e.g. `{ "ticket_id": "{{ticket.id}}" }`
+   - To reach your machine from Freshdesk's servers, expose port 3005 with a tunnel
+     (e.g. `ngrok http 3005` or a Cloudflare tunnel) and use that URL instead of localhost.
+3. **Anything about your account** — any other system (GHL, Twilio, billing) can POST to
+   `/api/listen/event` with `{ source, type, data }` and it'll show up live and run through
+   the event chains.
+
+The around-the-clock worker still runs as a **safety net** (set `WORKER_INTERVAL_MINUTES`),
+but with webhooks configured your queue is essentially real-time.
 
 ## 3. Start everything
 
