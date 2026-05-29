@@ -154,6 +154,105 @@ if (scheduleEnabled) {
   console.log('Scheduled jobs: Disabled (set SCHEDULE_ENABLED=true to enable)');
 }
 
+// Start the continuous "around the clock" drafting worker.
+// Enabled by default now that the free local engine (Ollama) costs no credits.
+// Disable with WORKER_ENABLED=false; tune with WORKER_INTERVAL_MINUTES.
+let workerEnabled = process.env.WORKER_ENABLED !== 'false';
+let workerInterval = parseInt(process.env.WORKER_INTERVAL_MINUTES) || 10;
+try {
+  const persisted = db.getSetting('worker_enabled', null);
+  if (persisted !== null) workerEnabled = persisted === 'true';
+  const persistedInterval = parseInt(db.getSetting('worker_interval_minutes', null));
+  if (persistedInterval) workerInterval = persistedInterval;
+} catch (e) {}
+const freshdeskReady = !!(process.env.FRESHDESK_DOMAIN && process.env.FRESHDESK_API_KEY);
+if (workerEnabled && freshdeskReady) {
+  scheduler.startContinuousWorker(workerInterval);
+} else {
+  console.log(`Continuous worker: ${workerEnabled ? 'waiting (Freshdesk not configured — set FRESHDESK_DOMAIN/API_KEY)' : 'disabled (WORKER_ENABLED=false)'}`);
+}
+
+/**
+ * Build the smart prioritized queue: merge open tickets with their latest draft and
+ * bucket each into New / Recent / Ready-to-copy / Needs-you so the user can clear the
+ * queue fast instead of staring at a flat list. Each ticket gets ONE primary bucket
+ * (priority: needs_you > ready > new > recent > waiting).
+ */
+function buildPriorityQueue() {
+  const DAY = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  let tickets = [];
+  try { tickets = db.getAllTicketsWithAnalysis([2, 3, 6, 7]) || []; } catch (e) { tickets = []; }
+
+  const buckets = { needs_you: [], ready: [], new: [], recent: [], waiting: [] };
+
+  for (const t of tickets) {
+    let draft = null;
+    try { draft = db.getDraftForTicket(t.id); } catch (e) {}
+    const analysis = t.analysis || t || {};
+    const urgency = Number(analysis.URGENCY_SCORE ?? analysis.urgency_score ?? 0) || 0;
+    const escalationType = analysis.ESCALATION_TYPE || analysis.escalation_type || null;
+    const createdMs = t.created_at ? new Date(t.created_at).getTime() : 0;
+    const updatedMs = t.updated_at ? new Date(t.updated_at).getTime() : createdMs;
+    const isNew = createdMs && (now - createdMs) < DAY;
+    const isRecent = updatedMs && (now - updatedMs) < DAY;
+
+    const draftStatus = draft?.status || null;
+    const draftReady = draft && draftStatus === 'PENDING_REVIEW' && (draft.qa_passed === 1 || draft.qa_passed === null);
+    const needsAttention =
+      draftStatus === 'NEEDS_EDIT' ||
+      draftStatus === 'ESCALATION_RECOMMENDED' ||
+      urgency >= 8 ||
+      ['DEV', 'TWILIO', 'BUG'].includes(escalationType);
+
+    const item = {
+      ticketId: t.id,
+      freshdeskId: t.freshdesk_id,
+      subject: t.subject,
+      requester: t.requester_name || t.requester_email || null,
+      status: t.status,
+      urgency,
+      escalationType,
+      summary: analysis.summary || analysis.SUMMARY || null,
+      createdAt: t.created_at,
+      updatedAt: t.updated_at,
+      hasDraft: !!draft,
+      draftId: draft?.id || null,
+      draftStatus,
+      draftText: draft?.draft_text || null,
+      draftReady: !!draftReady
+    };
+
+    let bucket;
+    if (needsAttention) bucket = 'needs_you';
+    else if (draftReady) bucket = 'ready';
+    else if (isNew) bucket = 'new';
+    else if (isRecent) bucket = 'recent';
+    else bucket = 'waiting';
+    item.bucket = bucket;
+    buckets[bucket].push(item);
+  }
+
+  // Sort each bucket: highest urgency first, then most recently updated.
+  for (const key of Object.keys(buckets)) {
+    buckets[key].sort((a, b) => (b.urgency - a.urgency) || (new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0)));
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    counts: {
+      needs_you: buckets.needs_you.length,
+      ready: buckets.ready.length,
+      new: buckets.new.length,
+      recent: buckets.recent.length,
+      waiting: buckets.waiting.length,
+      total: tickets.length
+    },
+    buckets,
+    worker: scheduler.getWorkerStatus()
+  };
+}
+
 // Initialize Proactive AI Engine — DISABLED by default to save API quota
 // Set PROACTIVE_AI_ENABLED=true in .env to enable (runs AI calls every 5 min)
 const proactiveEnabled = process.env.PROACTIVE_AI_ENABLED === 'true';
@@ -2204,6 +2303,47 @@ app.post('/api/schedule/toggle', (req, res) => {
       scheduler.stopScheduledJobs();
     }
     res.json({ enabled, status: scheduler.getScheduleStatus() });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// AROUND-THE-CLOCK WORKER + SMART QUEUE
+// ============================================
+
+// Worker status
+app.get('/api/worker/status', (req, res) => {
+  res.json(scheduler.getWorkerStatus());
+});
+
+// Start/stop the continuous worker; optionally set interval (minutes)
+app.post('/api/worker/toggle', (req, res) => {
+  try {
+    const { enabled, intervalMinutes } = req.body || {};
+    const status = enabled
+      ? scheduler.startContinuousWorker(intervalMinutes)
+      : scheduler.stopContinuousWorker();
+    res.json({ success: true, worker: status });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Run one worker cycle right now (does not change enabled state)
+app.post('/api/worker/run-now', async (req, res) => {
+  try {
+    const result = await scheduler.runScheduledAnalysis('manual-now');
+    res.json({ success: true, stats: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Smart prioritized queue: buckets tickets+drafts into New / Recent / Ready / Needs-you.
+app.get('/api/queue/priority', (req, res) => {
+  try {
+    res.json(buildPriorityQueue());
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

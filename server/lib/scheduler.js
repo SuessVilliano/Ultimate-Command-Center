@@ -28,6 +28,86 @@ let notificationConfig = {
   taskmagicToken: null
 };
 
+// Continuous "around the clock" worker — keeps drafts fresh while the user is away.
+// Safe to run often because the default engine (Ollama) is free/local.
+let continuousWorker = {
+  timer: null,
+  intervalMinutes: 10,
+  running: false,      // a run is currently in progress
+  enabled: false,      // the loop is scheduled
+  lastRunAt: null,
+  nextRunAt: null,
+  lastStats: null,
+  lastError: null
+};
+
+/**
+ * Run one worker cycle, guarding against overlapping runs.
+ */
+async function runWorkerCycle() {
+  if (continuousWorker.running) {
+    console.log('[Worker] Previous cycle still running — skipping this tick');
+    return;
+  }
+  continuousWorker.running = true;
+  try {
+    const stats = await runScheduledAnalysis('continuous');
+    continuousWorker.lastStats = stats;
+    continuousWorker.lastError = null;
+  } catch (e) {
+    continuousWorker.lastError = e.message;
+    console.error('[Worker] Cycle failed:', e.message);
+  } finally {
+    continuousWorker.running = false;
+    continuousWorker.lastRunAt = new Date().toISOString();
+    continuousWorker.nextRunAt = new Date(Date.now() + continuousWorker.intervalMinutes * 60 * 1000).toISOString();
+  }
+}
+
+/**
+ * Start the continuous worker loop (around-the-clock drafting).
+ */
+export function startContinuousWorker(intervalMinutes) {
+  if (intervalMinutes && intervalMinutes > 0) continuousWorker.intervalMinutes = intervalMinutes;
+  stopContinuousWorker();
+  continuousWorker.enabled = true;
+  const ms = continuousWorker.intervalMinutes * 60 * 1000;
+  // Kick off the first cycle shortly after boot, then on the interval.
+  setTimeout(() => { runWorkerCycle(); }, 15 * 1000);
+  continuousWorker.timer = setInterval(() => { runWorkerCycle(); }, ms);
+  continuousWorker.nextRunAt = new Date(Date.now() + 15 * 1000).toISOString();
+  try { db.setSetting('worker_enabled', 'true'); db.setSetting('worker_interval_minutes', String(continuousWorker.intervalMinutes)); } catch (e) {}
+  console.log(`[Worker] Continuous drafting started — every ${continuousWorker.intervalMinutes} min`);
+  return getWorkerStatus();
+}
+
+/**
+ * Stop the continuous worker loop.
+ */
+export function stopContinuousWorker() {
+  if (continuousWorker.timer) clearInterval(continuousWorker.timer);
+  continuousWorker.timer = null;
+  continuousWorker.enabled = false;
+  continuousWorker.nextRunAt = null;
+  try { db.setSetting('worker_enabled', 'false'); } catch (e) {}
+  return getWorkerStatus();
+}
+
+/**
+ * Worker status for the dashboard.
+ */
+export function getWorkerStatus() {
+  return {
+    enabled: continuousWorker.enabled,
+    running: continuousWorker.running,
+    intervalMinutes: continuousWorker.intervalMinutes,
+    lastRunAt: continuousWorker.lastRunAt,
+    nextRunAt: continuousWorker.nextRunAt,
+    lastStats: continuousWorker.lastStats,
+    lastError: continuousWorker.lastError
+  };
+}
+
 /**
  * Initialize scheduler with configuration
  */
@@ -598,6 +678,7 @@ export function getScheduleStatus() {
 
   return {
     enabled: scheduledJobs.size > 0,
+    worker: getWorkerStatus(),
     timezone: process.env.SCHEDULE_TIMEZONE || 'America/New_York',
     jobs,
     schedules: {
