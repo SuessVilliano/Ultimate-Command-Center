@@ -165,6 +165,9 @@ try {
   const persistedInterval = parseInt(db.getSetting('worker_interval_minutes', null));
   if (persistedInterval) workerInterval = persistedInterval;
 } catch (e) {}
+// Push a live "queue updated" event whenever the background worker finishes a cycle.
+scheduler.onWorkerComplete((status) => broadcastEvent('queue.updated', { worker: status }));
+
 const freshdeskReady = !!(process.env.FRESHDESK_DOMAIN && process.env.FRESHDESK_API_KEY);
 if (workerEnabled && freshdeskReady) {
   scheduler.startContinuousWorker(workerInterval);
@@ -2309,6 +2312,20 @@ app.post('/api/knowledge/ask', async (req, res) => {
   }
 });
 
+// ---- Live event stream (SSE) so the UI "listens" instead of polling ----
+const sseClients = new Set();
+
+/**
+ * Push an event to every connected dashboard. Used when a ticket changes, a draft is
+ * ready, or the worker finishes — so the Smart Queue updates the instant something happens.
+ */
+function broadcastEvent(type, data = {}) {
+  const payload = `event: ${type}\ndata: ${JSON.stringify({ type, ...data, at: new Date().toISOString() })}\n\n`;
+  for (const res of sseClients) {
+    try { res.write(payload); } catch (e) { sseClients.delete(res); }
+  }
+}
+
 /**
  * Build a grounded context block for voice/chat "focus mode".
  * `focus` is a free-text area the user wants to work (e.g. "ghl tickets", "urgent", "new").
@@ -2439,6 +2456,82 @@ app.post('/api/worker/run-now', async (req, res) => {
 app.get('/api/queue/priority', (req, res) => {
   try {
     res.json(buildPriorityQueue());
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// LISTEN: event-driven updates (webhooks + live stream)
+// ============================================
+
+// Live event stream the dashboard subscribes to (Server-Sent Events).
+app.get('/api/stream/events', (req, res) => {
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  res.flushHeaders?.();
+  res.write(`event: connected\ndata: ${JSON.stringify({ ok: true, at: new Date().toISOString() })}\n\n`);
+  sseClients.add(res);
+  // Heartbeat so proxies don't drop the connection.
+  const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 25000);
+  req.on('close', () => { clearInterval(ping); sseClients.delete(res); });
+});
+
+// Freshdesk webhook — fires the instant a ticket is created or updated.
+// Configure in Freshdesk → Admin → Automations → "Trigger a webhook" pointing here.
+// Accepts the ticket id under several common shapes so it's robust to payload config.
+async function handleTicketWebhook(body, reason, res) {
+  try {
+    const fid =
+      body?.freshdesk_id || body?.ticket_id || body?.id ||
+      body?.ticket?.id || body?.freshdesk_webhook?.ticket_id ||
+      body?.data?.ticket?.id;
+    if (!fid) {
+      return res.status(400).json({ error: 'Could not find a ticket id in the webhook payload', received: Object.keys(body || {}) });
+    }
+    // Acknowledge fast; process in the background so Freshdesk doesn't time out.
+    res.json({ ok: true, freshdeskId: fid, queued: true });
+    broadcastEvent('ticket.incoming', { freshdeskId: fid, reason });
+    try {
+      const result = await scheduler.processTicketByFreshdeskId(fid, { reason });
+      const evType = reason === 'created' ? 'ticket.created' : 'ticket.updated';
+      broadcastEvent(evType, result);
+      if (result.drafted) broadcastEvent('draft.ready', result);
+      try {
+        eventBus.emit(reason === 'created' ? eventBus.EVENTS.TICKET_CREATED : eventBus.EVENTS.TICKET_UPDATED, result, { source: 'freshdesk-webhook' });
+      } catch (e) {}
+    } catch (e) {
+      console.error('[Listen] webhook processing failed:', e.message);
+      broadcastEvent('listen.error', { freshdeskId: fid, error: e.message });
+    }
+  } catch (error) {
+    if (!res.headersSent) res.status(500).json({ error: error.message });
+  }
+}
+
+app.post('/api/webhooks/freshdesk', (req, res) => handleTicketWebhook(req.body, req.body?.event || 'updated', res));
+app.post('/api/webhooks/freshdesk/created', (req, res) => handleTicketWebhook(req.body, 'created', res));
+app.post('/api/webhooks/freshdesk/updated', (req, res) => handleTicketWebhook(req.body, 'updated', res));
+
+// Generic "anything about my account" listener — any integration can POST an event here
+// (billing, GHL, Twilio, etc.). It's recorded, broadcast to the UI, and run through the
+// event bus chains. Optionally triggers ticket processing if a ticket id is present.
+app.post('/api/listen/event', async (req, res) => {
+  try {
+    const { source = 'external', type = 'account.event', data = {} } = req.body || {};
+    broadcastEvent(type, { source, ...data });
+    try { eventBus.emit(type, data, { source }); } catch (e) {}
+    const fid = data?.freshdesk_id || data?.ticket_id;
+    if (fid) {
+      scheduler.processTicketByFreshdeskId(fid, { reason: type })
+        .then(r => { broadcastEvent('ticket.updated', r); if (r.drafted) broadcastEvent('draft.ready', r); })
+        .catch(() => {});
+    }
+    res.json({ ok: true, type, source });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

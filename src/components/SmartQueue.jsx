@@ -30,10 +30,25 @@ export default function SmartQueue({ isDark = true, onSelectTicket }) {
     }
   }, []);
 
+  const [liveEvent, setLiveEvent] = useState(null); // brief banner when something arrives
+
   useEffect(() => {
     fetchQueue();
-    const interval = setInterval(fetchQueue, 30000); // refresh every 30s
-    return () => clearInterval(interval);
+    // Listen live via Server-Sent Events; refetch the instant a ticket changes.
+    let es;
+    try {
+      es = new EventSource(`${BACKEND_URL}/api/stream/events`);
+      const onChange = (label) => () => { setLiveEvent(label); fetchQueue(); setTimeout(() => setLiveEvent(null), 4000); };
+      es.addEventListener('ticket.created', onChange('New ticket arrived'));
+      es.addEventListener('ticket.updated', onChange('Ticket updated'));
+      es.addEventListener('draft.ready', onChange('Draft ready to copy'));
+      es.addEventListener('queue.updated', () => fetchQueue());
+    } catch (e) {
+      console.warn('Live stream unavailable, falling back to polling');
+    }
+    // Safety-net poll (slower, since the stream does the heavy lifting).
+    const interval = setInterval(fetchQueue, 60000);
+    return () => { es?.close(); clearInterval(interval); };
   }, [fetchQueue]);
 
   // Land the user on the first bucket that actually has items.
@@ -113,6 +128,11 @@ export default function SmartQueue({ isDark = true, onSelectTicket }) {
         </div>
       </div>
 
+      {liveEvent && (
+        <div className="mb-2 text-[11px] text-emerald-300 bg-emerald-500/10 rounded px-2 py-1 flex items-center gap-1.5 animate-pulse">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> {liveEvent} — updating…
+        </div>
+      )}
       {worker?.lastError && (
         <div className="mb-2 text-[11px] text-red-400 bg-red-500/10 rounded px-2 py-1">
           Last run error: {worker.lastError}

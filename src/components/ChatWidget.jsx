@@ -248,7 +248,9 @@ function ChatWidget({ onNavigate }) {
   const [voiceTranscript, setVoiceTranscript] = useState('');
   // Focus mode: a natural conversation grounded in one slice of the command center.
   const [focusArea, setFocusArea] = useState(null); // e.g. "ghl tickets"
-  const [focusConvId, setFocusConvId] = useState(null);
+  // Persist the conversation id so the AI keeps full context across reloads and tabs —
+  // you don't start over every conversation. (Server-side memory is SQLite-backed.)
+  const [focusConvId, setFocusConvId] = useState(() => localStorage.getItem('liv8_conversation_id') || null);
   const [aiAudioLevel, setAiAudioLevel] = useState(0);
   const [userAudioLevel, setUserAudioLevel] = useState(0);
   const [micActive, setMicActive] = useState(false);
@@ -496,8 +498,7 @@ function ChatWidget({ onNavigate }) {
             // Focus mode via voice: "let's focus on GHL tickets" / "exit focus".
             const vFocus = detectFocusCommand(spoken);
             if (vFocus?.type === 'exit') {
-              setFocusArea(null);
-              setFocusConvId(null);
+              setFocusArea(null); // keep the conversation thread alive — just drop the focus slice
               const msg = "Okay, exiting focus mode.";
               addMessage('commander', msg, 'liv8-commander');
               speakWithVoicebox(msg);
@@ -798,7 +799,10 @@ function ChatWidget({ onNavigate }) {
     });
     if (!res.ok) throw new Error('focus request failed');
     const data = await res.json();
-    if (data.conversationId) setFocusConvId(data.conversationId);
+    if (data.conversationId) {
+      setFocusConvId(data.conversationId);
+      try { localStorage.setItem('liv8_conversation_id', data.conversationId); } catch (e) {}
+    }
     return data.response || data.text || '';
   };
 
@@ -857,8 +861,7 @@ function ChatWidget({ onNavigate }) {
     // Focus mode: enter/exit on command, or stay grounded in the active focus.
     const focusCmd = detectFocusCommand(messageText);
     if (focusCmd?.type === 'exit') {
-      setFocusArea(null);
-      setFocusConvId(null);
+      setFocusArea(null); // keep the conversation thread alive — just drop the focus slice
       addMessage('commander', "Exited focus mode — I'm back to general command center mode.", 'liv8-commander');
       setIsProcessing(false);
       return;
@@ -1789,7 +1792,7 @@ function ChatWidget({ onNavigate }) {
                   Focused on: <span className="font-semibold">{focusArea}</span>
                 </span>
                 <button
-                  onClick={() => { setFocusArea(null); setFocusConvId(null); addMessage('system', 'Exited focus mode.'); }}
+                  onClick={() => { setFocusArea(null); addMessage('system', 'Exited focus mode.'); }}
                   className="text-xs text-purple-300 hover:text-white"
                   title="Exit focus mode"
                 >

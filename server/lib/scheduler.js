@@ -28,6 +28,10 @@ let notificationConfig = {
   taskmagicToken: null
 };
 
+// Optional listener invoked after each worker cycle (used to push live UI updates).
+let workerCompleteListener = null;
+export function onWorkerComplete(cb) { workerCompleteListener = cb; }
+
 // Continuous "around the clock" worker — keeps drafts fresh while the user is away.
 // Safe to run often because the default engine (Ollama) is free/local.
 let continuousWorker = {
@@ -61,6 +65,7 @@ async function runWorkerCycle() {
     continuousWorker.running = false;
     continuousWorker.lastRunAt = new Date().toISOString();
     continuousWorker.nextRunAt = new Date(Date.now() + continuousWorker.intervalMinutes * 60 * 1000).toISOString();
+    try { workerCompleteListener?.(getWorkerStatus()); } catch (e) {}
   }
 }
 
@@ -105,6 +110,83 @@ export function getWorkerStatus() {
     nextRunAt: continuousWorker.nextRunAt,
     lastStats: continuousWorker.lastStats,
     lastError: continuousWorker.lastError
+  };
+}
+
+// Debounce repeated webhook hits for the same ticket (Freshdesk can fire several in seconds).
+const ticketDebounce = new Map();
+
+/**
+ * Fetch a single ticket from Freshdesk by id.
+ */
+async function fetchFreshdeskTicket(freshdeskId) {
+  if (!freshdeskConfig.domain || !freshdeskConfig.apiKey) throw new Error('Freshdesk not configured');
+  const auth = Buffer.from(`${freshdeskConfig.apiKey}:X`).toString('base64');
+  const url = `https://${freshdeskConfig.domain}.freshdesk.com/api/v2/tickets/${freshdeskId}?include=requester`;
+  const response = await fetch(url, { headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' } });
+  if (!response.ok) throw new Error(`Freshdesk ticket fetch failed: ${response.status}`);
+  return response.json();
+}
+
+/**
+ * EVENT-DRIVEN: process one ticket the moment it's created/updated (from a webhook),
+ * instead of waiting for the next poll. Upserts, analyzes, and drafts a reply immediately.
+ * Debounced per ticket. Returns a summary the caller can broadcast.
+ */
+export async function processTicketByFreshdeskId(freshdeskId, { reason = 'webhook' } = {}) {
+  if (!freshdeskId) throw new Error('freshdeskId required');
+
+  // Debounce: if we processed/queued this ticket in the last 8s, skip the duplicate.
+  const last = ticketDebounce.get(freshdeskId);
+  if (last && Date.now() - last < 8000) {
+    return { freshdeskId, skipped: 'debounced' };
+  }
+  ticketDebounce.set(freshdeskId, Date.now());
+
+  const ticket = await fetchFreshdeskTicket(freshdeskId);
+  if (!ticket.subject) ticket.subject = `Ticket #${freshdeskId}`;
+
+  // Store / refresh in DB.
+  db.upsertTicket(ticket);
+  let dbTicket = null;
+  try {
+    dbTicket = db.getDb().prepare('SELECT id, status FROM tickets WHERE freshdesk_id = ?').get(freshdeskId);
+  } catch (e) {}
+  const dbId = dbTicket?.id;
+  if (!dbId) return { freshdeskId, error: 'ticket not stored' };
+
+  // Analyze (cheapest/free engine) so urgency + type are fresh.
+  let analysis = null;
+  try {
+    const cp = ai.getCostEffectiveProvider();
+    analysis = await ai.analyzeTicket(ticket, { provider: cp.provider, model: cp.model });
+    db.saveAnalysis(dbId, analysis, analysis.provider, analysis.model);
+  } catch (e) {
+    console.log(`[Listen] Analysis failed for #${freshdeskId}: ${e.message}`);
+  }
+
+  // Draft a reply immediately for open/pending tickets (never sends).
+  let drafted = false;
+  if ([2, 3, 6, 7].includes(ticket.status)) {
+    try {
+      const pipeline = await import('./ticket-pipeline.js');
+      await pipeline.processTicket(dbId, { skipQA: false });
+      drafted = true;
+    } catch (e) {
+      console.log(`[Listen] Draft failed for #${freshdeskId}: ${e.message}`);
+    }
+  }
+
+  console.log(`[Listen] Processed ticket #${freshdeskId} (${reason}) — analyzed:${!!analysis} drafted:${drafted}`);
+  return {
+    freshdeskId,
+    ticketId: dbId,
+    subject: ticket.subject,
+    status: ticket.status,
+    urgency: analysis?.URGENCY_SCORE ?? null,
+    escalationType: analysis?.ESCALATION_TYPE ?? null,
+    drafted,
+    reason
   };
 }
 
