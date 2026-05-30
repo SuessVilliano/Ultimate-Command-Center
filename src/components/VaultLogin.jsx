@@ -47,7 +47,7 @@ function VaultLogin() {
     // Simulate vault unlocking animation
     await new Promise(resolve => setTimeout(resolve, 1500));
 
-    const result = login(username, password);
+    const result = await login(username, password);
 
     if (result.success) {
       setVaultState('unlocked');
