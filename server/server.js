@@ -61,18 +61,86 @@ const app = express();
 const PORT = process.env.PORT || 3005;
 
 // Multer configuration for file uploads
+const ALLOWED_UPLOAD_EXTS = new Set([
+  '.pdf', '.csv', '.txt', '.json', '.md', '.docx', '.xlsx',
+  '.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg',
+  '.mp3', '.wav', '.m4a', '.ogg', '.webm',
+  '.mp4', '.mov'
+]);
+const ALLOWED_UPLOAD_MIME_PREFIXES = ['image/', 'audio/', 'video/', 'text/'];
+const ALLOWED_UPLOAD_MIME = new Set([
+  'application/pdf',
+  'application/json',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/octet-stream'
+]);
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
   fileFilter: (req, file, cb) => {
-    // Allow all file types
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    const mime = (file.mimetype || '').toLowerCase();
+    const safeName = /^[\w\-.\s()]+$/.test(file.originalname || '');
+    const extOk = ALLOWED_UPLOAD_EXTS.has(ext);
+    const mimeOk = ALLOWED_UPLOAD_MIME.has(mime) || ALLOWED_UPLOAD_MIME_PREFIXES.some(p => mime.startsWith(p));
+    if (!safeName) return cb(new Error('Unsafe filename'));
+    if (!extOk || !mimeOk) return cb(new Error(`File type not allowed (${ext} / ${mime})`));
     cb(null, true);
   }
 });
 
-// Middleware
-app.use(cors());
+// Middleware — CORS restricted to local dev origins. Extend via CORS_ORIGINS env (comma-separated).
+const DEFAULT_CORS_ORIGINS = ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:5174', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173', 'http://127.0.0.1:5174'];
+const ALLOWED_CORS_ORIGINS = new Set([
+  ...DEFAULT_CORS_ORIGINS,
+  ...((process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean))
+]);
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true); // same-origin, curl, server-to-server
+    if (ALLOWED_CORS_ORIGINS.has(origin)) return cb(null, true);
+    // Don't throw — just refuse to set CORS headers. Browsers block the response;
+    // curl/server-to-server traffic isn't affected. Real access control for sensitive
+    // routes is `requireLocal`, applied per-route below.
+    cb(null, false);
+  },
+  credentials: true
+}));
 app.use(express.json({ limit: '10mb' }));
+
+// Normalize multer upload errors → 400 (instead of default 500 HTML stack trace).
+// Registered at end of middleware chain, after all routes — see bottom of file.
+function multerErrorHandler(err, req, res, next) {
+  if (err && (err.code === 'LIMIT_FILE_SIZE' || /file type|filename/i.test(err.message || ''))) {
+    return res.status(400).json({ error: err.message });
+  }
+  next(err);
+}
+
+// safeId — parse req.params.id as a positive integer, return null if invalid.
+// Replaces ad-hoc `safeId(req)` which silently coerces "abc" to NaN
+// and lets it flow into DB queries.
+function safeId(req) {
+  const raw = req?.params?.id;
+  if (raw == null) return null;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 0 || String(n) !== String(raw).trim()) return null;
+  return n;
+}
+
+// requireLocal — gate sensitive routes that handle secrets (API keys, settings dump).
+// Only allows requests from loopback or whitelisted origins. Frontend running on
+// localhost:3000 passes; external machines and the public internet do not.
+function requireLocal(req, res, next) {
+  const ip = req.ip || req.socket?.remoteAddress || '';
+  const isLoopback = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1' || ip.endsWith(':127.0.0.1');
+  const origin = req.headers.origin || '';
+  const isLocalOrigin = !origin || ALLOWED_CORS_ORIGINS.has(origin);
+  if (isLoopback && isLocalOrigin) return next();
+  return res.status(403).json({ error: 'Forbidden: this endpoint is restricted to local clients' });
+}
 
 // ============================================
 // INITIALIZATION
@@ -185,7 +253,7 @@ function buildPriorityQueue() {
   const DAY = 24 * 60 * 60 * 1000;
   const now = Date.now();
   let tickets = [];
-  try { tickets = db.getAllTicketsWithAnalysis([2, 3, 6, 7]) || []; } catch (e) { tickets = []; }
+  try { tickets = db.getAllTicketsWithAnalysis([2, 3, 8]) || []; } catch (e) { tickets = []; }
 
   const buckets = { needs_you: [], ready: [], new: [], recent: [], waiting: [] };
 
@@ -337,7 +405,7 @@ app.post('/api/ai/switch', (req, res) => {
 });
 
 // Update API key
-app.post('/api/ai/key', (req, res) => {
+app.post('/api/ai/key', requireLocal, (req, res) => {
   try {
     const { provider, apiKey } = req.body;
 
@@ -602,7 +670,7 @@ app.post('/api/casebook/search', (req, res) => {
 // Delete casebook entry
 app.delete('/api/casebook/:id', (req, res) => {
   try {
-    db.deleteCasebookEntry(parseInt(req.params.id));
+    db.deleteCasebookEntry(safeId(req));
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -641,7 +709,7 @@ app.get('/api/drafts', (req, res) => {
 app.get('/api/drafts/:id', (req, res) => {
   try {
     const dbInstance = db.getDb();
-    const draft = dbInstance.prepare('SELECT * FROM drafts WHERE id = ?').get(parseInt(req.params.id));
+    const draft = dbInstance.prepare('SELECT * FROM drafts WHERE id = ?').get(safeId(req));
     if (!draft) return res.status(404).json({ error: 'Draft not found' });
 
     // Parse JSON fields
@@ -678,7 +746,7 @@ app.patch('/api/drafts/:id/status', async (req, res) => {
       return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
     }
 
-    db.updateDraftStatus(parseInt(req.params.id), status, reviewed_by || 'human');
+    db.updateDraftStatus(safeId(req), status, reviewed_by || 'human');
 
     // Emit event
     try {
@@ -686,7 +754,7 @@ app.patch('/api/drafts/:id/status', async (req, res) => {
       const eventType = status === 'APPROVED' ? eventBus.EVENTS.DRAFT_APPROVED
         : status === 'REJECTED' ? eventBus.EVENTS.DRAFT_REJECTED
         : eventBus.EVENTS.DRAFT_CREATED;
-      eventBus.emit(eventType, { draftId: parseInt(req.params.id), status });
+      eventBus.emit(eventType, { draftId: safeId(req), status });
     } catch (e) {}
 
     res.json({ success: true, status });
@@ -708,7 +776,7 @@ app.get('/api/drafts/stats', (req, res) => {
 // Delete a draft
 app.delete('/api/drafts/:id', (req, res) => {
   try {
-    db.deleteDraft(parseInt(req.params.id));
+    db.deleteDraft(safeId(req));
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -810,7 +878,7 @@ app.get('/api/briefing/god-mode', async (req, res) => {
     ]);
 
     // Get ticket queue from DB
-    const openTickets = db.getTicketsByStatus([2, 3, 6, 7]);
+    const openTickets = db.getTicketsByStatus([2, 3, 8]);
     const urgentTickets = openTickets.filter(t => t.priority >= 3);
 
     // Get proactive state if available
@@ -997,7 +1065,7 @@ app.post('/api/intent', async (req, res) => {
           };
           // Just gather the data directly
           const draftStats = db.getDraftStats();
-          const openTickets = db.getTicketsByStatus([2, 3, 6, 7]);
+          const openTickets = db.getTicketsByStatus([2, 3, 8]);
           resolve({
             type: 'god_brief',
             priorities: [],
@@ -1014,7 +1082,7 @@ app.post('/api/intent', async (req, res) => {
       }
 
       case 'tickets_focus': {
-        const statuses = params.new_only ? [2] : [2, 3, 6, 7];
+        const statuses = params.new_only ? [2] : [2, 3, 8];
         const tickets = db.getTicketsByStatus(statuses);
         const filtered = params.sla_risk === 'high'
           ? tickets.filter(t => t.priority >= 3)
@@ -1337,9 +1405,9 @@ app.post('/api/voice', async (req, res) => {
     try {
       const ticketsWithAnalysis = db.getAllTicketsWithAnalysis();
       const tickets = ticketsWithAnalysis.map(t => t.ticket ? JSON.parse(t.ticket) : t);
-      const active = tickets.filter(t => [2, 3, 6, 7].includes(t.status));
+      const active = tickets.filter(t => [2, 3, 8].includes(t.status));
       if (active.length > 0) {
-        const statusLabels = { 2: 'Open', 3: 'Pending', 6: 'Waiting on Customer', 7: 'On Hold' };
+        const statusLabels = { 2: 'Open', 3: 'Pending', 4: 'Resolved', 5: 'Closed', 8: 'On-Hold' };
         const ticketList = active.slice(0, 15).map(t =>
           `#${t.id}: ${t.subject} (${statusLabels[t.status] || 'Unknown'}) - ${t.source || 'Freshdesk'}`
         ).join('\n');
@@ -2000,7 +2068,7 @@ app.post('/api/chat', async (req, res) => {
     const ticketKeywords = /ticket|freshdesk|open.*ticket|pending|support.*queue|how many|escalat/i;
     if (ticketKeywords.test(message)) {
       try {
-        const ticketsWithAnalysis = db.getAllTicketsWithAnalysis([2, 3, 6, 7]);
+        const ticketsWithAnalysis = db.getAllTicketsWithAnalysis([2, 3, 8]);
         if (ticketsWithAnalysis && ticketsWithAnalysis.length > 0) {
           let ticketContext = `\n\nREAL FRESHDESK TICKET DATA (use ONLY these real ticket numbers — NEVER make up ticket IDs):\n`;
           ticketContext += `Active tickets: ${ticketsWithAnalysis.length}\n`;
@@ -2129,7 +2197,7 @@ app.get('/api/tickets/summary', async (req, res) => {
     }
 
     const stats = {
-      total: tickets.filter(t => [2, 3, 6, 7].includes(t.status)).length,
+      total: tickets.filter(t => [2, 3, 8].includes(t.status)).length,
       open: open.length,
       pending: pending.length,
       waiting: waiting.length,
@@ -2477,7 +2545,14 @@ app.get('/api/stream/events', (req, res) => {
   res.write(`event: connected\ndata: ${JSON.stringify({ ok: true, at: new Date().toISOString() })}\n\n`);
   sseClients.add(res);
   // Heartbeat so proxies don't drop the connection.
-  const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 25000);
+  const ping = setInterval(() => {
+    try { res.write(': ping\n\n'); }
+    catch (e) {
+      // SSE client is gone — stop pinging, clear interval, drop from active set.
+      clearInterval(ping);
+      try { sseClients?.delete?.(res); } catch (_) {}
+    }
+  }, 25000);
   req.on('close', () => { clearInterval(ping); sseClients.delete(res); });
 });
 
@@ -2527,9 +2602,15 @@ app.post('/api/listen/event', async (req, res) => {
     try { eventBus.emit(type, data, { source }); } catch (e) {}
     const fid = data?.freshdesk_id || data?.ticket_id;
     if (fid) {
+      // Fire-and-forget by design (we don't want to keep the webhook caller waiting),
+      // but errors must NOT be swallowed silently — surface them via the event stream
+      // and the server log so failures are visible.
       scheduler.processTicketByFreshdeskId(fid, { reason: type })
         .then(r => { broadcastEvent('ticket.updated', r); if (r.drafted) broadcastEvent('draft.ready', r); })
-        .catch(() => {});
+        .catch(err => {
+          console.error(`[Webhook] processTicketByFreshdeskId(${fid}, ${type}) failed:`, err.message);
+          broadcastEvent('ticket.process_failed', { freshdeskId: fid, reason: type, error: err.message });
+        });
     }
     res.json({ ok: true, type, source });
   } catch (error) {
@@ -2631,7 +2712,7 @@ app.get('/api/email/status', (req, res) => {
 // ============================================
 
 // Get all settings
-app.get('/api/settings', (req, res) => {
+app.get('/api/settings', requireLocal, (req, res) => {
   try {
     const settings = db.getAllSettings();
     const providerInfo = ai.getCurrentProvider();
@@ -2647,8 +2728,9 @@ app.get('/api/settings', (req, res) => {
   }
 });
 
-// Freshdesk config endpoint — frontend fetches this so key rotation only needs Render env var update
-app.get('/api/config/freshdesk', (req, res) => {
+// Freshdesk config endpoint — local-only. The frontend (running on localhost) reads this once
+// to bootstrap; remote callers get 403. Key rotation still works via FRESHDESK_API_KEY env var.
+app.get('/api/config/freshdesk', requireLocal, (req, res) => {
   res.json({
     domain: process.env.FRESHDESK_DOMAIN || '',
     apiKey: process.env.FRESHDESK_API_KEY || '',
@@ -2657,7 +2739,7 @@ app.get('/api/config/freshdesk', (req, res) => {
 });
 
 // Update setting
-app.post('/api/settings', (req, res) => {
+app.post('/api/settings', requireLocal, (req, res) => {
   try {
     const { key, value } = req.body;
     db.setSetting(key, value);
@@ -3265,7 +3347,7 @@ app.delete('/api/memory/facts/:id', (req, res) => {
   try {
     const dbInstance = db.getDb();
     const stmt = dbInstance.prepare('DELETE FROM memory_facts WHERE id = ?');
-    stmt.run(parseInt(req.params.id));
+    stmt.run(safeId(req));
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -3907,7 +3989,7 @@ app.post('/api/commander/chat', async (req, res) => {
 
     if (tickets.length > 0) {
       // Only include ACTIVE tickets in context to stay within token limits
-      const activeTickets = tickets.filter(t => [2, 3, 6, 7].includes(t.status));
+      const activeTickets = tickets.filter(t => [2, 3, 8].includes(t.status));
       const resolvedCount = tickets.filter(t => [4, 5].includes(t.status)).length;
 
       context += `\n\n=== SUPPORT QUEUE (${activeTickets.length} active, ${resolvedCount} resolved/closed) ===\n`;
@@ -3916,8 +3998,7 @@ app.post('/api/commander/chat', async (req, res) => {
       const statusGroups = {
         'Open': activeTickets.filter(t => t.status === 2),
         'Pending': activeTickets.filter(t => t.status === 3),
-        'Waiting on Customer': activeTickets.filter(t => t.status === 6),
-        'On Hold': activeTickets.filter(t => t.status === 7)
+        'On-Hold': activeTickets.filter(t => t.status === 8)
       };
 
       for (const [status, group] of Object.entries(statusGroups)) {
@@ -3953,7 +4034,7 @@ app.post('/api/commander/chat', async (req, res) => {
       }
 
       context += `\n=== TICKET SUMMARY ===\n`;
-      context += `Total Active: ${tickets.filter(t => [2,3,6,7].includes(t.status)).length}\n`;
+      context += `Total Active: ${tickets.filter(t => [2, 3, 8].includes(t.status)).length}\n`;
       context += `Urgent (8+ urgency): ${urgentCount}\n`;
       context += `Needs Escalation: ${escalationCount}\n`;
     }
@@ -4000,14 +4081,14 @@ app.get('/api/commander/execution-plan', async (req, res) => {
 
     // Build context
     let ticketContext = '';
-    const activeTickets = tickets.filter(t => [2, 3, 6, 7].includes(t.status));
+    const activeTickets = tickets.filter(t => [2, 3, 8].includes(t.status));
 
     for (const ticket of activeTickets) {
       const analysis = analysisMap[String(ticket.id)];
       const parsed = analysis ? (typeof analysis === 'string' ? JSON.parse(analysis) : analysis) : null;
 
       ticketContext += `\nTicket #${ticket.id}: ${ticket.subject}
-  Status: ${['Open', 'Pending', 'Waiting', 'On Hold'][ticket.status - 2] || 'Unknown'}
+  Status: ${ ({2:'Open', 3:'Pending', 4:'Resolved', 5:'Closed', 8:'On-Hold'}[ticket.status]) || 'Unknown' }
   Priority: ${['Low', 'Medium', 'High', 'Urgent'][ticket.priority - 1] || 'Unknown'}
   Requester: ${ticket.requester?.name || 'Unknown'}
   Created: ${ticket.created_at}`;
@@ -4828,7 +4909,7 @@ app.post('/api/inbox', (req, res) => {
 app.post('/api/inbox/:id/read', (req, res) => {
   try {
     const { feedType } = req.body;
-    const result = unifiedInbox.markAsRead(parseInt(req.params.id), feedType);
+    const result = unifiedInbox.markAsRead(safeId(req), feedType);
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -4839,7 +4920,7 @@ app.post('/api/inbox/:id/read', (req, res) => {
 app.post('/api/inbox/:id/snooze', (req, res) => {
   try {
     const { minutes } = req.body;
-    const result = unifiedInbox.snoozeItem(parseInt(req.params.id), minutes || 60);
+    const result = unifiedInbox.snoozeItem(safeId(req), minutes || 60);
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -4850,7 +4931,7 @@ app.post('/api/inbox/:id/snooze', (req, res) => {
 app.post('/api/inbox/:id/dismiss', (req, res) => {
   try {
     const { feedType } = req.body;
-    const result = unifiedInbox.dismissItem(parseInt(req.params.id), feedType);
+    const result = unifiedInbox.dismissItem(safeId(req), feedType);
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -5279,7 +5360,7 @@ app.post('/api/projects', (req, res) => {
 // Update project
 app.put('/api/projects/:id', (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = safeId(req);
     const index = projectsStore.findIndex(p => p.id === id);
     if (index === -1) {
       return res.status(404).json({ error: 'Project not found' });
@@ -5299,7 +5380,7 @@ app.put('/api/projects/:id', (req, res) => {
 // Delete project
 app.delete('/api/projects/:id', (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = safeId(req);
     projectsStore = projectsStore.filter(p => p.id !== id);
     db.setSetting('projects', JSON.stringify(projectsStore));
     res.json({ success: true });
@@ -5489,7 +5570,7 @@ app.post('/api/action-items', (req, res) => {
 
 app.patch('/api/action-items/:id', (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = safeId(req);
     const index = actionItemsStore.findIndex(item => item.id === id);
     if (index !== -1) {
       actionItemsStore[index] = { ...actionItemsStore[index], ...req.body };
@@ -5505,7 +5586,7 @@ app.patch('/api/action-items/:id', (req, res) => {
 
 app.delete('/api/action-items/:id', (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = safeId(req);
     actionItemsStore = actionItemsStore.filter(item => item.id !== id);
     db.setSetting('action_items', JSON.stringify(actionItemsStore));
     res.json({ success: true });
@@ -5927,7 +6008,7 @@ app.get('/api/clickup/sop-log', (req, res) => {
 // Get single SOP log entry
 app.get('/api/clickup/sop-log/:id', (req, res) => {
   try {
-    const entry = db.getSOPLogEntry(parseInt(req.params.id));
+    const entry = db.getSOPLogEntry(safeId(req));
     if (!entry) return res.status(404).json({ error: 'Entry not found' });
     res.json({ success: true, entry });
   } catch (error) {
@@ -6222,7 +6303,7 @@ app.post('/api/trade-signals/webhook', (req, res) => {
 
     // Try to persist to DB
     try {
-      db.saveSetting(`trade_signal_${signal.id}`, JSON.stringify(signal));
+      db.setSetting(`trade_signal_${signal.id}`, JSON.stringify(signal));
     } catch (e) { /* non-critical */ }
 
     console.log(`[TRADE SIGNAL] ${signal.symbol} ${signal.action} @ ${signal.entry} | SL: ${signal.stopLoss} | TP1: ${signal.tp1}`);
@@ -6537,7 +6618,7 @@ app.post('/api/porting/requests', upload.single('billingStatement'), async (req,
 
     // Save to Supabase if available
     try {
-      db.saveSetting(`port_request_${portSid}`, JSON.stringify(requestRecord));
+      db.setSetting(`port_request_${portSid}`, JSON.stringify(requestRecord));
     } catch (e) {
       console.log('Could not save port request to DB:', e.message);
     }
@@ -6782,6 +6863,10 @@ app.post('/api/porting/generate-loa', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Error-handling middleware must come AFTER all routes — Express scans forward
+// for the next 4-arg handler when a middleware calls next(err).
+app.use(multerErrorHandler);
 
 // Create HTTP server and attach WebSocket for streaming
 import { createServer } from 'http';

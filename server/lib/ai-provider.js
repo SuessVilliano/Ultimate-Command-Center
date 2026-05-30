@@ -547,8 +547,17 @@ export async function chat(messages, options = {}) {
         return { text: result.text, provider: p.name, model: p.model, usage: result.usage, fallbackFrom: p.name !== provider ? provider : undefined };
       } catch (error) {
         const parsed = parseProviderError(p.name, error);
-        const isRateLimit = parsed.type === 'rate_limit' || /rate.?limit|quota|429|too many/i.test(error.message || '');
-        const isAuthError = parsed.type === 'auth' || /credit|balance|unauthorized|invalid.*key|api.*key/i.test(error.message || '');
+        const msg = error.message || '';
+        const status = error.status || error.statusCode || error.code || 0;
+        // Primary signal: HTTP status / structured type. Regex is only a fallback for providers
+        // that wrap the response into a plain Error string. Keep the patterns broad enough to
+        // catch wording changes across providers (rate limit, quota, throttled, TPM/RPM, etc).
+        const isRateLimit = parsed.type === 'rate_limit'
+          || status === 429
+          || /(rate[\s_-]?limit|quota|throttl|too[\s_-]?many|429|tokens?[\s_-]?per[\s_-]?(minute|day|second)|tpm|rpm|exceeded|usage[\s_-]?(limit|cap)|capacity)/i.test(msg);
+        const isAuthError = parsed.type === 'auth'
+          || status === 401 || status === 403
+          || /(unauthor|forbidden|invalid[\s_-]?(api[\s_-]?)?key|api[\s_-]?key[\s_-]?(missing|invalid|expired)|credit|balance|payment[\s_-]?required|account[\s_-]?(suspend|disable))/i.test(msg);
 
         if (isRateLimit && attempt < 2) {
           // Exponential backoff for rate limits: 15s, then 30s
