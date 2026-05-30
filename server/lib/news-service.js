@@ -373,8 +373,7 @@ function getStatusLabel(status) {
     3: 'Pending',
     4: 'Resolved',
     5: 'Closed',
-    6: 'Waiting on Customer',
-    7: 'On Hold'
+    8: 'On-Hold'
   };
   return labels[status] || 'Unknown';
 }

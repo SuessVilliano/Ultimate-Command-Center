@@ -231,7 +231,7 @@ export async function notifyViaEmail(entry, config = {}) {
           ${entry.change_summary ? `<tr><td style="padding: 8px 0; color: #6b7280;">Changes</td><td style="padding: 8px 0;">${entry.change_summary}</td></tr>` : ''}
           <tr>
             <td style="padding: 8px 0; color: #6b7280;">Time</td>
-            <td style="padding: 8px 0;">${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} EST</td>
+            <td style="padding: 8px 0;">${new Date().toLocaleString('en-US', { timeZone: process.env.SCHEDULE_TIMEZONE || 'America/Chicago' })}</td>
           </tr>
         </table>
 
@@ -262,7 +262,7 @@ export async function notifyViaEmail(entry, config = {}) {
     (entry.space_name ? `Space: ${entry.space_name}\n` : '') +
     (entry.change_summary ? `Changes: ${entry.change_summary}\n` : '') +
     (entry.url ? `\nView: ${entry.url}\n` : '') +
-    `\nTime: ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} EST`;
+    `\nTime: ${new Date().toLocaleString('en-US', { timeZone: process.env.SCHEDULE_TIMEZONE || 'America/Chicago' })}`;
 
   try {
     // Build mail options with CC/BCC support
@@ -361,7 +361,7 @@ export async function notifyViaSlack(entry) {
 
   blocks.push({
     type: 'context',
-    elements: [{ type: 'mrkdwn', text: `LIV8 Command Center | ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} EST` }]
+    elements: [{ type: 'mrkdwn', text: `LIV8 Command Center | ${new Date().toLocaleString('en-US', { timeZone: process.env.SCHEDULE_TIMEZONE || 'America/Chicago' })}` }]
   });
 
   try {
