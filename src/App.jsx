@@ -45,6 +45,18 @@ function AppContent() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Cross-page navigation event. Any component can do:
+  //   window.dispatchEvent(new CustomEvent('liv8:navigate', { detail: { page: 'tickets' } }))
+  // instead of touching `window.location` (which doesn't work in this SPA).
+  useEffect(() => {
+    const onNav = (e) => {
+      const page = e?.detail?.page;
+      if (page) setActivePage(page);
+    };
+    window.addEventListener('liv8:navigate', onNav);
+    return () => window.removeEventListener('liv8:navigate', onNav);
+  }, []);
+
   const handleNavigate = (page) => {
     setActivePage(page);
   };
@@ -88,7 +100,7 @@ function AppContent() {
       case 'inbox':
         return <Inbox />;
       case 'news':
-        return <Trading />;
+        return <News />;
       case 'agent-team':
         return <AgentTeam />;
       case 'integrations':

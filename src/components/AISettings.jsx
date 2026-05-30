@@ -302,7 +302,7 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
                         <input
                           value={localConfig.ollama.baseUrl}
                           onChange={e => setLocalConfig(p => ({ ...p, ollama: { ...p.ollama, baseUrl: e.target.value } }))}
-                          placeholder="http://localhost:11434"
+                          placeholder="e.g. http://localhost:11434 (Ollama local)"
                           className={`flex-1 min-w-[140px] px-2 py-1 rounded text-xs border ${isDark ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
                         />
                         <input

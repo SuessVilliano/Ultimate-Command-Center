@@ -85,13 +85,19 @@ function News() {
   const [lastUpdate, setLastUpdate] = useState(null);
   const [journalFullscreen, setJournalFullscreen] = useState(false);
 
-  // Load data on mount
+  // Load data on mount + auto-refresh. `fetchAllData` is intentionally a stable
+  // reference (defined below as a regular function), so the empty dep array is OK.
+  // If `fetchAllData` ever closes over state, move it into useCallback with the state deps.
   useEffect(() => {
     fetchAllData();
-    // Refresh every 5 minutes
     const interval = setInterval(fetchAllData, 5 * 60 * 1000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const navigateTo = (page) => {
+    window.dispatchEvent(new CustomEvent('liv8:navigate', { detail: { page } }));
+  };
 
   const fetchAllData = async () => {
     setLoading(true);
@@ -589,7 +595,7 @@ function News() {
                   <ChevronRight className="w-4 h-4 text-cyan-400" />
                 </button>
                 <button
-                  onClick={() => window.location.href = '/?page=tickets'}
+                  onClick={() => navigateTo('tickets')}
                   className={`w-full flex items-center justify-between p-3 rounded-lg ${
                     isDark ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-50 hover:bg-gray-100'
                   }`}
@@ -601,7 +607,7 @@ function News() {
                   <ChevronRight className="w-4 h-4 text-gray-400" />
                 </button>
                 <button
-                  onClick={() => window.location.href = '/'}
+                  onClick={() => navigateTo('dashboard')}
                   className={`w-full flex items-center justify-between p-3 rounded-lg ${
                     isDark ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-50 hover:bg-gray-100'
                   }`}
