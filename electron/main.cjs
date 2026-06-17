@@ -167,7 +167,11 @@ function createWindow() {
     minHeight: 680,
     title: 'LIV8 Command Center',
     backgroundColor: '#050508',
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      webviewTag: true, // enables the embedded ChatGPT/Gemini panels (AI Copilots)
+    },
   });
 
   // External links (Freshdesk tickets etc.) open in the real browser, so your

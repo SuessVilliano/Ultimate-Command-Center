@@ -40,6 +40,7 @@ const menuItems = [
   { id: 'inbox', label: 'Team Inbox', icon: MessageSquare },
   { id: 'action-feed', label: 'Action Feed', icon: Inbox },
   { id: 'tickets', label: 'GHL', icon: Ticket },
+  { id: 'assistants', label: 'AI Copilots', icon: Bot },
   { id: 'projects', label: 'Projects', icon: FolderKanban },
   { id: 'agents', label: 'Agents Config', icon: Zap },
   { id: 'actions', label: 'Action Items', icon: CheckSquare },
