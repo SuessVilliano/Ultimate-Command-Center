@@ -52,6 +52,69 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
   const [selectedModel, setSelectedModel] = useState('');
   const [message, setMessage] = useState({ type: '', text: '' });
 
+  // Persona editor + ClickUp SOP sync
+  const [showPersona, setShowPersona] = useState(false);
+  const [persona, setPersona] = useState({ persona: '', name: '', signature: '', styleExamples: '', isCustom: false });
+  const [clickup, setClickup] = useState({ token: '', workspaceId: '', query: '' });
+
+  const loadPersona = async () => {
+    try {
+      const r = await fetch(`${BACKEND_URL}/api/agent/persona`);
+      if (r.ok) {
+        const d = await r.json();
+        setPersona({ persona: d.persona || '', name: d.name || '', signature: d.signature || '', styleExamples: d.styleExamples || '', isCustom: !!d.isCustom });
+      }
+    } catch (e) { /* ignore */ }
+  };
+
+  const savePersona = async () => {
+    try {
+      setSaving(true);
+      const r = await fetch(`${BACKEND_URL}/api/agent/persona`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ persona: persona.persona, name: persona.name, signature: persona.signature, styleExamples: persona.styleExamples })
+      });
+      setMessage(r.ok ? { type: 'success', text: 'Persona saved — new drafts use it right away' } : { type: 'error', text: 'Could not save persona' });
+      if (r.ok) loadPersona();
+    } catch (e) { setMessage({ type: 'error', text: 'Could not save persona' }); }
+    finally { setSaving(false); }
+  };
+
+  const resetPersona = async () => {
+    try {
+      setSaving(true);
+      const r = await fetch(`${BACKEND_URL}/api/agent/persona/reset`, { method: 'POST' });
+      if (r.ok) { setMessage({ type: 'success', text: 'Reset to the built-in persona' }); loadPersona(); }
+    } catch (e) { /* ignore */ }
+    finally { setSaving(false); }
+  };
+
+  const saveClickupToken = async () => {
+    try {
+      setSaving(true);
+      await fetch(`${BACKEND_URL}/api/clickup/token`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: clickup.token, workspaceId: clickup.workspaceId })
+      });
+      setMessage({ type: 'success', text: 'ClickUp connected' });
+    } catch (e) { setMessage({ type: 'error', text: 'Could not save ClickUp token' }); }
+    finally { setSaving(false); }
+  };
+
+  const syncClickupSops = async () => {
+    try {
+      setSaving(true);
+      setMessage({ type: 'success', text: 'Syncing SOPs from ClickUp…' });
+      const r = await fetch(`${BACKEND_URL}/api/sop/sync-clickup`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId: clickup.workspaceId || undefined, query: clickup.query || undefined })
+      });
+      const d = await r.json();
+      setMessage(r.ok ? { type: 'success', text: `Synced ${d.synced} SOP doc(s) from ClickUp` } : { type: 'error', text: d.error || 'Sync failed' });
+    } catch (e) { setMessage({ type: 'error', text: 'Sync failed' }); }
+    finally { setSaving(false); }
+  };
+
   useEffect(() => {
     fetchProviderStatus();
   }, []);
@@ -195,7 +258,7 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
   }
 
   return (
-    <div className={`p-4 rounded-lg ${isDark ? 'bg-gray-800' : 'bg-white'} shadow-xl max-w-md w-full`}>
+    <div className={`p-4 rounded-lg ${isDark ? 'bg-gray-800' : 'bg-white'} shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto`}>
       <div className="flex items-center justify-between mb-4">
         <h3 className={`text-lg font-semibold flex items-center gap-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
           <Settings className="w-5 h-5" />
@@ -213,6 +276,90 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
           {message.text}
         </div>
       )}
+
+      {/* Agent Persona & SOPs */}
+      <div className={`mb-4 rounded-lg border ${isDark ? 'border-purple-900/40 bg-gray-900' : 'border-gray-200 bg-gray-50'}`}>
+        <button
+          onClick={() => { const n = !showPersona; setShowPersona(n); if (n) loadPersona(); }}
+          className="w-full flex items-center justify-between p-3"
+        >
+          <span className={`text-sm font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            🧠 Agent Persona &amp; SOPs
+          </span>
+          <span className="text-xs text-gray-400">
+            {persona.isCustom ? 'Custom' : 'Default'} {showPersona ? '▲' : '▼'}
+          </span>
+        </button>
+
+        {showPersona && (
+          <div className="px-3 pb-3 space-y-3">
+            <div>
+              <label className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'} block mb-1`}>Your name (used in replies)</label>
+              <input
+                value={persona.name}
+                onChange={e => setPersona(p => ({ ...p, name: e.target.value }))}
+                placeholder="Jamaur Johnson"
+                className={`w-full px-2 py-1.5 rounded text-sm border ${isDark ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'}`}
+              />
+            </div>
+            <div>
+              <label className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'} block mb-1`}>Persona &amp; rules (how the AI sounds + your templates)</label>
+              <textarea
+                value={persona.persona}
+                onChange={e => setPersona(p => ({ ...p, persona: e.target.value }))}
+                rows={10}
+                className={`w-full px-2 py-1.5 rounded text-xs font-mono border ${isDark ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'}`}
+              />
+            </div>
+            <div>
+              <label className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'} block mb-1`}>Signature (optional)</label>
+              <textarea
+                value={persona.signature}
+                onChange={e => setPersona(p => ({ ...p, signature: e.target.value }))}
+                rows={2}
+                className={`w-full px-2 py-1.5 rounded text-xs border ${isDark ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'}`}
+              />
+            </div>
+            <div>
+              <label className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'} block mb-1`}>Example replies (paste a few real ones to teach your voice)</label>
+              <textarea
+                value={persona.styleExamples}
+                onChange={e => setPersona(p => ({ ...p, styleExamples: e.target.value }))}
+                rows={4}
+                placeholder="Paste 2-5 of your best past replies…"
+                className={`w-full px-2 py-1.5 rounded text-xs border ${isDark ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'}`}
+              />
+            </div>
+            <div className="flex gap-2">
+              <button onClick={savePersona} disabled={saving} className="flex-1 px-3 py-1.5 text-sm rounded bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50">Save Persona</button>
+              <button onClick={resetPersona} disabled={saving} className={`px-3 py-1.5 text-sm rounded ${isDark ? 'bg-gray-700 text-white hover:bg-gray-600' : 'bg-gray-200 text-gray-900 hover:bg-gray-300'} disabled:opacity-50`}>Reset to default</button>
+            </div>
+
+            {/* ClickUp SOP sync */}
+            <div className={`pt-3 border-t ${isDark ? 'border-gray-700' : 'border-gray-200'}`}>
+              <label className={`text-xs font-medium ${isDark ? 'text-gray-300' : 'text-gray-600'} block mb-1`}>📋 Read SOPs from ClickUp</label>
+              <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'} mb-2`}>Paste your ClickUp API token, then Sync to pull your SOP docs into the AI.</p>
+              <div className="flex gap-2 mb-2">
+                <input
+                  type="password"
+                  value={clickup.token}
+                  onChange={e => setClickup(c => ({ ...c, token: e.target.value }))}
+                  placeholder="ClickUp API token (pk_…)"
+                  className={`flex-1 px-2 py-1.5 rounded text-sm border ${isDark ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'}`}
+                />
+                <button onClick={saveClickupToken} disabled={!clickup.token || saving} className="px-3 py-1.5 text-sm rounded bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50">Connect</button>
+              </div>
+              <input
+                value={clickup.query}
+                onChange={e => setClickup(c => ({ ...c, query: e.target.value }))}
+                placeholder="Optional: only docs whose name contains… (e.g. SOP)"
+                className={`w-full px-2 py-1.5 mb-2 rounded text-sm border ${isDark ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'}`}
+              />
+              <button onClick={syncClickupSops} disabled={saving} className="w-full px-3 py-1.5 text-sm rounded bg-teal-600 text-white hover:bg-teal-500 disabled:opacity-50">Sync SOPs from ClickUp</button>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Provider Selection */}
       <div className="mb-4">

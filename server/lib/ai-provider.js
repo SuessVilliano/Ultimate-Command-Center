@@ -966,6 +966,14 @@ function chatWithCLI(kind, messages, options) {
  */
 let sopCache = { content: '', loadedAt: 0 };
 
+/**
+ * Force the next draft to re-read SOPs immediately. Call this whenever SOPs
+ * change (in-app drop, delete, or ClickUp sync) so updates apply in real time.
+ */
+export function invalidateSOPCache() {
+  sopCache = { content: '', loadedAt: 0 };
+}
+
 function getSOPContext() {
   const now = Date.now();
   // Refresh cache every 5 minutes
@@ -1198,6 +1206,7 @@ ${styleSamples.slice(0, 6).map((s, i) => `--- Example ${i + 1} ---\n${s}\n---`).
 
 OUTPUT RULES (this reply will be copy-pasted into Freshdesk by the human):
 - Write the reply in YOUR voice, following YOUR rules and templates above exactly.
+- Keep it SHORT, to the point, and friendly. Never use quotation marks.
 - Use bold (**like this**) only where your persona requires it (e.g. the P.S. lines).
 - NEVER invent or guess ticket numbers, IDs, SIDs, dates, or past cases. Use ONLY identifiers explicitly given in the context below. If something needed is missing, ASK for it instead of guessing.
 - This is a DRAFT for the human to review and send. Never claim you have already sent or replied.

@@ -33,6 +33,7 @@ import * as streamRelay from './lib/stream-relay.js';
 import * as telegram from './lib/telegram-bridge.js';
 import { getTelegramPrompt } from './lib/system-prompt.js';
 import { getVoicePrompt, getChatPrompt, getCommanderPrompt } from './lib/system-prompt.js';
+import { DEFAULT_AGENT_PERSONA } from './lib/agent-persona.js';
 import * as dailyReport from './lib/daily-report.js';
 import * as emailService from './lib/email-service.js';
 import * as orchestrator from './lib/agent-orchestrator.js';
@@ -277,8 +278,79 @@ app.post('/api/ai/key', (req, res) => {
 });
 
 // ============================================
+// AGENT PERSONA ENDPOINTS (edit how the AI sounds + its rules)
+// ============================================
+
+// Get the current persona (custom override or built-in default) + identity
+app.get('/api/agent/persona', (req, res) => {
+  try {
+    const custom = db.getSetting('agent_persona', null);
+    res.json({
+      persona: (custom && custom.trim()) ? custom : DEFAULT_AGENT_PERSONA,
+      isCustom: !!(custom && custom.trim()),
+      defaultPersona: DEFAULT_AGENT_PERSONA,
+      name: db.getSetting('agent_name', 'Jamaur Johnson'),
+      signature: db.getSetting('agent_signature', ''),
+      styleExamples: db.getSetting('agent_style_examples', '')
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Save persona / name / signature / style examples
+app.post('/api/agent/persona', (req, res) => {
+  try {
+    const { persona, name, signature, styleExamples } = req.body;
+    if (persona !== undefined) db.setSetting('agent_persona', persona || '');
+    if (name !== undefined) db.setSetting('agent_name', name || '');
+    if (signature !== undefined) db.setSetting('agent_signature', signature || '');
+    if (styleExamples !== undefined) db.setSetting('agent_style_examples', styleExamples || '');
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Reset persona back to the built-in default
+app.post('/api/agent/persona/reset', (req, res) => {
+  try {
+    db.setSetting('agent_persona', ''); // empty → generateResponse uses the default
+    res.json({ success: true, persona: DEFAULT_AGENT_PERSONA });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================
 // SOP (Standard Operating Procedures) ENDPOINTS
 // ============================================
+
+// Pull SOP docs from ClickUp into the AI's SOP context (real-time, on demand)
+app.post('/api/sop/sync-clickup', async (req, res) => {
+  try {
+    if (!clickupSop.isConfigured()) {
+      return res.status(400).json({ error: 'ClickUp not connected. Add your ClickUp API token first.' });
+    }
+    const result = await clickupSop.syncSOPsToContext(req.body || {}, db);
+    try { ai.invalidateSOPCache(); } catch (e) {}
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Save / update the ClickUp API token (so it can read your SOPs)
+app.post('/api/clickup/token', (req, res) => {
+  try {
+    const { token, workspaceId } = req.body;
+    if (token !== undefined) db.setSetting('clickup_api_token', token || '');
+    if (workspaceId !== undefined) db.setSetting('clickup_workspace_id', workspaceId || '');
+    res.json({ success: true, configured: clickupSop.isConfigured() });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // Upload SOP document (PDF, TXT, etc.)
 app.post('/api/sop/upload', upload.single('file'), async (req, res) => {
@@ -305,6 +377,7 @@ app.post('/api/sop/upload', upload.single('file'), async (req, res) => {
         uploadedAt: new Date().toISOString()
       });
       db.setSetting('sop_documents', JSON.stringify(sops));
+    try { ai.invalidateSOPCache(); } catch (e) {}
 
       // Also inject into all relevant agent knowledge bases
       const agentIds = ['highlevel-specialist', 'business-analyst', 'dev-ops'];
@@ -357,6 +430,7 @@ app.post('/api/sop/text', (req, res) => {
       uploadedAt: new Date().toISOString()
     });
     db.setSetting('sop_documents', JSON.stringify(sops));
+    try { ai.invalidateSOPCache(); } catch (e) {}
 
     // Inject into agent knowledge bases
     const agentIds = ['highlevel-specialist', 'business-analyst', 'dev-ops'];
@@ -414,6 +488,7 @@ app.delete('/api/sop/:sopId', (req, res) => {
     const sops = JSON.parse(db.getSetting('sop_documents', '[]'));
     const filtered = sops.filter(s => s.id !== req.params.sopId);
     db.setSetting('sop_documents', JSON.stringify(filtered));
+    try { ai.invalidateSOPCache(); } catch (e) {}
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });

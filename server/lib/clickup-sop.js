@@ -7,13 +7,23 @@ import * as db from './database.js';
 import * as emailService from './email-service.js';
 
 const CLICKUP_API_BASE = 'https://api.clickup.com/api/v2';
+const CLICKUP_API_V3 = 'https://api.clickup.com/api/v3';
+
+/**
+ * Resolve the ClickUp token from the in-app setting first, then env var.
+ */
+function getToken() {
+  let saved = null;
+  try { saved = db.getSetting('clickup_api_token', null); } catch (e) {}
+  return (saved && saved.trim()) ? saved.trim() : (process.env.CLICKUP_API_TOKEN || null);
+}
 
 /**
  * Get ClickUp API headers
  */
 function getHeaders() {
-  const token = process.env.CLICKUP_API_TOKEN;
-  if (!token) throw new Error('CLICKUP_API_TOKEN not configured');
+  const token = getToken();
+  if (!token) throw new Error('ClickUp API token not configured');
   return {
     'Authorization': token,
     'Content-Type': 'application/json'
@@ -24,7 +34,7 @@ function getHeaders() {
  * Check if ClickUp is configured
  */
 export function isConfigured() {
-  return !!(process.env.CLICKUP_API_TOKEN);
+  return !!getToken();
 }
 
 /**
@@ -103,6 +113,94 @@ export async function getDoc(workspaceId, docId) {
   });
   if (!resp.ok) return null;
   return resp.json();
+}
+
+/**
+ * Resolve the workspace/team ID (from setting, arg, or first available team).
+ */
+async function resolveWorkspaceId(workspaceId) {
+  if (workspaceId) return workspaceId;
+  let saved = null;
+  try { saved = db.getSetting('clickup_workspace_id', null); } catch (e) {}
+  if (saved && saved.trim()) return saved.trim();
+  const teams = await getTeams();
+  return teams?.teams?.[0]?.id || null;
+}
+
+/**
+ * List Docs in a workspace (ClickUp Docs API v3).
+ */
+async function listWorkspaceDocs(workspaceId) {
+  const resp = await fetch(`${CLICKUP_API_V3}/workspaces/${workspaceId}/docs?limit=100`, {
+    headers: getHeaders()
+  });
+  if (!resp.ok) throw new Error(`ClickUp docs list failed: ${resp.status}`);
+  const data = await resp.json();
+  return data.docs || data || [];
+}
+
+/**
+ * Fetch a Doc's pages as plain text/markdown (ClickUp Docs API v3).
+ */
+async function getDocPagesText(workspaceId, docId) {
+  const resp = await fetch(
+    `${CLICKUP_API_V3}/workspaces/${workspaceId}/docs/${docId}/pages?content_format=text/md`,
+    { headers: getHeaders() }
+  );
+  if (!resp.ok) return '';
+  const pages = await resp.json();
+  const arr = Array.isArray(pages) ? pages : (pages.pages || []);
+  return arr.map(p => `${p.name ? `# ${p.name}\n` : ''}${p.content || ''}`).join('\n\n').trim();
+}
+
+/**
+ * Sync SOP Docs from ClickUp into the AI's SOP context (sop_documents setting).
+ * Manually-dropped SOPs are preserved; previously-synced ClickUp SOPs are
+ * replaced so this is safe to run repeatedly. Optional opts:
+ *   { workspaceId, query (filter doc names), docIds [specific docs], max }
+ */
+export async function syncSOPsToContext(opts = {}, dbModule = db) {
+  const workspaceId = await resolveWorkspaceId(opts.workspaceId);
+  if (!workspaceId) throw new Error('Could not resolve a ClickUp workspace. Pass workspaceId or set it in settings.');
+
+  let docs = await listWorkspaceDocs(workspaceId);
+  if (opts.docIds && opts.docIds.length) {
+    const wanted = new Set(opts.docIds.map(String));
+    docs = docs.filter(d => wanted.has(String(d.id)));
+  }
+  if (opts.query && opts.query.trim()) {
+    const q = opts.query.trim().toLowerCase();
+    docs = docs.filter(d => (d.name || '').toLowerCase().includes(q));
+  }
+  const max = opts.max || 25;
+  docs = docs.slice(0, max);
+
+  const newSops = [];
+  for (const doc of docs) {
+    try {
+      const content = await getDocPagesText(workspaceId, doc.id);
+      if (!content) continue;
+      newSops.push({
+        id: `clickup-${doc.id}`,
+        title: doc.name || `ClickUp Doc ${doc.id}`,
+        content: content.substring(0, 8000),
+        summary: content.substring(0, 400),
+        source: 'clickup',
+        uploadedAt: new Date().toISOString()
+      });
+    } catch (e) {
+      // Skip a doc that fails to load; keep going
+    }
+  }
+
+  // Merge: keep manual SOPs, replace prior ClickUp ones
+  let existing = [];
+  try { existing = JSON.parse(dbModule.getSetting('sop_documents', '[]')); } catch (e) {}
+  const manual = existing.filter(s => s.source !== 'clickup');
+  const merged = [...manual, ...newSops];
+  dbModule.setSetting('sop_documents', JSON.stringify(merged));
+
+  return { synced: newSops.length, total: merged.length, titles: newSops.map(s => s.title), workspaceId };
 }
 
 /**
