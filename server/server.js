@@ -76,6 +76,37 @@ const upload = multer({
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+/**
+ * Hydrate a DB ticket row into a real ticket object the AI can use.
+ * DB rows store the REAL Freshdesk number in `freshdesk_id` and the full ticket
+ * JSON in `raw_data` (custom fields, requester, etc.). Older code read a
+ * non-existent `ticket` field and fell back to the SQLite row id, which made
+ * the AI show fake sequential ticket numbers (#1, #2…). This fixes that.
+ */
+function hydrateTicketRow(row) {
+  if (!row || typeof row !== 'object') return row;
+  // If it doesn't look like a DB row, return as-is.
+  if (row.freshdesk_id === undefined && row.raw_data === undefined) return row;
+  let raw = {};
+  try { raw = row.raw_data ? JSON.parse(row.raw_data) : {}; } catch (e) {}
+  return {
+    ...raw,
+    id: row.freshdesk_id || raw.id || row.id,   // REAL Freshdesk ticket number
+    freshdesk_id: row.freshdesk_id,
+    subject: row.subject || raw.subject,
+    status: row.status != null ? row.status : raw.status,
+    priority: row.priority != null ? row.priority : raw.priority,
+    description: row.description || raw.description_text || raw.description || '',
+    requester_name: row.requester_name || (raw.requester && raw.requester.name),
+    requester: raw.requester || { name: row.requester_name, email: row.requester_email },
+    custom_fields: raw.custom_fields,
+    escalation_type: row.escalation_type,
+    urgency_score: row.urgency_score,
+    summary: row.summary,
+    source: raw.source || 'Freshdesk',
+  };
+}
+
 // ============================================
 // INITIALIZATION
 // ============================================
@@ -907,7 +938,7 @@ app.get('/api/alerts/glasses', async (req, res) => {
 
     // Check tickets
     const ticketsWithAnalysis = db.getAllTicketsWithAnalysis();
-    const tickets = ticketsWithAnalysis.map(t => t.ticket ? JSON.parse(t.ticket) : t);
+    const tickets = ticketsWithAnalysis.map(hydrateTicketRow);
     const analysisMap = db.getAllAnalysisMap();
 
     // Urgent tickets (urgency >= 8)
@@ -1397,7 +1428,7 @@ app.post('/api/voice', async (req, res) => {
     let liveContext = memoryContext || '';
     try {
       const ticketsWithAnalysis = db.getAllTicketsWithAnalysis();
-      const tickets = ticketsWithAnalysis.map(t => t.ticket ? JSON.parse(t.ticket) : t);
+      const tickets = ticketsWithAnalysis.map(hydrateTicketRow);
       const active = tickets.filter(t => [2, 3, 6, 7].includes(t.status));
       if (active.length > 0) {
         const statusLabels = { 2: 'Open', 3: 'Pending', 6: 'Waiting on Customer', 7: 'On Hold' };
@@ -1560,7 +1591,7 @@ app.post('/api/vision/monitor', async (req, res) => {
       (async () => {
         try {
           const ticketsWithAnalysis = db.getAllTicketsWithAnalysis();
-          const tickets = ticketsWithAnalysis.map(t => t.ticket ? JSON.parse(t.ticket) : t);
+          const tickets = ticketsWithAnalysis.map(hydrateTicketRow);
           const open = tickets.filter(t => t.status === 2);
           const pending = tickets.filter(t => t.status === 3);
           return `Open tickets: ${open.length}, Pending: ${pending.length}`;
@@ -2125,7 +2156,7 @@ app.get('/api/tickets', (req, res) => {
 app.get('/api/tickets/summary', async (req, res) => {
   try {
     const ticketsWithAnalysis = db.getAllTicketsWithAnalysis();
-    const tickets = ticketsWithAnalysis.map(t => t.ticket ? JSON.parse(t.ticket) : t);
+    const tickets = ticketsWithAnalysis.map(hydrateTicketRow);
     const analysisMap = db.getAllAnalysisMap();
 
     const open = tickets.filter(t => t.status === 2);
@@ -3735,9 +3766,29 @@ app.post('/api/commander/chat', async (req, res) => {
     // Gather full context
     let context = '';
 
-    // Get all cached tickets with analyses
-    const ticketsWithAnalysis = db.getAllTicketsWithAnalysis();
-    const tickets = ticketsWithAnalysis.map(t => t.ticket ? JSON.parse(t.ticket) : t);
+    // Get all cached tickets with analyses. Each DB row has the REAL Freshdesk
+    // id in freshdesk_id and the full ticket JSON in raw_data (custom fields,
+    // requester, etc.). Hydrate from there so the AI sees real IDs and data.
+    const ticketRows = db.getAllTicketsWithAnalysis();
+    const tickets = ticketRows.map(row => {
+      let raw = {};
+      try { raw = row.raw_data ? JSON.parse(row.raw_data) : {}; } catch (e) {}
+      return {
+        ...raw,
+        id: row.freshdesk_id,            // REAL Freshdesk ticket number
+        freshdesk_id: row.freshdesk_id,
+        subject: row.subject,
+        status: row.status,
+        priority: row.priority,
+        description: row.description || raw.description_text || raw.description || '',
+        requester_name: row.requester_name,
+        requester: raw.requester || { name: row.requester_name, email: row.requester_email },
+        custom_fields: raw.custom_fields,
+        _escalation: row.escalation_type,
+        _urgency: row.urgency_score,
+        _summary: row.summary,
+      };
+    });
     const analysisMap = db.getAllAnalysisMap();
 
     if (tickets.length > 0) {
@@ -3746,6 +3797,7 @@ app.post('/api/commander/chat', async (req, res) => {
       const resolvedCount = tickets.filter(t => [4, 5].includes(t.status)).length;
 
       context += `\n\n=== SUPPORT QUEUE (${activeTickets.length} active, ${resolvedCount} resolved/closed) ===\n`;
+      context += `These are the user's REAL Freshdesk tickets. Use ONLY these exact ticket numbers — never renumber or invent IDs.\n`;
 
       // Group by status
       const statusGroups = {
@@ -3759,15 +3811,12 @@ app.post('/api/commander/chat', async (req, res) => {
         if (group.length > 0) {
           context += `\n${status} (${group.length}):\n`;
           for (const ticket of group.slice(0, 20)) { // Cap at 20 per status to limit tokens
-            const analysis = analysisMap[String(ticket.id)];
             context += `  - #${ticket.id}: ${ticket.subject}\n`;
-            context += `    Requester: ${ticket.requester?.name || 'Unknown'}\n`;
+            context += `    Requester: ${ticket.requester?.name || ticket.requester_name || 'Unknown'}\n`;
             context += `    Priority: ${['Low', 'Medium', 'High', 'Urgent'][ticket.priority - 1] || 'Unknown'}\n`;
-            if (analysis) {
-              const parsed = typeof analysis === 'string' ? JSON.parse(analysis) : analysis;
-              context += `    AI Analysis: ${parsed.ESCALATION_TYPE || 'SUPPORT'} - Urgency ${parsed.URGENCY_SCORE || 5}/10\n`;
-              context += `    Issue: ${parsed.ISSUE_CATEGORY || 'General'}\n`;
-              if (parsed.ROOT_CAUSE) context += `    Root Cause: ${parsed.ROOT_CAUSE}\n`;
+            if (ticket._escalation || ticket._urgency) {
+              context += `    AI Analysis: ${ticket._escalation || 'SUPPORT'} - Urgency ${ticket._urgency || 5}/10\n`;
+              if (ticket._summary) context += `    Summary: ${ticket._summary}\n`;
             }
             if (ticket.custom_fields) {
               const cf = ticket.custom_fields;
@@ -3830,7 +3879,7 @@ app.get('/api/commander/execution-plan', async (req, res) => {
   try {
     // Use correct database functions
     const ticketsWithAnalysis = db.getAllTicketsWithAnalysis();
-    const tickets = ticketsWithAnalysis.map(t => t.ticket ? JSON.parse(t.ticket) : t);
+    const tickets = ticketsWithAnalysis.map(hydrateTicketRow);
     const analysisMap = db.getAllAnalysisMap();
 
     // Build context

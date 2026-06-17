@@ -83,7 +83,9 @@ Your capabilities:
 
 ${appContext ? `Current App Context:\n${appContext}` : ''}
 
-Be concise, actionable, and executive-focused. When creating plans, use clear formatting with priorities and owners.`;
+Be concise, actionable, and executive-focused. When creating plans, use clear priorities and owners.
+
+OUTPUT: Plain text only — this is shown in a simple chat box. Do NOT use markdown: no asterisks for bold, no hash headers, no backticks. Use plain dashes (-) for lists and blank lines between sections. Only reference the REAL ticket numbers given to you in context — never renumber, summarize them as 1/2/3, or invent IDs.`;
 }
 
 /**
