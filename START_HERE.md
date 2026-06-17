@@ -79,3 +79,33 @@ That's everything. Just double-click **`Launch LIV8 Command Center.command`** to
 
 > Prefer it in a browser tab instead of an app window? Double-click **`start.command`**
 > instead. More detail lives in **`LOCAL_SETUP.md`**.
+
+---
+
+## 🏗️ (Optional) Make a real app you drag into Applications
+
+If you'd rather have a proper app in your Applications folder — no Terminal window
+at all — you can build one once:
+
+**Step 1 —** Make sure Node.js and Ollama are installed (same as above), and run
+`ollama pull llama3.1` once in Terminal.
+
+**Step 2 —** Double-click **`Build Mac App.command`**. It builds everything and, when
+done, opens a **`release`** folder. (First time takes several minutes.)
+
+**Step 3 —** In `release`, open **`LIV8 Command Center-1.0.0-*.dmg`**, then drag the
+**LIV8 Command Center** icon onto the **Applications** shortcut.
+
+**Step 4 —** Open it from Launchpad/Applications. The first time, **right-click the
+app → Open → Open** (one time — it's not signed by Apple, so this clears the warning).
+
+From then on it's a normal app: click the icon, the window opens, everything runs on
+your laptop. Your settings/database live safely in
+`~/Library/Application Support/LIV8 Command Center/` (so updates never wipe them).
+
+> The app still needs **Node.js** and **Ollama** installed on the Mac — it uses them
+> under the hood. Enter your Freshdesk details inside the app (Tickets page), or via
+> the app menu **LIV8 Command Center → Open Settings File…**.
+
+**Requirements to build:** you must run `Build Mac App.command` **on a Mac** (Apple's
+app/dmg tooling is macOS-only). You build it once; then just use the app.

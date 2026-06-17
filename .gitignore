@@ -5,7 +5,11 @@ node_modules/
 
 # Build outputs
 dist/
-build/
+build/*
+!build/icon.png
+
+# Electron packaged output
+release/
 
 # Environment files (contains secrets)
 .env

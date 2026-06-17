@@ -2,6 +2,7 @@
   "name": "liv8-command-center",
   "version": "1.0.0",
   "description": "LIV8 Command Center - Voice-Enabled Operations Dashboard",
+  "author": "LIV8",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -12,7 +13,68 @@
     "start:all": "concurrently \"npm run dev\" \"npm run server\"",
     "app:build": "vite build",
     "app": "electron .",
-    "app:start": "vite build && electron ."
+    "app:start": "vite build && electron .",
+    "icon": "node electron/make-icon.cjs",
+    "dist": "node electron/make-icon.cjs && npm run build && electron-builder --mac",
+    "dist:dir": "node electron/make-icon.cjs && npm run build && electron-builder --dir"
+  },
+  "build": {
+    "appId": "co.liv8.commandcenter",
+    "productName": "LIV8 Command Center",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "asar": true,
+    "files": [
+      "electron/**/*",
+      "package.json",
+      "!node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "dist",
+        "to": "dist"
+      },
+      {
+        "from": "server",
+        "to": "server",
+        "filter": [
+          "**/*",
+          "!.env",
+          "!.env.example",
+          "!data/*.db",
+          "!data/*.db-*",
+          "!data/reports/**",
+          "!test/**"
+        ]
+      }
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.png",
+      "identity": null,
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "dmg": {
+      "title": "${productName}",
+      "contents": [
+        {
+          "x": 140,
+          "y": 200
+        },
+        {
+          "x": 400,
+          "y": 200,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    }
   },
   "dependencies": {
     "lucide-react": "^0.294.0",
@@ -27,6 +89,7 @@
     "autoprefixer": "^10.4.16",
     "concurrently": "^9.2.1",
     "electron": "^31.7.7",
+    "electron-builder": "^24.13.3",
     "postcss": "^8.4.32",
     "tailwindcss": "^3.3.6",
     "vite": "^5.0.0",
