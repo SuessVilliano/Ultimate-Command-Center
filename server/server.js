@@ -1130,6 +1130,56 @@ app.post('/api/generate-response', async (req, res) => {
   }
 });
 
+// Generate the SAME draft from MULTIPLE engines at once, for side-by-side
+// comparison. Each provider runs in parallel with identical persona/context.
+app.post('/api/generate-response/compare', async (req, res) => {
+  try {
+    const { subject, description, requesterName, ticketId, ticketType, analysis, conversationThread, tags } = req.body;
+    const providers = Array.isArray(req.body.providers) && req.body.providers.length
+      ? req.body.providers
+      : ['claude-cli', 'gemini-cli', 'ollama'];
+
+    // Shared context (built once so the comparison is fair)
+    const query = `${subject} ${description || ''}`;
+    const similarDocs = rag.searchSimilar(query, 3);
+    let persona, styleExamples, settingName, settingSig, settingCanned;
+    try { persona = db.getSetting('agent_persona', null); } catch (e) {}
+    try { styleExamples = db.getSetting('agent_style_examples', null); } catch (e) {}
+    try { settingName = db.getSetting('agent_name', null); } catch (e) {}
+    try { settingSig = db.getSetting('agent_signature', null); } catch (e) {}
+    try { settingCanned = db.getSetting('canned_responses', null); } catch (e) {}
+
+    const baseTicket = { id: ticketId, subject, description, tags, requester: { name: requesterName } };
+    const baseOptions = {
+      agentName: settingName || 'Jamaur Johnson',
+      agentPersona: persona,
+      agentStyleExamples: styleExamples,
+      ticketType, analysis, conversationThread,
+      agentSignature: settingSig,
+      cannedResponses: settingCanned,
+      similarTickets: similarDocs.map(d => ({ id: d.metadata?.ticketId, subject: d.metadata?.subject, score: d.score, keywords: [] }))
+    };
+
+    const settled = await Promise.allSettled(
+      providers.map(p =>
+        ai.generateResponse(baseTicket, { ...baseOptions, provider: p, strictProvider: true, agentId: `compare-${p}` })
+          .then(r => ({ provider: p, response: r.response, usedProvider: r.provider, model: r.model }))
+      )
+    );
+
+    const results = settled.map((s, i) =>
+      s.status === 'fulfilled'
+        ? s.value
+        : { provider: providers[i], error: (s.reason && s.reason.message) || 'failed' }
+    );
+
+    res.json({ results });
+  } catch (error) {
+    console.error('Compare responses error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Proactive analysis
 app.post('/api/proactive-analysis', async (req, res) => {
   try {

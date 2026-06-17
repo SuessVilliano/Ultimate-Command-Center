@@ -528,9 +528,13 @@ export async function chat(messages, options = {}) {
   const agentId = options.agentId || null;
   const chatOptions = { model, maxTokens, temperature, systemPrompt };
 
-  // Build the full provider chain: primary first, then all available fallbacks
+  // Build the provider chain. Normally: primary first, then all available
+  // fallbacks (bulletproof). In strict mode (used by the compare view) we ONLY
+  // try the requested provider, so each column reflects that exact engine.
   const primaryProvider = { name: provider, model };
-  const fallbacks = getFallbackProviders(provider).map(p => ({ name: p, model: getDefaultModel(p) }));
+  const fallbacks = options.strictProvider
+    ? []
+    : getFallbackProviders(provider).map(p => ({ name: p, model: getDefaultModel(p) }));
   const allProviders = [primaryProvider, ...fallbacks];
 
   const errors = [];

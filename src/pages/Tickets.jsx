@@ -26,6 +26,7 @@ import {
   ListTodo,
   ExternalLink,
   Copy,
+  Columns,
   Check,
   Search,
   X,
@@ -37,6 +38,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import DraftQueue from '../components/DraftQueue';
 import PortingTool from '../components/PortingTool';
+import CompareDrafts from '../components/CompareDrafts';
 import { aiService } from '../services/aiService';
 
 // Storage keys
@@ -202,6 +204,7 @@ function Tickets() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showCompare, setShowCompare] = useState(false);
   const [freshdeskDomain, setFreshdeskDomain] = useState('');
   const [freshdeskApiKey, setFreshdeskApiKey] = useState('');
   const [selectedTicket, setSelectedTicket] = useState(null);
@@ -2934,6 +2937,19 @@ function Tickets() {
                       Pipeline
                     </button>
                     <button
+                      onClick={() => setShowCompare(true)}
+                      disabled={aiServerStatus !== 'online'}
+                      className={`px-4 py-2 rounded-lg flex items-center gap-2 ${
+                        aiServerStatus !== 'online'
+                          ? 'bg-gray-600 cursor-not-allowed text-gray-400'
+                          : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                      }`}
+                      title="Draft this reply with multiple AI engines side by side and compare"
+                    >
+                      <Columns className="w-4 h-4" />
+                      Compare
+                    </button>
+                    <button
                       onClick={() => openInWorkProfile(`https://${freshdeskDomain}.freshdesk.com/a/tickets/${selectedTicket.id}`)}
                       className={`px-4 py-2 rounded-lg flex items-center gap-2 ${
                         isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
@@ -3039,6 +3055,10 @@ function Tickets() {
       </div>
 
       </>)}
+
+      {showCompare && selectedTicket && (
+        <CompareDrafts ticket={selectedTicket} isDark={isDark} onClose={() => setShowCompare(false)} />
+      )}
     </div>
   );
 }
