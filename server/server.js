@@ -14,6 +14,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { existsSync } from 'fs';
 import multer from 'multer';
 
 // Local modules
@@ -6421,6 +6422,23 @@ app.post('/api/porting/generate-loa', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ============================================
+// SERVE BUILT FRONTEND (for the desktop app / single-port local use)
+// When a production build exists at ../dist, this server also serves the UI,
+// so the Electron window (and any browser) can load everything from one port.
+// API routes above always take precedence; this only handles UI navigation.
+// ============================================
+const DIST_DIR = path.join(__dirname, '..', 'dist');
+if (existsSync(DIST_DIR)) {
+  app.use(express.static(DIST_DIR));
+  // SPA fallback: send index.html for any non-API GET route.
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path === '/health') return next();
+    res.sendFile(path.join(DIST_DIR, 'index.html'));
+  });
+  console.log(`Serving built frontend from ${DIST_DIR}`);
+}
 
 // Create HTTP server and attach WebSocket for streaming
 import { createServer } from 'http';

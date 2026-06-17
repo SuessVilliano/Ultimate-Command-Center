@@ -38,6 +38,14 @@ Desktop or Documents.
 
 ---
 
+## Two ways to run it
+
+- **Native app window (recommended):** double-click **`Launch LIV8 Command Center.command`**.
+  Opens its own desktop app window. Simple step-by-step is in **`START_HERE.md`**.
+- **Browser tab:** double-click **`start.command`** (described below).
+
+Both start the same backend + frontend on your laptop. Pick whichever you prefer.
+
 ## Launch it (every day)
 
 **Just double-click `start.command`** in this folder.
