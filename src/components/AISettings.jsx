@@ -5,6 +5,7 @@ import { API_URL } from '../config';
 const BACKEND_URL = API_URL;
 
 const PROVIDERS = [
+  { id: 'ollama', name: 'Ollama (Local)', icon: '🦙', color: 'teal', description: 'Free + private — runs 100% on your laptop, nothing leaves your machine' },
   { id: 'groq', name: 'Groq (Free)', icon: '⚡', color: 'orange', description: 'Free Llama 3.3/Mixtral - Best for bulk ticket drafts' },
   { id: 'gemini', name: 'Gemini', icon: '🌟', color: 'blue', description: 'Free tier available' },
   { id: 'claude', name: 'Claude', icon: '🤖', color: 'purple', description: 'Most capable, higher cost' },
@@ -12,18 +13,22 @@ const PROVIDERS = [
   { id: 'kimi', name: 'NVIDIA/Kimi', icon: '🔷', color: 'emerald', description: 'Nemotron/Mixtral' }
 ];
 
+// Ollama's "key" is actually its local server URL (no real API key needed).
+const isUrlProvider = (id) => id === 'ollama';
+
 export default function AISettings({ isDark = true, onClose, onProviderChange }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [providerStatus, setProviderStatus] = useState({
     provider: 'gemini',
     model: 'gemini-2.0-flash',
-    available: { claude: false, openai: false, gemini: false, kimi: false, groq: false },
-    hasKeys: { claude: false, openai: false, gemini: false, kimi: false, groq: false },
+    available: { ollama: false, claude: false, openai: false, gemini: false, kimi: false, groq: false },
+    hasKeys: { ollama: false, claude: false, openai: false, gemini: false, kimi: false, groq: false },
     models: {}
   });
 
   const [apiKeys, setApiKeys] = useState({
+    ollama: '',
     groq: '',
     gemini: '',
     claude: '',
@@ -32,6 +37,7 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
   });
 
   const [showKeys, setShowKeys] = useState({
+    ollama: false,
     groq: false,
     gemini: false,
     claude: false,
@@ -95,7 +101,8 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
 
   const handleSaveApiKey = async (providerId) => {
     const key = apiKeys[providerId];
-    if (!key) return;
+    // Ollama can be saved blank (defaults to http://localhost:11434).
+    if (!key && !isUrlProvider(providerId)) return;
 
     try {
       setSaving(true);
@@ -142,6 +149,7 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
 
   const getKeyLink = (providerId) => {
     switch (providerId) {
+      case 'ollama': return 'https://ollama.com/download';
       case 'groq': return 'https://console.groq.com/keys';
       case 'gemini': return 'https://aistudio.google.com/app/apikey';
       case 'claude': return 'https://console.anthropic.com/settings/keys';
@@ -260,17 +268,19 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
                   rel="noopener noreferrer"
                   className="text-xs text-purple-400 hover:text-purple-300"
                 >
-                  Get Key
+                  {isUrlProvider(provider.id) ? 'Install Ollama' : 'Get Key'}
                 </a>
               </div>
             </div>
             <div className="flex gap-2">
               <div className="relative flex-1">
                 <input
-                  type={showKeys[provider.id] ? 'text' : 'password'}
+                  type={isUrlProvider(provider.id) ? 'text' : (showKeys[provider.id] ? 'text' : 'password')}
                   value={apiKeys[provider.id]}
                   onChange={e => setApiKeys(prev => ({ ...prev, [provider.id]: e.target.value }))}
-                  placeholder={providerStatus.hasKeys?.[provider.id] ? 'Update key...' : 'Enter API key...'}
+                  placeholder={isUrlProvider(provider.id)
+                    ? (providerStatus.ollamaBaseUrl || 'http://localhost:11434 (blank = default)')
+                    : (providerStatus.hasKeys?.[provider.id] ? 'Update key...' : 'Enter API key...')}
                   className={`w-full px-3 py-1.5 pr-8 rounded text-sm ${
                     isDark
                       ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500'
@@ -286,10 +296,10 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
               </div>
               <button
                 onClick={() => handleSaveApiKey(provider.id)}
-                disabled={!apiKeys[provider.id] || saving}
+                disabled={(!apiKeys[provider.id] && !isUrlProvider(provider.id)) || saving}
                 className="px-3 py-1.5 text-sm rounded bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Save
+                {isUrlProvider(provider.id) ? 'Connect' : 'Save'}
               </button>
             </div>
           </div>

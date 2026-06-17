@@ -1391,6 +1391,26 @@ function Tickets() {
     window.open(url, '_blank', 'noopener,noreferrer');
   };
 
+  // Copy the draft AND open the ticket in Freshdesk in one click, so the agent can
+  // immediately hit Reply and paste. NOTE: this NEVER sends — sending is always a
+  // manual click by the human inside Freshdesk.
+  const copyAndOpenInFreshdesk = (ticket) => {
+    const raw = aiResponse || cachedResponses[ticket.id]?.response || '';
+    if (raw) {
+      const cleanText = raw
+        .replace(/\*\*/g, '')
+        .replace(/\*/g, '')
+        .replace(/^- /gm, '• ')
+        .replace(/^#{1,6}\s/gm, '')
+        .replace(/`/g, '')
+        .trim();
+      navigator.clipboard.writeText(cleanText).catch(() => {});
+    }
+    if (freshdeskDomain) {
+      openInWorkProfile(`https://${freshdeskDomain}.freshdesk.com/a/tickets/${ticket.id}`);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -2834,6 +2854,18 @@ function Tickets() {
                           Copy
                         </button>
                         <button
+                          onClick={() => copyAndOpenInFreshdesk(selectedTicket)}
+                          className={`flex items-center gap-1 px-3 py-1 text-xs rounded-lg transition-colors ${
+                            isDark
+                              ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                              : 'bg-blue-500 hover:bg-blue-600 text-white'
+                          }`}
+                          title="Copy this draft and open the ticket in Freshdesk — then just paste and send it yourself"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                          Copy &amp; Open
+                        </button>
+                        <button
                           onClick={() => saveToCasebook(selectedTicket)}
                           disabled={savingToCasebook || casebookSaved[selectedTicket.id]}
                           className={`flex items-center gap-1 px-3 py-1 text-xs rounded-lg transition-colors ${
@@ -2854,6 +2886,9 @@ function Tickets() {
                     }`}>
                       {aiResponse || cachedResponses[selectedTicket.id]?.response}
                     </div>
+                    <p className={`mt-2 text-[11px] flex items-center gap-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                      🔒 Draft only — this is never sent automatically. You review and click Send inside Freshdesk.
+                    </p>
                   </div>
                 )}
               </div>

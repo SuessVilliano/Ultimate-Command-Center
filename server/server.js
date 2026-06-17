@@ -105,6 +105,7 @@ const aiStatus = ai.initAIProviders({
   geminiKey: process.env.GEMINI_API_KEY,
   kimiKey: process.env.KIMI_API_KEY || process.env.NVIDIA_API_KEY,
   groqKey: process.env.GROQ_API_KEY,
+  ollamaBaseUrl: process.env.OLLAMA_BASE_URL,
   provider: process.env.AI_PROVIDER || 'gemini'
 });
 console.log('AI Providers:', aiStatus);
@@ -235,11 +236,12 @@ app.post('/api/ai/key', (req, res) => {
   try {
     const { provider, apiKey } = req.body;
 
-    if (!apiKey || apiKey.trim().length === 0) {
+    // Ollama uses a local URL (no key). Blank is allowed → defaults to localhost:11434.
+    if (provider !== 'ollama' && (!apiKey || apiKey.trim().length === 0)) {
       return res.status(400).json({ error: 'API key is required' });
     }
 
-    const success = ai.updateApiKey(provider, apiKey);
+    const success = ai.updateApiKey(provider, apiKey || '');
 
     if (success) {
       // Re-initialize LangChain with new key

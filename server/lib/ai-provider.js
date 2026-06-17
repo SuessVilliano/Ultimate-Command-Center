@@ -14,11 +14,15 @@ let openaiClient = null;
 let geminiClient = null;
 let kimiApiKey = null; // NVIDIA NIM API key for Kimi
 let groqApiKey = null; // Groq API key for Llama/Qwen (free tier available)
+let ollamaBaseUrl = null; // Ollama local server URL (free, 100% on-device, no key)
 
 // Current configuration
 let currentProvider = 'gemini';
-let storedKeys = { anthropic: null, openai: null, gemini: null, kimi: null, groq: null };
+let storedKeys = { anthropic: null, openai: null, gemini: null, kimi: null, groq: null, ollama: null };
 let currentModel = null;
+
+// Default local Ollama endpoint
+const DEFAULT_OLLAMA_URL = 'http://localhost:11434';
 
 /**
  * Initialize AI providers with API keys
@@ -49,7 +53,15 @@ export function initAIProviders(config = {}) {
   const kimiKey = config.kimiKey || persistedKimiKey || process.env.KIMI_API_KEY || process.env.NVIDIA_API_KEY;
   const groqKey = config.groqKey || persistedGroqKey || process.env.GROQ_API_KEY;
 
-  storedKeys = { anthropic: anthropicKey || null, openai: openaiKey || null, gemini: geminiKey || null, kimi: kimiKey || null, groq: groqKey || null };
+  // Ollama: local, free, runs entirely on the laptop. Enabled when a base URL is
+  // configured, when AI_PROVIDER is ollama, or when a URL was saved in settings.
+  let persistedOllamaUrl = null;
+  try { persistedOllamaUrl = getSetting('ollama_base_url', null); } catch (e) {}
+  const requestedProvider = config.provider || process.env.AI_PROVIDER || '';
+  const ollamaUrl = config.ollamaBaseUrl || persistedOllamaUrl || process.env.OLLAMA_BASE_URL
+    || (requestedProvider === 'ollama' ? DEFAULT_OLLAMA_URL : null);
+
+  storedKeys = { anthropic: anthropicKey || null, openai: openaiKey || null, gemini: geminiKey || null, kimi: kimiKey || null, groq: groqKey || null, ollama: ollamaUrl || null };
 
   if (anthropicKey) {
     anthropicClient = new Anthropic({ apiKey: anthropicKey });
@@ -76,15 +88,21 @@ export function initAIProviders(config = {}) {
     console.log('Groq API key configured (Llama/Qwen available)');
   }
 
+  if (ollamaUrl) {
+    ollamaBaseUrl = ollamaUrl.replace(/\/+$/, '');
+    console.log(`Ollama (local) configured at ${ollamaBaseUrl} — free, runs on this machine`);
+  }
+
   // Set default provider
   let savedProvider = null;
   try { savedProvider = getSetting('ai_provider', null); } catch (e) {}
   currentProvider = savedProvider || config.provider || process.env.AI_PROVIDER || 'gemini';
   currentModel = getDefaultModel(currentProvider);
 
-  console.log(`AI Provider initialized: ${currentProvider} (Claude: ${!!anthropicClient}, OpenAI: ${!!openaiClient}, Gemini: ${!!geminiClient}, Kimi: ${!!kimiApiKey}, Groq: ${!!groqApiKey})`);
+  console.log(`AI Provider initialized: ${currentProvider} (Ollama: ${!!ollamaBaseUrl}, Claude: ${!!anthropicClient}, OpenAI: ${!!openaiClient}, Gemini: ${!!geminiClient}, Kimi: ${!!kimiApiKey}, Groq: ${!!groqApiKey})`);
 
   return {
+    ollama: !!ollamaBaseUrl,
     claude: !!anthropicClient,
     openai: !!openaiClient,
     gemini: !!geminiClient,
@@ -99,6 +117,7 @@ export function initAIProviders(config = {}) {
  * Get default model for a provider
  */
 function getDefaultModel(provider) {
+  if (provider === 'ollama') return process.env.OLLAMA_MODEL || 'llama3.1';
   if (provider === 'openai') {
     return process.env.GPT_MODEL || 'gpt-4o';
   }
@@ -113,6 +132,7 @@ function getDefaultModel(provider) {
  * Priority: Groq (free tier Llama/Qwen) > Gemini (free/cheap) > Kimi (free tier) > OpenAI > Claude (most expensive)
  */
 export function getCostEffectiveProvider() {
+  if (ollamaBaseUrl) return { provider: 'ollama', model: getDefaultModel('ollama') };
   if (groqApiKey) return { provider: 'groq', model: getDefaultModel('groq') };
   if (geminiClient) return { provider: 'gemini', model: getDefaultModel('gemini') };
   if (kimiApiKey) return { provider: 'kimi', model: getDefaultModel('kimi') };
@@ -140,6 +160,9 @@ export function switchProvider(provider, model = null) {
   if (provider === 'groq' && !groqApiKey) {
     throw new Error('Groq API key not configured. Get a free key at console.groq.com');
   }
+  if (provider === 'ollama' && !ollamaBaseUrl) {
+    throw new Error('Ollama not configured. Install Ollama from ollama.com, run "ollama pull llama3.1", then set the base URL (default http://localhost:11434).');
+  }
 
   currentProvider = provider;
   currentModel = model || getDefaultModel(provider);
@@ -163,6 +186,7 @@ export function getCurrentProvider() {
     provider: currentProvider,
     model: currentModel,
     available: {
+      ollama: !!ollamaBaseUrl,
       claude: !!anthropicClient,
       openai: !!openaiClient,
       gemini: !!geminiClient,
@@ -170,13 +194,22 @@ export function getCurrentProvider() {
       groq: !!groqApiKey
     },
     hasKeys: {
+      ollama: !!storedKeys.ollama,
       claude: !!storedKeys.anthropic,
       openai: !!storedKeys.openai,
       gemini: !!storedKeys.gemini,
       kimi: !!storedKeys.kimi,
       groq: !!storedKeys.groq
     },
+    ollamaBaseUrl: ollamaBaseUrl || '',
     models: {
+      ollama: [
+        { id: 'llama3.1', name: 'Llama 3.1 8B (local)', default: true },
+        { id: 'llama3.2', name: 'Llama 3.2 3B (local, fast)' },
+        { id: 'qwen2.5', name: 'Qwen 2.5 7B (local)' },
+        { id: 'mistral', name: 'Mistral 7B (local)' },
+        { id: 'gemma2', name: 'Gemma 2 9B (local)' }
+      ],
       groq: [
         { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B (Free)', default: true },
         { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant (Free)' },
@@ -276,6 +309,20 @@ export function updateApiKey(provider, apiKey) {
     return true;
   }
 
+  // For Ollama the "key" is actually the local server base URL.
+  if (provider === 'ollama') {
+    const url = (apiKey && apiKey.trim()) ? apiKey.trim().replace(/\/+$/, '') : DEFAULT_OLLAMA_URL;
+    ollamaBaseUrl = url;
+    storedKeys.ollama = url;
+    try {
+      setSetting('ollama_base_url', url);
+    } catch (e) {
+      console.log('Could not persist Ollama URL to database');
+    }
+    console.log(`Ollama URL updated to ${url} (local AI now available)`);
+    return true;
+  }
+
   return false;
 }
 
@@ -287,7 +334,7 @@ function parseProviderError(provider, error) {
 
   // Authentication errors (401)
   if (msg.includes('401') || msg.includes('authentication_error') || msg.includes('invalid x-api-key') || msg.includes('Unauthorized') || msg.includes('Invalid API')) {
-    const providerNames = { claude: 'Anthropic (Claude)', openai: 'OpenAI', gemini: 'Google Gemini', kimi: 'NVIDIA (Kimi)' };
+    const providerNames = { claude: 'Anthropic (Claude)', openai: 'OpenAI', gemini: 'Google Gemini', kimi: 'NVIDIA (Kimi)', ollama: 'Ollama (local)' };
     return {
       type: 'auth',
       userMessage: `${providerNames[provider] || provider} API key is invalid or expired. Please update your API key in Settings.`,
@@ -305,7 +352,14 @@ function parseProviderError(provider, error) {
   }
 
   // Network / timeout errors
-  if (msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT') || msg.includes('fetch failed') || msg.includes('network')) {
+  if (msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT') || msg.includes('fetch failed') || msg.includes('network') || msg.includes('AbortError') || msg.includes('timed out')) {
+    if (provider === 'ollama') {
+      return {
+        type: 'network',
+        userMessage: 'Could not reach Ollama. Make sure it is running ("ollama serve") and a model is pulled. Falling back to cloud if available...',
+        retryable: true
+      };
+    }
     return {
       type: 'network',
       userMessage: `Could not reach ${provider} API. Check your network connection.`,
@@ -334,9 +388,10 @@ function parseProviderError(provider, error) {
  * Get fallback provider order (excluding the failed one)
  */
 function getFallbackProviders(failedProvider) {
-  // Fallback order: FREE providers first, then paid ones. Claude LAST (most expensive).
-  const allProviders = ['groq', 'gemini', 'kimi', 'openai', 'claude'];
-  const availableMap = { claude: !!anthropicClient, openai: !!openaiClient, gemini: !!geminiClient, kimi: !!kimiApiKey, groq: !!groqApiKey };
+  // Fallback order: LOCAL/FREE first (Ollama runs on-device, zero cost), then free
+  // cloud tiers, then paid ones. Claude LAST (most expensive).
+  const allProviders = ['ollama', 'groq', 'gemini', 'kimi', 'openai', 'claude'];
+  const availableMap = { ollama: !!ollamaBaseUrl, claude: !!anthropicClient, openai: !!openaiClient, gemini: !!geminiClient, kimi: !!kimiApiKey, groq: !!groqApiKey };
   return allProviders.filter(p => p !== failedProvider && availableMap[p]);
 }
 
@@ -344,7 +399,10 @@ function getFallbackProviders(failedProvider) {
  * Call a specific provider's chat function
  */
 async function callProvider(provider, messages, options) {
-  if (provider === 'openai') {
+  if (provider === 'ollama') {
+    const response = await chatWithOllama(messages, { ...options, model: options.model || getDefaultModel('ollama') });
+    return { text: response.text || '', usage: response.usage || null };
+  } else if (provider === 'openai') {
     const response = await chatWithOpenAI(messages, { ...options, model: options.model || getDefaultModel('openai') });
     return { text: response.choices[0]?.message?.content || '', usage: response.usage || null };
   } else if (provider === 'gemini') {
@@ -703,6 +761,67 @@ async function chatWithGroq(messages, options) {
   } catch (error) {
     console.error('Groq chat error:', error);
     throw error;
+  }
+}
+
+/**
+ * Chat with Ollama (local, free, on-device — Llama, Qwen, Mistral, Gemma, etc.)
+ * Uses Ollama's OpenAI-compatible endpoint at {baseUrl}/v1/chat/completions.
+ * Nothing leaves the machine — ideal for privacy/compliance.
+ */
+async function chatWithOllama(messages, options) {
+  if (!ollamaBaseUrl) {
+    throw new Error('Ollama not configured. Install from ollama.com and run "ollama serve".');
+  }
+
+  const formattedMessages = [];
+
+  if (options.systemPrompt) {
+    formattedMessages.push({ role: 'system', content: options.systemPrompt });
+  }
+  for (const m of messages) {
+    formattedMessages.push({ role: m.role, content: m.content });
+  }
+
+  // Generous timeout — local models can be slower than cloud APIs on first load.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs || 120000);
+
+  try {
+    const response = await fetch(`${ollamaBaseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: options.model || 'llama3.1',
+        messages: formattedMessages,
+        max_tokens: options.maxTokens || 1024,
+        temperature: options.temperature ?? 0.7,
+        stream: false
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      // 404 from Ollama usually means the model isn't pulled yet.
+      if (response.status === 404) {
+        throw new Error(`Ollama model "${options.model}" not found. Run: ollama pull ${options.model}`);
+      }
+      throw new Error(`Ollama API error: ${response.status} - ${error}`);
+    }
+
+    const data = await response.json();
+    return {
+      text: data.choices?.[0]?.message?.content || '',
+      usage: data.usage || null
+    };
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error('Ollama request timed out. The local model may still be loading — try again.');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
