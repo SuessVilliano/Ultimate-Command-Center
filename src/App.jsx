@@ -24,7 +24,6 @@ import VoiceAgents from './pages/VoiceAgents';
 import APIBuilder from './pages/APIBuilder';
 import Glasses from './pages/Glasses';
 import ContentEngine from './pages/ContentEngine';
-import Assistants from './pages/Assistants';
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -106,8 +105,6 @@ function AppContent() {
         return <AdminPanel />;
       case 'content-engine':
         return <ContentEngine />;
-      case 'assistants':
-        return <Assistants />;
       case 'glasses':
         return <Glasses onExit={() => setActivePage('dashboard')} />;
       default:
