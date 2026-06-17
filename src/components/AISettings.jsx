@@ -89,6 +89,28 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
     finally { setSaving(false); }
   };
 
+  const importHistory = async (file) => {
+    if (!file) return;
+    try {
+      setSaving(true);
+      setMessage({ type: 'success', text: 'Reading your ChatGPT export…' });
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await fetch(`${BACKEND_URL}/api/agent/import-history`, { method: 'POST', body: fd });
+      const d = await r.json();
+      if (r.ok) {
+        setMessage({ type: 'success', text: d.imported ? `Imported ${d.imported} of your replies as style examples` : (d.message || 'Nothing to import') });
+        loadPersona();
+      } else {
+        setMessage({ type: 'error', text: d.error || 'Import failed' });
+      }
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Import failed' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const saveClickupToken = async () => {
     try {
       setSaving(true);
@@ -329,6 +351,15 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
                 placeholder="Paste 2-5 of your best past replies…"
                 className={`w-full px-2 py-1.5 rounded text-xs border ${isDark ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'}`}
               />
+            </div>
+            <div>
+              <label className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'} block mb-1`}>Import from ChatGPT (teach it your voice)</label>
+              <label className={`flex items-center justify-center gap-2 px-3 py-2 text-xs rounded border border-dashed cursor-pointer ${isDark ? 'border-gray-600 text-gray-300 hover:border-purple-500' : 'border-gray-300 text-gray-600 hover:border-purple-400'}`}>
+                📥 Choose conversations.json from your ChatGPT export
+                <input type="file" accept=".json,application/json" className="hidden"
+                  onChange={e => { const f = e.target.files && e.target.files[0]; importHistory(f); e.target.value=''; }} />
+              </label>
+              <p className={`text-[11px] mt-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>ChatGPT → Settings → Data Controls → Export. Unzip and pick conversations.json.</p>
             </div>
             <div className="flex gap-2">
               <button onClick={savePersona} disabled={saving} className="flex-1 px-3 py-1.5 text-sm rounded bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50">Save Persona</button>

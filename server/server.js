@@ -322,6 +322,53 @@ app.post('/api/agent/persona/reset', (req, res) => {
   }
 });
 
+// Pull support-style replies out of a ChatGPT export (conversations.json)
+function extractStyleFromChatGPTExport(json) {
+  const replies = [];
+  const convs = Array.isArray(json) ? json : (json.conversations || []);
+  for (const conv of convs) {
+    const mapping = conv.mapping || {};
+    for (const key of Object.keys(mapping)) {
+      const msg = mapping[key] && mapping[key].message;
+      if (!msg || (msg.author && msg.author.role) !== 'assistant') continue;
+      const parts = (msg.content && msg.content.parts) || [];
+      const text = parts.filter(p => typeof p === 'string').join('\n').trim();
+      if (text.length < 100) continue;
+      // Keep ones that read like a customer reply (greeting / sign-off cues)
+      if (/\b(hi|hello|hey|thanks|thank you|best regards|regards|cheers|p\.s\.)\b/i.test(text)) {
+        replies.push(text.substring(0, 1500));
+      }
+    }
+  }
+  const uniq = [...new Set(replies)].sort((a, b) => b.length - a.length);
+  return uniq.slice(0, 10);
+}
+
+// Import your ChatGPT history → style examples (teach the built-in AI your voice)
+app.post('/api/agent/import-history', upload.single('file'), (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded. Select conversations.json from your ChatGPT export.' });
+    let json;
+    try {
+      json = JSON.parse(req.file.buffer.toString('utf8'));
+    } catch (e) {
+      return res.status(400).json({ error: 'Could not read that file. Upload conversations.json from your ChatGPT data export.' });
+    }
+    const examples = extractStyleFromChatGPTExport(json);
+    if (!examples.length) {
+      return res.json({ imported: 0, message: 'No support-style replies found in that export.' });
+    }
+    let existing = '';
+    try { existing = db.getSetting('agent_style_examples', '') || ''; } catch (e) {}
+    const block = examples.map((t, i) => `--- Imported ${i + 1} ---\n${t}`).join('\n\n');
+    const merged = (existing ? existing + '\n\n' : '') + block;
+    db.setSetting('agent_style_examples', merged.substring(0, 12000));
+    res.json({ imported: examples.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ============================================
 // SOP (Standard Operating Procedures) ENDPOINTS
 // ============================================
