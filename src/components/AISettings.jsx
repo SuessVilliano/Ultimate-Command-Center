@@ -6,15 +6,19 @@ const BACKEND_URL = API_URL;
 
 const PROVIDERS = [
   { id: 'ollama', name: 'Ollama (Local)', icon: '🦙', color: 'teal', description: 'Free + private — runs 100% on your laptop, nothing leaves your machine' },
+  { id: 'claude-cli', name: 'Claude (CLI Login)', icon: '🟣', color: 'purple', description: 'Uses your Anthropic Max plan login — no API key needed' },
+  { id: 'gemini-cli', name: 'Gemini (CLI Login)', icon: '✨', color: 'blue', description: 'Uses your Gemini CLI login — no API key needed' },
   { id: 'groq', name: 'Groq (Free)', icon: '⚡', color: 'orange', description: 'Free Llama 3.3/Mixtral - Best for bulk ticket drafts' },
-  { id: 'gemini', name: 'Gemini', icon: '🌟', color: 'blue', description: 'Free tier available' },
-  { id: 'claude', name: 'Claude', icon: '🤖', color: 'purple', description: 'Most capable, higher cost' },
+  { id: 'gemini', name: 'Gemini (Key)', icon: '🌟', color: 'blue', description: 'Free tier available' },
+  { id: 'claude', name: 'Claude (Key)', icon: '🤖', color: 'purple', description: 'Most capable, higher cost' },
   { id: 'openai', name: 'OpenAI', icon: '🧠', color: 'green', description: 'GPT-4o' },
   { id: 'kimi', name: 'NVIDIA/Kimi', icon: '🔷', color: 'emerald', description: 'Nemotron/Mixtral' }
 ];
 
 // Ollama's "key" is actually its local server URL (no real API key needed).
 const isUrlProvider = (id) => id === 'ollama';
+// CLI providers authenticate via your existing login — no key field at all.
+const isCliProvider = (id) => id === 'claude-cli' || id === 'gemini-cli';
 
 export default function AISettings({ isDark = true, onClose, onProviderChange }) {
   const [loading, setLoading] = useState(true);
@@ -94,6 +98,27 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
       }
     } catch (error) {
       setMessage({ type: 'error', text: 'Failed to switch provider' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDetectClis = async () => {
+    try {
+      setSaving(true);
+      const response = await fetch(`${BACKEND_URL}/api/ai/detect-clis`, { method: 'POST' });
+      if (response.ok) {
+        const data = await response.json();
+        const found = [];
+        if (data.detected?.claudeCli) found.push('Claude');
+        if (data.detected?.geminiCli) found.push('Gemini');
+        setMessage(found.length
+          ? { type: 'success', text: `Detected CLI login for: ${found.join(', ')}` }
+          : { type: 'error', text: 'No CLI found. Install + log in, then try again.' });
+        fetchProviderStatus();
+      }
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Could not check for CLIs' });
     } finally {
       setSaving(false);
     }
@@ -259,19 +284,37 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
                 {provider.icon} {provider.name}
               </span>
               <div className="flex items-center gap-2">
-                {providerStatus.hasKeys?.[provider.id] && (
-                  <span className="text-xs text-green-400">Configured</span>
+                {(providerStatus.available?.[provider.id] || providerStatus.hasKeys?.[provider.id]) && (
+                  <span className="text-xs text-green-400">{isCliProvider(provider.id) ? 'Logged in' : 'Configured'}</span>
                 )}
-                <a
-                  href={getKeyLink(provider.id)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-purple-400 hover:text-purple-300"
-                >
-                  {isUrlProvider(provider.id) ? 'Install Ollama' : 'Get Key'}
-                </a>
+                {!isCliProvider(provider.id) && (
+                  <a
+                    href={getKeyLink(provider.id)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-purple-400 hover:text-purple-300"
+                  >
+                    {isUrlProvider(provider.id) ? 'Install Ollama' : 'Get Key'}
+                  </a>
+                )}
               </div>
             </div>
+            {isCliProvider(provider.id) ? (
+              <div className="flex items-center justify-between gap-2">
+                <span className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                  {providerStatus.available?.[provider.id]
+                    ? 'Ready — select it above to use your login.'
+                    : 'No key needed. Install the CLI + log in, then Detect.'}
+                </span>
+                <button
+                  onClick={handleDetectClis}
+                  disabled={saving}
+                  className="px-3 py-1.5 text-sm rounded bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50"
+                >
+                  Detect
+                </button>
+              </div>
+            ) : (
             <div className="flex gap-2">
               <div className="relative flex-1">
                 <input
@@ -302,6 +345,7 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
                 {isUrlProvider(provider.id) ? 'Connect' : 'Save'}
               </button>
             </div>
+            )}
           </div>
         ))}
       </div>

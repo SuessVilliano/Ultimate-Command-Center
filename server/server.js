@@ -220,6 +220,16 @@ app.get('/api/ai/provider', (req, res) => {
   res.json(info);
 });
 
+// Re-detect login-based CLIs (Gemini CLI / Claude Code) without a restart
+app.post('/api/ai/detect-clis', (req, res) => {
+  try {
+    const detected = ai.detectCLIs();
+    res.json({ success: true, detected, provider: ai.getCurrentProvider() });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Switch AI provider
 app.post('/api/ai/switch', (req, res) => {
   try {

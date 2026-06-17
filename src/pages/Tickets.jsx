@@ -245,7 +245,7 @@ function Tickets() {
       const data = await response.json();
       // Check if any AI provider is available (ollama/local, groq, gemini, claude, openai, or kimi)
       const av = data.ai?.available || {};
-      const hasAnyProvider = av.ollama || av.groq || av.gemini || av.claude || av.openai || av.kimi;
+      const hasAnyProvider = av.ollama || av['gemini-cli'] || av['claude-cli'] || av.groq || av.gemini || av.claude || av.openai || av.kimi;
       if (data.status === 'ok' && hasAnyProvider) {
         setAiServerStatus('online');
         // Set AI provider info

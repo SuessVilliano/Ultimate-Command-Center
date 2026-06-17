@@ -6,6 +6,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { spawn } from 'child_process';
+import { existsSync } from 'fs';
+import path from 'path';
 import { getSetting, setSetting, logAgentInteraction } from './database.js';
 
 // Provider instances
@@ -15,6 +18,8 @@ let geminiClient = null;
 let kimiApiKey = null; // NVIDIA NIM API key for Kimi
 let groqApiKey = null; // Groq API key for Llama/Qwen (free tier available)
 let ollamaBaseUrl = null; // Ollama local server URL (free, 100% on-device, no key)
+let geminiCliPath = null; // Path to the `gemini` CLI (login-based, no API key)
+let claudeCliPath = null; // Path to the `claude` CLI / Claude Code (uses your Max plan login)
 
 // Current configuration
 let currentProvider = 'gemini';
@@ -23,6 +28,33 @@ let currentModel = null;
 
 // Default local Ollama endpoint
 const DEFAULT_OLLAMA_URL = 'http://localhost:11434';
+
+/**
+ * Find an executable by name across PATH + common install locations.
+ * GUI-launched apps have a thin PATH, so we also check Homebrew / npm-global.
+ */
+function findBin(name, override) {
+  if (override && existsSync(override)) return override;
+  const dirs = (process.env.PATH || '').split(':').filter(Boolean);
+  const home = process.env.HOME || '';
+  const extra = [
+    '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin',
+    home && path.join(home, '.npm-global/bin'),
+    home && path.join(home, '.local/bin'),
+    home && path.join(home, '.nvm/versions'), // best-effort
+  ].filter(Boolean);
+  for (const d of [...dirs, ...extra]) {
+    try { const p = path.join(d, name); if (existsSync(p)) return p; } catch (e) {}
+  }
+  return null;
+}
+
+/** Re-detect the login-based CLIs (call after install). */
+export function detectCLIs() {
+  geminiCliPath = findBin('gemini', process.env.GEMINI_CLI_PATH);
+  claudeCliPath = findBin('claude', process.env.CLAUDE_CLI_PATH);
+  return { geminiCli: !!geminiCliPath, claudeCli: !!claudeCliPath };
+}
 
 /**
  * Initialize AI providers with API keys
@@ -93,6 +125,11 @@ export function initAIProviders(config = {}) {
     console.log(`Ollama (local) configured at ${ollamaBaseUrl} — free, runs on this machine`);
   }
 
+  // Detect login-based CLIs (no API key — uses your existing Claude/Gemini login)
+  detectCLIs();
+  if (geminiCliPath) console.log(`Gemini CLI found at ${geminiCliPath} (login-based, no key)`);
+  if (claudeCliPath) console.log(`Claude CLI found at ${claudeCliPath} (uses your Anthropic login/Max plan)`);
+
   // Set default provider
   let savedProvider = null;
   try { savedProvider = getSetting('ai_provider', null); } catch (e) {}
@@ -103,6 +140,8 @@ export function initAIProviders(config = {}) {
 
   return {
     ollama: !!ollamaBaseUrl,
+    'gemini-cli': !!geminiCliPath,
+    'claude-cli': !!claudeCliPath,
     claude: !!anthropicClient,
     openai: !!openaiClient,
     gemini: !!geminiClient,
@@ -117,6 +156,8 @@ export function initAIProviders(config = {}) {
  * Get default model for a provider
  */
 function getDefaultModel(provider) {
+  if (provider === 'gemini-cli') return process.env.GEMINI_CLI_MODEL || 'gemini-2.5-flash';
+  if (provider === 'claude-cli') return process.env.CLAUDE_CLI_MODEL || 'sonnet';
   if (provider === 'ollama') return process.env.OLLAMA_MODEL || 'llama3.1';
   if (provider === 'openai') {
     return process.env.GPT_MODEL || 'gpt-4o';
@@ -163,6 +204,14 @@ export function switchProvider(provider, model = null) {
   if (provider === 'ollama' && !ollamaBaseUrl) {
     throw new Error('Ollama not configured. Install Ollama from ollama.com, run "ollama pull llama3.1", then set the base URL (default http://localhost:11434).');
   }
+  if (provider === 'gemini-cli' && !geminiCliPath) {
+    detectCLIs();
+    if (!geminiCliPath) throw new Error('Gemini CLI not found. Install it (npm install -g @google/gemini-cli) and run "gemini" once to log in.');
+  }
+  if (provider === 'claude-cli' && !claudeCliPath) {
+    detectCLIs();
+    if (!claudeCliPath) throw new Error('Claude CLI not found. Install it (npm install -g @anthropic-ai/claude-code) and run "claude" once to log in.');
+  }
 
   currentProvider = provider;
   currentModel = model || getDefaultModel(provider);
@@ -187,6 +236,8 @@ export function getCurrentProvider() {
     model: currentModel,
     available: {
       ollama: !!ollamaBaseUrl,
+      'gemini-cli': !!geminiCliPath,
+      'claude-cli': !!claudeCliPath,
       claude: !!anthropicClient,
       openai: !!openaiClient,
       gemini: !!geminiClient,
@@ -195,6 +246,8 @@ export function getCurrentProvider() {
     },
     hasKeys: {
       ollama: !!storedKeys.ollama,
+      'gemini-cli': !!geminiCliPath,
+      'claude-cli': !!claudeCliPath,
       claude: !!storedKeys.anthropic,
       openai: !!storedKeys.openai,
       gemini: !!storedKeys.gemini,
@@ -203,6 +256,15 @@ export function getCurrentProvider() {
     },
     ollamaBaseUrl: ollamaBaseUrl || '',
     models: {
+      'claude-cli': [
+        { id: 'sonnet', name: 'Claude Sonnet (Max plan login)', default: true },
+        { id: 'opus', name: 'Claude Opus (Max plan login)' },
+        { id: 'haiku', name: 'Claude Haiku (Max plan login)' }
+      ],
+      'gemini-cli': [
+        { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (CLI login)', default: true },
+        { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (CLI login)' }
+      ],
       ollama: [
         { id: 'llama3.1', name: 'Llama 3.1 8B (local)', default: true },
         { id: 'llama3.2', name: 'Llama 3.2 3B (local, fast)' },
@@ -390,8 +452,13 @@ function parseProviderError(provider, error) {
 function getFallbackProviders(failedProvider) {
   // Fallback order: LOCAL/FREE first (Ollama runs on-device, zero cost), then free
   // cloud tiers, then paid ones. Claude LAST (most expensive).
-  const allProviders = ['ollama', 'groq', 'gemini', 'kimi', 'openai', 'claude'];
-  const availableMap = { ollama: !!ollamaBaseUrl, claude: !!anthropicClient, openai: !!openaiClient, gemini: !!geminiClient, kimi: !!kimiApiKey, groq: !!groqApiKey };
+  const allProviders = ['ollama', 'groq', 'gemini', 'gemini-cli', 'kimi', 'openai', 'claude-cli', 'claude'];
+  const availableMap = {
+    ollama: !!ollamaBaseUrl,
+    'gemini-cli': !!geminiCliPath,
+    'claude-cli': !!claudeCliPath,
+    claude: !!anthropicClient, openai: !!openaiClient, gemini: !!geminiClient, kimi: !!kimiApiKey, groq: !!groqApiKey
+  };
   return allProviders.filter(p => p !== failedProvider && availableMap[p]);
 }
 
@@ -399,7 +466,10 @@ function getFallbackProviders(failedProvider) {
  * Call a specific provider's chat function
  */
 async function callProvider(provider, messages, options) {
-  if (provider === 'ollama') {
+  if (provider === 'gemini-cli' || provider === 'claude-cli') {
+    const response = await chatWithCLI(provider, messages, { ...options, model: options.model || getDefaultModel(provider) });
+    return { text: response.text || '', usage: null };
+  } else if (provider === 'ollama') {
     const response = await chatWithOllama(messages, { ...options, model: options.model || getDefaultModel('ollama') });
     return { text: response.text || '', usage: response.usage || null };
   } else if (provider === 'openai') {
@@ -823,6 +893,70 @@ async function chatWithOllama(messages, options) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * Chat via a local login-based CLI (Gemini CLI or Claude Code) — NO API key.
+ * Uses whatever account you logged into the CLI with (e.g. your Anthropic Max
+ * plan), so it works without company API keys. The whole conversation is flattened
+ * into one prompt and piped to the CLI's non-interactive print mode.
+ */
+function chatWithCLI(kind, messages, options) {
+  return new Promise((resolve, reject) => {
+    const bin = kind === 'gemini-cli' ? geminiCliPath : claudeCliPath;
+    if (!bin) return reject(new Error(`${kind} not available`));
+
+    // Flatten system prompt + conversation into a single prompt string.
+    let prompt = '';
+    if (options.systemPrompt) prompt += `${options.systemPrompt}\n\n`;
+    for (const m of messages) {
+      const who = m.role === 'assistant' ? 'Assistant' : 'User';
+      prompt += `${who}: ${m.content}\n`;
+    }
+    prompt += '\nAssistant:';
+
+    // Build args. Both CLIs read the prompt from stdin in non-interactive mode.
+    const args = [];
+    if (kind === 'claude-cli') {
+      args.push('-p'); // print mode (non-interactive)
+      if (options.model) args.push('--model', options.model);
+    } else {
+      // gemini CLI: -m selects model; prompt comes from stdin when piped
+      if (options.model) args.push('-m', options.model);
+    }
+
+    const env = { ...process.env, PATH: `${process.env.PATH || ''}:/opt/homebrew/bin:/usr/local/bin:/usr/bin` };
+    let child;
+    try {
+      child = spawn(bin, args, { env });
+    } catch (e) {
+      return reject(new Error(`Could not run ${kind}: ${e.message}`));
+    }
+
+    let out = '', err = '';
+    const timer = setTimeout(() => {
+      try { child.kill('SIGTERM'); } catch (e) {}
+      reject(new Error(`${kind} timed out (is it logged in? run "${kind === 'gemini-cli' ? 'gemini' : 'claude'}" once in Terminal).`));
+    }, options.timeoutMs || 150000);
+
+    child.stdout.on('data', (d) => { out += d.toString(); });
+    child.stderr.on('data', (d) => { err += d.toString(); });
+    child.on('error', (e) => { clearTimeout(timer); reject(new Error(`${kind} failed: ${e.message}`)); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const text = out.trim();
+      if (code === 0 && text) {
+        resolve({ text });
+      } else if (text) {
+        // Non-zero exit but we still got output — use it.
+        resolve({ text });
+      } else {
+        reject(new Error(`${kind} exited ${code}: ${(err || 'no output').slice(0, 200)}`));
+      }
+    });
+
+    try { child.stdin.write(prompt); child.stdin.end(); } catch (e) {}
+  });
 }
 
 /**
