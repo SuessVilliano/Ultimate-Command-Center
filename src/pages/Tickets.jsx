@@ -243,13 +243,14 @@ function Tickets() {
     try {
       const response = await fetch(`${AI_SERVER_URL}/health`);
       const data = await response.json();
-      // Check if any AI provider is available (gemini, claude, openai, or kimi)
-      const hasAnyProvider = data.ai?.available?.gemini || data.ai?.available?.claude || data.ai?.available?.openai || data.ai?.available?.kimi;
+      // Check if any AI provider is available (ollama/local, groq, gemini, claude, openai, or kimi)
+      const av = data.ai?.available || {};
+      const hasAnyProvider = av.ollama || av.groq || av.gemini || av.claude || av.openai || av.kimi;
       if (data.status === 'ok' && hasAnyProvider) {
         setAiServerStatus('online');
         // Set AI provider info
-        setAiProvider(data.ai?.provider || 'gemini');
-        setAiModel(data.ai?.model || 'gemini-2.0-flash');
+        setAiProvider(data.ai?.provider || 'ollama');
+        setAiModel(data.ai?.model || 'llama3.1');
         // Set schedule status
         if (data.schedule) {
           setScheduleStatus(data.schedule);
