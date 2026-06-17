@@ -86,26 +86,33 @@ export async function processTicket(ticketId, options = {}) {
   let draftText = '';
   let draftProvider = '';
   try {
-    // Get agent signature from settings so auto-drafts include it
+    // Load agent persona/name/signature/style from settings so auto-drafts
+    // sound like the agent and follow the rules (falls back to built-in persona).
     let agentSignature = options.agentSignature || '';
-    if (!agentSignature) {
-      try {
-        agentSignature = db.getSetting('agent_signature') || '';
-      } catch (e) {
-        // Signature not configured yet
-      }
-    }
+    let agentPersona = options.agentPersona || null;
+    let agentStyleExamples = options.agentStyleExamples || null;
+    let agentName = options.agentName || null;
+    let cannedResponses = options.cannedResponses || null;
+    try { agentSignature = agentSignature || db.getSetting('agent_signature') || ''; } catch (e) {}
+    try { agentPersona = agentPersona || db.getSetting('agent_persona', null); } catch (e) {}
+    try { agentStyleExamples = agentStyleExamples || db.getSetting('agent_style_examples', null); } catch (e) {}
+    try { agentName = agentName || db.getSetting('agent_name', null); } catch (e) {}
+    try { cannedResponses = cannedResponses || db.getSetting('canned_responses', null); } catch (e) {}
 
     const draftResult = await ai.generateResponse(
       {
         id: ticket.id || ticket.freshdesk_id,
         subject: ticket.subject,
         description: ticket.description,
+        tags: ticket.tags,
         requester_name: ticket.requester_name,
         requester: { name: ticket.requester_name, email: ticket.requester_email }
       },
       {
-        agentName: options.agentName || 'Support Agent',
+        agentName: agentName || 'Jamaur Johnson',
+        agentPersona,
+        agentStyleExamples,
+        cannedResponses,
         agentSignature,
         ticketType: (analysis.ESCALATION_TYPE || analysis.escalation_type || 'general').toLowerCase(),
         analysis: {

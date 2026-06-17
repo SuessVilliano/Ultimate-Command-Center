@@ -10,6 +10,7 @@ import { spawn } from 'child_process';
 import { existsSync } from 'fs';
 import path from 'path';
 import { getSetting, setSetting, logAgentInteraction } from './database.js';
+import { DEFAULT_AGENT_PERSONA } from './agent-persona.js';
 
 // Provider instances
 let anthropicClient = null;
@@ -1154,31 +1155,30 @@ ${cannedResponses.substring(0, 4000)}
 \nIMPORTANT: Write in the SAME style as the canned responses above. Use similar phrases, structure, and tone.\n`;
   }
 
-  // STYLE LEARNING: Pull agent's actual past responses from resolved tickets
-  let styleContext = '';
+  // STYLE LEARNING: how YOU actually write. Sources, in priority order:
+  //   1) agentStyleExamples — verbatim real replies (from settings / learned)
+  //   2) getResolvedDrafts — past approved/sent drafts created in this app
+  let styleSamples = [];
+  if (options.agentStyleExamples && options.agentStyleExamples.trim()) {
+    styleSamples.push(options.agentStyleExamples.trim().substring(0, 4000));
+  }
   try {
     const { getResolvedDrafts } = await import('./database.js');
     if (typeof getResolvedDrafts === 'function') {
-      const pastResponses = getResolvedDrafts(5); // last 5 approved/sent drafts
-      if (pastResponses && pastResponses.length > 0) {
-        styleContext = `\n\nYOUR ACTUAL PAST RESPONSES (learn from these — this is how YOU write):
-${pastResponses.map((r, i) => `--- Response ${i + 1} (Ticket: "${r.ticket_subject}") ---
-${(r.draft_text || '').substring(0, 800)}
----`).join('\n')}
-
-CRITICAL STYLE RULES based on your past responses:
-- Match the greeting style you use (e.g. "Hi [Name]," vs "Hello [Name]," vs "Hey [Name],")
-- Match your paragraph length and structure
-- Match your sign-off style
-- Use similar phrases and vocabulary
-- Match your level of technical detail
-- Match how you acknowledge issues (empathetic vs direct vs casual)
-- If you use contractions (don't, can't, won't), keep using them
-- If you're concise, stay concise. If you're detailed, stay detailed.\n`;
+      const pastResponses = getResolvedDrafts(5);
+      for (const r of (pastResponses || [])) {
+        if (r.draft_text) styleSamples.push(`(Ticket: "${r.ticket_subject}")\n${r.draft_text.substring(0, 800)}`);
       }
     }
   } catch (e) {
-    // Past responses not available yet — no style learning
+    // Past responses not available yet
+  }
+
+  let styleContext = '';
+  if (styleSamples.length > 0) {
+    styleContext = `\n\nHOW YOU ACTUALLY WRITE (real examples of your replies — mirror this voice, greeting, length, phrasing, and sign-off):
+${styleSamples.slice(0, 6).map((s, i) => `--- Example ${i + 1} ---\n${s}\n---`).join('\n')}
+\nMatch the tone, structure, contractions, and brevity of the examples above.\n`;
   }
 
   // Build signature
@@ -1186,20 +1186,26 @@ CRITICAL STYLE RULES based on your past responses:
     ? `\nYOUR EMAIL SIGNATURE (use this EXACTLY at the end of every response):\n${agentSignature}\n`
     : '';
 
-  const prompt = `You are ${agentName || 'a support agent'}, a GoHighLevel Support Agent responding to a customer ticket. Write a professional, helpful response.
+  // PERSONA — the authoritative voice, rules, and templates. Defaults to the
+  // configured agent persona but can be overridden via options.agentPersona
+  // (loaded from the agent_persona setting). This is sent as the SYSTEM prompt
+  // so it governs everything.
+  const persona = (options.agentPersona && options.agentPersona.trim())
+    ? options.agentPersona.trim()
+    : DEFAULT_AGENT_PERSONA;
 
-CRITICAL RULES:
-- Write PLAIN TEXT only - absolutely NO markdown
-- NO asterisks (*), NO hashtags (#), NO backticks (\`)
-- Use simple line breaks for paragraphs
-- Keep it conversational and professional
-- The response should be ready to copy and paste directly into Freshdesk
-- NEVER invent, guess, or fabricate ticket numbers, case IDs, or reference numbers
-- ONLY reference ticket IDs, solutions, or past cases that are explicitly provided below in the context
-- If no similar resolved tickets are provided, do NOT mention any past tickets or case numbers
-- Base your response ONLY on the information given — if you do not know something, say you will look into it rather than guessing
-${sopSection}${signatureSection}
-YOUR NAME: ${agentName || 'Support Agent'}
+  const systemPrompt = `${persona}
+
+OUTPUT RULES (this reply will be copy-pasted into Freshdesk by the human):
+- Write the reply in YOUR voice, following YOUR rules and templates above exactly.
+- Use bold (**like this**) only where your persona requires it (e.g. the P.S. lines).
+- NEVER invent or guess ticket numbers, IDs, SIDs, dates, or past cases. Use ONLY identifiers explicitly given in the context below. If something needed is missing, ASK for it instead of guessing.
+- This is a DRAFT for the human to review and send. Never claim you have already sent or replied.
+${sopSection}${signatureSection}`;
+
+  const tags = Array.isArray(ticket.tags) ? ticket.tags.join(', ') : (ticket.tags || '');
+  const userPrompt = `Draft the customer response for this ticket now, in your voice and following your templates and rules.
+
 CUSTOMER NAME: ${ticket.requester?.name || ticket.requester_name || 'there'}
 
 TICKET DETAILS:
@@ -1207,36 +1213,22 @@ ${ticket.id ? `Ticket ID: #${ticket.id}` : ''}
 Subject: ${ticket.subject}
 Description: ${ticket.description || ticket.description_text || 'No description provided'}
 Ticket Type: ${ticketType}
+${tags ? `Tags: ${tags}` : ''}
 ${analysis?.SUMMARY ? `Issue Summary: ${analysis.SUMMARY}` : ''}
 ${threadContext}${similarContext}
 ${casebookContext}${cannedContext}${styleContext}
-RESPONSE GUIDELINES FOR ${ticketType.toUpperCase()} TICKETS:
-${typeGuidelines[ticketType] || typeGuidelines.general}
+Write the draft now. If the tags include "L1 Bot", also append the [FEEDBACK-CLASSIFIED] block per your rules.`;
 
-RESPONSE STRUCTURE:
-1. Greeting with customer's name (Hi [Name],)
-2. Acknowledge their specific issue${conversationThread?.length > 0 ? ' — reference the conversation history' : ''}
-3. Provide solution or next steps
-4. Offer further assistance
-5. ${agentSignature ? 'End with your EXACT signature as provided above' : `Sign off with: Best regards, ${agentName || 'Support Team'}`}
-
-Write a warm, professional response. Do NOT use any markdown formatting.`;
-
-  const result = await chat([{ role: 'user', content: prompt }], {
+  const result = await chat([{ role: 'user', content: userPrompt }], {
     ...options,
-    maxTokens: 1024,
+    systemPrompt,
+    maxTokens: options.maxTokens || 1500,
     agentId: options.agentId || 'response-generator'
   });
 
-  // Clean any remaining markdown
-  let text = result.text
-    .replace(/\*\*/g, '')
-    .replace(/\*/g, '')
-    .replace(/^- /gm, '- ')
-    .replace(/^#{1,6}\s/gm, '')
-    .replace(/`/g, '')
-    .replace(/\[|\]/g, '')
-    .trim();
+  // Preserve the persona's intended formatting (bold P.S., bullet templates,
+  // the [FEEDBACK-CLASSIFIED] block). Only strip stray code fences.
+  const text = result.text.replace(/```/g, '').trim();
 
   return {
     response: text,

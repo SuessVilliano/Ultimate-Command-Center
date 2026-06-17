@@ -993,17 +993,30 @@ app.post('/api/generate-response', async (req, res) => {
     const query = `${subject} ${description || ''}`;
     const similarDocs = rag.searchSimilar(query, 3);
 
+    // Load the agent's persona, name, signature, and style examples from settings
+    // (with sensible fallbacks) so every draft sounds like the agent.
+    let persona, styleExamples, settingName, settingSig, settingCanned;
+    try { persona = db.getSetting('agent_persona', null); } catch (e) {}
+    try { styleExamples = db.getSetting('agent_style_examples', null); } catch (e) {}
+    try { settingName = db.getSetting('agent_name', null); } catch (e) {}
+    try { settingSig = db.getSetting('agent_signature', null); } catch (e) {}
+    try { settingCanned = db.getSetting('canned_responses', null); } catch (e) {}
+
     const result = await ai.generateResponse({
+      id: ticketId,
       subject,
       description,
+      tags: req.body.tags,
       requester: { name: requesterName }
     }, {
-      agentName,
+      agentName: agentName || settingName || 'Jamaur Johnson',
+      agentPersona: persona, // null → uses built-in default persona
+      agentStyleExamples: styleExamples,
       ticketType,
       analysis,
       conversationThread,
-      agentSignature,
-      cannedResponses,
+      agentSignature: agentSignature || settingSig,
+      cannedResponses: cannedResponses || settingCanned,
       similarTickets: similarDocs.map(d => ({
         id: d.metadata?.ticketId,
         subject: d.metadata?.subject,

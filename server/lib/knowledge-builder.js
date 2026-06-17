@@ -197,6 +197,7 @@ Respond in JSON format only.`;
         subject: ticket.subject,
         customerName: ticket.requester?.name || 'Unknown',
         resolvedAt: ticket.updated_at,
+        agentReply: finalResponse.substring(0, 1200), // verbatim — for style learning
         aiSummarized: true
       };
     }
@@ -215,6 +216,7 @@ Respond in JSON format only.`;
     subject: ticket.subject,
     customerName: ticket.requester?.name || 'Unknown',
     resolvedAt: ticket.updated_at,
+    agentReply: finalResponse.substring(0, 1200), // verbatim — for style learning
     aiSummarized: false
   };
 }
@@ -290,10 +292,14 @@ export async function buildKnowledgeBase(config, options = {}) {
       // Track category stats
       categoryStats[summary.category] = (categoryStats[summary.category] || 0) + 1;
 
-      // Store in database
+      // Store in database. Embed the verbatim agent reply alongside the solution
+      // so future drafts learn the agent's real voice from resolved tickets.
+      const resolutionForStore = summary.agentReply
+        ? `${summary.solution}\n\nAGENT REPLY (style reference):\n${summary.agentReply}`
+        : summary.solution;
       db.addToKnowledgeBase(
         { id: ticket.id, subject: ticket.subject, description: summary.issue },
-        summary.solution,
+        resolutionForStore,
         summary.keywords,
         summary.category
       );
