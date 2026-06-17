@@ -2086,32 +2086,41 @@ app.post('/api/chat', async (req, res) => {
       { role: 'user', content: message }
     ];
 
-    let defaultSystemPrompt = getChatPrompt(memoryContext);
+    // Effective base prompt: a caller-supplied prompt (e.g. voice) OR the default.
+    const baseSystem = (systemPrompt && systemPrompt.trim()) ? systemPrompt : getChatPrompt(memoryContext);
 
-    // Inject real ticket data when user asks about tickets
-    const ticketKeywords = /ticket|freshdesk|open.*ticket|pending|support.*queue|how many|escalat/i;
+    // GROUNDING: always attach real ticket data when the user asks about tickets,
+    // regardless of which base prompt was used. This stops the voice/chat modes
+    // from inventing tickets just because a custom systemPrompt was passed.
+    let grounding = '';
+    const ticketKeywords = /ticket|freshdesk|open|pending|support\s*queue|queue|how many|escalat|customer/i;
     if (ticketKeywords.test(message)) {
       try {
-        const ticketsWithAnalysis = db.getAllTicketsWithAnalysis([2, 3, 6, 7]);
-        if (ticketsWithAnalysis && ticketsWithAnalysis.length > 0) {
-          let ticketContext = `\n\nREAL FRESHDESK TICKET DATA (use ONLY these real ticket numbers — NEVER make up ticket IDs):\n`;
-          ticketContext += `Active tickets: ${ticketsWithAnalysis.length}\n`;
-          for (const t of ticketsWithAnalysis.slice(0, 20)) {
-            const statusName = { 2: 'Open', 3: 'Pending', 6: 'Waiting on Customer', 7: 'Waiting on Third Party' }[t.status] || 'Unknown';
-            ticketContext += `- #${t.freshdesk_id}: "${t.subject}" | Status: ${statusName} | Requester: ${t.requester_name || 'Unknown'}\n`;
+        const rows = db.getAllTicketsWithAnalysis([2, 3, 6, 7]);
+        if (rows && rows.length > 0) {
+          grounding += `\n\nREAL FRESHDESK TICKETS (the user's ACTUAL open/active tickets — use ONLY these, with these EXACT numbers; never invent tickets, requester names, or assignees):\nActive tickets: ${rows.length}\n`;
+          for (const t of rows.slice(0, 25)) {
+            const statusName = { 2: 'Open', 3: 'Pending', 6: 'Waiting on Customer', 7: 'On Hold' }[t.status] || 'Unknown';
+            const prio = ['Low', 'Medium', 'High', 'Urgent'][t.priority - 1] || 'Unknown';
+            grounding += `- #${t.freshdesk_id}: "${t.subject}" | ${statusName} | Requester: ${t.requester_name || 'Unknown'} | Priority: ${prio}\n`;
           }
-          defaultSystemPrompt += ticketContext;
+        } else {
+          grounding += `\n\nIMPORTANT: No tickets are synced locally right now. Do NOT invent any tickets. Tell the user to open the GHL / Tickets page so their Freshdesk tickets sync in, then ask again.`;
         }
       } catch (e) {
         console.log('Could not inject ticket context:', e.message);
       }
     }
 
+    const antiHallucinate = `\n\nCRITICAL: Never invent tickets, customer names, assignees, ticket numbers, or details. There are no "assignees" in this data. If the real data above is not present, say you don't have it loaded — never make anything up.`;
+
+    const finalSystem = baseSystem + grounding + antiHallucinate;
+
     // Store user message
     memory.addMessage(convId, 'user', message, { agentId, context });
 
     const result = await ai.chat(messages, {
-      systemPrompt: systemPrompt || defaultSystemPrompt,
+      systemPrompt: finalSystem,
       agentId
     });
 
