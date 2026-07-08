@@ -55,7 +55,7 @@ export function initScheduler(config = {}) {
 /**
  * Fetch tickets from Freshdesk API (with pagination)
  */
-async function fetchFreshdeskTickets(statuses = [2, 3, 6, 7]) {
+export async function fetchFreshdeskTickets(statuses = [2, 3, 6, 7]) {
   if (!freshdeskConfig.domain || !freshdeskConfig.apiKey) {
     throw new Error('Freshdesk not configured');
   }
@@ -136,6 +136,36 @@ async function sendN8nNotification(data) {
   } catch (error) {
     console.error('Failed to send n8n notification:', error.message);
     return false;
+  }
+}
+
+/**
+ * Lightweight live sync — fetch current active tickets from Freshdesk and
+ * store them in the DB WITHOUT running (expensive) AI analysis on each one.
+ *
+ * This is what keeps the chat/voice AI grounded in REAL ticket data:
+ *  - called once on server startup so the DB is populated right after a deploy
+ *  - called on-demand by the chat/voice endpoints when the DB is empty/stale
+ *
+ * Returns { configured, count, tickets }. Never throws — safe to fire-and-forget.
+ */
+export async function syncTicketsNow(statuses = [2, 3, 6, 7]) {
+  if (!freshdeskConfig.domain || !freshdeskConfig.apiKey) {
+    return { configured: false, count: 0, tickets: [] };
+  }
+  try {
+    const tickets = await fetchFreshdeskTickets(statuses);
+    if (tickets.length > 0) {
+      try {
+        db.upsertTickets(tickets);
+      } catch (e) {
+        console.warn('syncTicketsNow: DB upsert failed:', e.message);
+      }
+    }
+    return { configured: true, count: tickets.length, tickets };
+  } catch (error) {
+    console.warn('syncTicketsNow: Freshdesk fetch failed:', error.message);
+    return { configured: true, count: 0, tickets: [], error: error.message };
   }
 }
 

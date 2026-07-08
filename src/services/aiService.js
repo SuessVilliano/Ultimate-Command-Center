@@ -9,6 +9,14 @@ import { API_URL } from '../config';
 const BACKEND_URL = API_URL;
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
+// SECURITY: By default, AI calls go ONLY through the backend, which holds the
+// API keys server-side (in Render env vars) — the browser never sees a key.
+// The legacy browser-direct-to-Gemini path below sends a key from the browser
+// (localStorage → URL), which risks exposing it publicly and can't see real
+// ticket data (so it invents numbers). It stays OFF unless you deliberately
+// opt in with VITE_ALLOW_BROWSER_GEMINI=true at build time.
+const ALLOW_BROWSER_GEMINI = import.meta.env.VITE_ALLOW_BROWSER_GEMINI === 'true';
+
 // Storage keys
 const STORAGE_KEYS = {
   API_KEY: 'liv8_gemini_api_key',
@@ -568,8 +576,10 @@ class AIService {
       }
     }
 
-    // Fallback to Gemini if backend not available
-    if (!this.apiKey) {
+    // Fallback when the backend is unreachable. By default we use the offline
+    // response (no key needed) so a Gemini key is NEVER sent from the browser.
+    // The browser-direct Gemini call only runs if explicitly opted in.
+    if (!this.apiKey || !ALLOW_BROWSER_GEMINI) {
       return this.enhancedFallbackResponse(userMessage, context);
     }
 

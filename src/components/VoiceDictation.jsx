@@ -25,6 +25,8 @@ function VoiceDictation({ isOpen, onClose }) {
   const [revisionMode, setRevisionMode] = useState('none');
   const [showNotes, setShowNotes] = useState(false);
   const [language, setLanguage] = useState('en-US');
+  const [micError, setMicError] = useState('');
+  const [notSupported, setNotSupported] = useState(false);
 
   const recognitionRef = useRef(null);
   const textareaRef = useRef(null);
@@ -36,7 +38,10 @@ function VoiceDictation({ isOpen, onClose }) {
 
   // Initialize speech recognition with continuous mode
   useEffect(() => {
-    if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) return;
+    if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
+      setNotSupported(true);
+      return;
+    }
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
@@ -73,9 +78,19 @@ function VoiceDictation({ isOpen, onClose }) {
     };
 
     recognition.onerror = (event) => {
-      if (event.error !== 'no-speech') {
-        console.error('Recognition error:', event.error);
-        setIsListening(false);
+      if (event.error === 'no-speech') return; // harmless, keep listening
+      console.error('Recognition error:', event.error);
+      setIsListening(false);
+      recognition._shouldContinue = false;
+      const err = event.error;
+      if (err === 'not-allowed' || err === 'service-not-allowed') {
+        setMicError('Microphone blocked. Click the padlock/camera icon in the address bar, allow the mic, then try again.');
+      } else if (err === 'audio-capture') {
+        setMicError('No microphone found. Connect a mic and select it in your system settings.');
+      } else if (err === 'network') {
+        setMicError('Dictation needs an internet connection and HTTPS. Reconnect and reload.');
+      } else if (err && err !== 'aborted') {
+        setMicError(`Mic error: ${err}. Try Chrome/Edge over HTTPS.`);
       }
     };
 
@@ -87,19 +102,49 @@ function VoiceDictation({ isOpen, onClose }) {
     };
   }, [language]);
 
-  const toggleListening = () => {
+  const toggleListening = async () => {
     if (!recognitionRef.current) return;
     if (isListening) {
       recognitionRef.current._shouldContinue = false;
       recognitionRef.current.stop();
       setIsListening(false);
-    } else {
-      setTranscript('');
-      recognitionRef.current._shouldContinue = true;
-      try {
-        recognitionRef.current.start();
-        setIsListening(true);
-      } catch {}
+      return;
+    }
+
+    setMicError('');
+
+    // Secure-context guard — the mic is silently blocked on plain HTTP.
+    if (!window.isSecureContext) {
+      setMicError('Dictation needs a secure connection. Open this app over https:// (or localhost).');
+      return;
+    }
+
+    // Explicitly request the mic first so the browser shows the permission
+    // prompt and we get a clear error if it's denied — the desktop fix.
+    try {
+      if (navigator.mediaDevices?.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(t => t.stop());
+      }
+    } catch (e) {
+      if (e?.name === 'NotAllowedError' || e?.name === 'SecurityError') {
+        setMicError('Microphone permission denied. Click the padlock/camera icon in the address bar, allow the mic, then try again.');
+      } else if (e?.name === 'NotFoundError' || e?.name === 'DevicesNotFoundError') {
+        setMicError('No microphone found. Connect a mic and select it in your system settings.');
+      } else {
+        setMicError(`Couldn't access the microphone: ${e?.message || e?.name || 'unknown error'}.`);
+      }
+      return;
+    }
+
+    setTranscript('');
+    recognitionRef.current._shouldContinue = true;
+    try {
+      recognitionRef.current.start();
+      setIsListening(true);
+    } catch {
+      setIsListening(false);
+      setMicError('Could not start dictation. Please try again.');
     }
   };
 
@@ -241,6 +286,16 @@ function VoiceDictation({ isOpen, onClose }) {
           {isListening && transcript && (
             <p className={`mt-2 text-sm italic ${isDark ? 'text-purple-400' : 'text-purple-600'}`}>
               {transcript}
+            </p>
+          )}
+          {notSupported && (
+            <p className="mt-2 text-sm text-yellow-500">
+              Voice dictation isn't supported in this browser. Use Chrome or Edge.
+            </p>
+          )}
+          {micError && (
+            <p className="mt-2 text-sm text-red-500">
+              {micError}
             </p>
           )}
         </div>

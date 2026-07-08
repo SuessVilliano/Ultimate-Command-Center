@@ -140,6 +140,20 @@ scheduler.initScheduler({
   n8nWebhookUrl: process.env.TASKMAGIC_WEBHOOK_URL || process.env.N8N_WEBHOOK_URL
 });
 
+// Immediately pull current Freshdesk tickets into the DB on startup so the
+// chat/voice AI has REAL ticket data right after every deploy/restart — instead
+// of waiting for the once-a-day scheduled job (which left the DB empty and made
+// the AI invent fake ticket numbers). Non-blocking; safe if Freshdesk is unset.
+scheduler.syncTicketsNow()
+  .then(r => {
+    if (!r.configured) {
+      console.log('Startup ticket sync: skipped (Freshdesk not configured — set FRESHDESK_DOMAIN & FRESHDESK_API_KEY)');
+    } else {
+      console.log(`Startup ticket sync: ${r.count} active tickets loaded from Freshdesk`);
+    }
+  })
+  .catch(e => console.log('Startup ticket sync error:', e.message));
+
 // Initialize calendar service
 calendarService.initCalendarService({
   email: process.env.GOOGLE_CALENDAR_EMAIL
@@ -1195,24 +1209,11 @@ app.post('/api/voice', async (req, res) => {
     // Store user message
     memory.addMessage(convId, 'user', message);
 
-    // Build real-time context for voice responses
+    // Build real-time context for voice responses.
+    // Uses the shared helper (real ticket IDs via freshdesk_id, with a live
+    // Freshdesk fetch when the DB is empty) so spoken answers cite REAL numbers.
     let liveContext = memoryContext || '';
-    try {
-      const ticketsWithAnalysis = db.getAllTicketsWithAnalysis();
-      const tickets = ticketsWithAnalysis.map(t => t.ticket ? JSON.parse(t.ticket) : t);
-      const active = tickets.filter(t => [2, 3, 6, 7].includes(t.status));
-      if (active.length > 0) {
-        const statusLabels = { 2: 'Open', 3: 'Pending', 6: 'Waiting on Customer', 7: 'On Hold' };
-        const ticketList = active.slice(0, 15).map(t =>
-          `#${t.id}: ${t.subject} (${statusLabels[t.status] || 'Unknown'}) - ${t.source || 'Freshdesk'}`
-        ).join('\n');
-        liveContext += `\n\nREAL TICKET DATA (from Freshdesk/GHL — use ONLY this data, never invent ticket numbers):\n${active.length} active tickets:\n${ticketList}`;
-      } else {
-        liveContext += '\n\nTICKET STATUS: No active tickets in the queue right now.';
-      }
-    } catch (e) {
-      console.warn('Could not load ticket context for voice:', e.message);
-    }
+    liveContext += await buildRealTicketContext({ forVoice: true, limit: 15 });
 
     // Include real trading signal data
     try {
@@ -1835,6 +1836,55 @@ app.post('/api/journal/trade', async (req, res) => {
   }
 });
 
+/**
+ * Build a REAL ticket-data context block for the AI.
+ *
+ * Reads the local DB first; if it's empty (right after a restart, on weekends,
+ * or before the daily sync has run) it does a LIVE Freshdesk fetch so the model
+ * is never left guessing — the #1 cause of fabricated ticket numbers. When no
+ * data is available it returns an explicit "no data / do not invent" instruction
+ * instead of silently appending nothing. Returns a string to append to the
+ * system prompt. Never throws.
+ */
+async function buildRealTicketContext({ forVoice = false, limit = 20 } = {}) {
+  const statusName = { 2: 'Open', 3: 'Pending', 6: 'Waiting on Customer', 7: 'Waiting on Third Party' };
+  let rows = [];
+  try {
+    rows = db.getAllTicketsWithAnalysis([2, 3, 6, 7]) || [];
+  } catch (e) {
+    console.warn('buildRealTicketContext: DB read failed:', e.message);
+  }
+
+  // DB empty → try a live Freshdesk pull so we ground the model in real data
+  if (rows.length === 0) {
+    try {
+      const live = await scheduler.syncTicketsNow([2, 3, 6, 7]);
+      if (!live.configured) {
+        return '\n\nTICKET DATA: Live ticket data is not connected yet. Do NOT make up ticket numbers or counts — tell the user ticket data is unavailable and that the Freshdesk connection needs to be configured.';
+      }
+      if (live.count === 0) {
+        return '\n\nREAL TICKET DATA: There are currently NO active tickets in the Freshdesk queue. Do NOT invent any ticket numbers — tell the user the queue is clear.';
+      }
+      rows = db.getAllTicketsWithAnalysis([2, 3, 6, 7]) || [];
+    } catch (e) {
+      console.warn('buildRealTicketContext: live sync failed:', e.message);
+      return '\n\nTICKET DATA: Unable to load live ticket data right now. Do NOT invent ticket numbers — tell the user ticket data is temporarily unavailable.';
+    }
+  }
+
+  if (rows.length === 0) {
+    return '\n\nREAL TICKET DATA: No active tickets found. Do NOT invent ticket numbers — the queue is clear.';
+  }
+
+  let ctx = `\n\nREAL FRESHDESK TICKET DATA (use ONLY these real ticket numbers — NEVER make up ticket IDs or counts):\nActive tickets: ${rows.length}\n`;
+  for (const t of rows.slice(0, limit)) {
+    ctx += `- #${t.freshdesk_id}: "${t.subject}" | Status: ${statusName[t.status] || 'Unknown'} | Requester: ${t.requester_name || 'Unknown'}`;
+    if (!forVoice && t.urgency_score) ctx += ` | Urgency: ${t.urgency_score}/10`;
+    ctx += '\n';
+  }
+  return ctx;
+}
+
 // General chat with memory
 app.post('/api/chat', async (req, res) => {
   try {
@@ -1859,23 +1909,12 @@ app.post('/api/chat', async (req, res) => {
 
     let defaultSystemPrompt = getChatPrompt(memoryContext);
 
-    // Inject real ticket data when user asks about tickets
-    const ticketKeywords = /ticket|freshdesk|open.*ticket|pending|support.*queue|how many|escalat/i;
+    // Inject REAL ticket data whenever the message might touch support/tickets.
+    // Broadened trigger + live-fetch fallback (see buildRealTicketContext) so the
+    // AI is grounded in real numbers and can never fabricate ticket IDs/counts.
+    const ticketKeywords = /ticket|freshdesk|ghl|highlevel|support|queue|open|pending|urgent|escalat|customer|resolve|respond|repl(y|ies)|inbox|how many|going on|status|priorit/i;
     if (ticketKeywords.test(message)) {
-      try {
-        const ticketsWithAnalysis = db.getAllTicketsWithAnalysis([2, 3, 6, 7]);
-        if (ticketsWithAnalysis && ticketsWithAnalysis.length > 0) {
-          let ticketContext = `\n\nREAL FRESHDESK TICKET DATA (use ONLY these real ticket numbers — NEVER make up ticket IDs):\n`;
-          ticketContext += `Active tickets: ${ticketsWithAnalysis.length}\n`;
-          for (const t of ticketsWithAnalysis.slice(0, 20)) {
-            const statusName = { 2: 'Open', 3: 'Pending', 6: 'Waiting on Customer', 7: 'Waiting on Third Party' }[t.status] || 'Unknown';
-            ticketContext += `- #${t.freshdesk_id}: "${t.subject}" | Status: ${statusName} | Requester: ${t.requester_name || 'Unknown'}\n`;
-          }
-          defaultSystemPrompt += ticketContext;
-        }
-      } catch (e) {
-        console.log('Could not inject ticket context:', e.message);
-      }
+      defaultSystemPrompt += await buildRealTicketContext({ limit: 20 });
     }
 
     // Store user message
@@ -3537,63 +3576,17 @@ app.post('/api/commander/chat', async (req, res) => {
     // Gather full context
     let context = '';
 
-    // Get all cached tickets with analyses
-    const ticketsWithAnalysis = db.getAllTicketsWithAnalysis();
-    const tickets = ticketsWithAnalysis.map(t => t.ticket ? JSON.parse(t.ticket) : t);
-    const analysisMap = db.getAllAnalysisMap();
+    // Real support-queue context — reads the DB and live-fetches from Freshdesk
+    // when it's empty, using correct real ticket IDs (freshdesk_id). This is what
+    // stops the Commander from inventing ticket numbers.
+    context += await buildRealTicketContext({ limit: 20 });
 
-    if (tickets.length > 0) {
-      // Only include ACTIVE tickets in context to stay within token limits
-      const activeTickets = tickets.filter(t => [2, 3, 6, 7].includes(t.status));
-      const resolvedCount = tickets.filter(t => [4, 5].includes(t.status)).length;
-
-      context += `\n\n=== SUPPORT QUEUE (${activeTickets.length} active, ${resolvedCount} resolved/closed) ===\n`;
-
-      // Group by status
-      const statusGroups = {
-        'Open': activeTickets.filter(t => t.status === 2),
-        'Pending': activeTickets.filter(t => t.status === 3),
-        'Waiting on Customer': activeTickets.filter(t => t.status === 6),
-        'On Hold': activeTickets.filter(t => t.status === 7)
-      };
-
-      for (const [status, group] of Object.entries(statusGroups)) {
-        if (group.length > 0) {
-          context += `\n${status} (${group.length}):\n`;
-          for (const ticket of group.slice(0, 20)) { // Cap at 20 per status to limit tokens
-            const analysis = analysisMap[String(ticket.id)];
-            context += `  - #${ticket.id}: ${ticket.subject}\n`;
-            context += `    Requester: ${ticket.requester?.name || 'Unknown'}\n`;
-            context += `    Priority: ${['Low', 'Medium', 'High', 'Urgent'][ticket.priority - 1] || 'Unknown'}\n`;
-            if (analysis) {
-              const parsed = typeof analysis === 'string' ? JSON.parse(analysis) : analysis;
-              context += `    AI Analysis: ${parsed.ESCALATION_TYPE || 'SUPPORT'} - Urgency ${parsed.URGENCY_SCORE || 5}/10\n`;
-              context += `    Issue: ${parsed.ISSUE_CATEGORY || 'General'}\n`;
-              if (parsed.ROOT_CAUSE) context += `    Root Cause: ${parsed.ROOT_CAUSE}\n`;
-            }
-            if (ticket.custom_fields) {
-              const cf = ticket.custom_fields;
-              if (cf.cf_relationship_id) context += `    Relationship ID: ${cf.cf_relationship_id}\n`;
-              if (cf.cf_location_id) context += `    Location ID: ${cf.cf_location_id}\n`;
-            }
-          }
-        }
-      }
-
-      // Summary stats
-      let urgentCount = 0;
-      let escalationCount = 0;
-      for (const [ticketId, analysis] of Object.entries(analysisMap)) {
-        const p = typeof analysis === 'string' ? JSON.parse(analysis) : analysis;
-        if (p?.URGENCY_SCORE >= 8) urgentCount++;
-        if (['DEV', 'TWILIO', 'BUG'].includes(p?.ESCALATION_TYPE)) escalationCount++;
-      }
-
-      context += `\n=== TICKET SUMMARY ===\n`;
-      context += `Total Active: ${tickets.filter(t => [2,3,6,7].includes(t.status)).length}\n`;
-      context += `Urgent (8+ urgency): ${urgentCount}\n`;
-      context += `Needs Escalation: ${escalationCount}\n`;
-    }
+    // Kept for the response metadata returned below.
+    let ticketsWithAnalysis = [];
+    try { ticketsWithAnalysis = db.getAllTicketsWithAnalysis([2, 3, 6, 7]) || []; } catch (e) {}
+    const tickets = ticketsWithAnalysis;
+    let analysisMap = {};
+    try { analysisMap = db.getAllAnalysisMap() || {}; } catch (e) {}
 
     // Get AI agents
     const agents = agentKnowledge.getAllAgents();

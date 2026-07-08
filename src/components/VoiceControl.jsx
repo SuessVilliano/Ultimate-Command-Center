@@ -50,8 +50,10 @@ function VoiceControl({ onNavigate, isOpen, onClose }) {
   // Feature support
   const [speechSupported, setSpeechSupported] = useState(false);
   const [recognitionSupported, setRecognitionSupported] = useState(false);
+  const [micError, setMicError] = useState('');
 
   const recognitionRef = useRef(null);
+  const micStreamRef = useRef(null);
   const messagesEndRef = useRef(null);
 
   // Track conversation across messages
@@ -111,7 +113,23 @@ function VoiceControl({ onNavigate, isOpen, onClose }) {
       };
 
       recognitionRef.current.onend = () => setIsListening(false);
-      recognitionRef.current.onerror = () => setIsListening(false);
+      recognitionRef.current.onerror = (event) => {
+        setIsListening(false);
+        // Surface the real reason instead of silently failing (the old behavior
+        // that made the mic look active on desktop while capturing nothing).
+        const err = event?.error;
+        if (err === 'not-allowed' || err === 'service-not-allowed') {
+          setMicError('Microphone blocked. Click the padlock/camera icon in your browser\'s address bar and allow the mic for this site, then try again.');
+        } else if (err === 'no-speech') {
+          setMicError('Didn\'t catch that — no speech detected. Try again and speak right after clicking the mic.');
+        } else if (err === 'audio-capture') {
+          setMicError('No microphone found. Check that a mic is connected and selected in your system settings.');
+        } else if (err === 'network') {
+          setMicError('Speech recognition needs an internet connection and HTTPS. Reconnect and reload the page.');
+        } else if (err && err !== 'aborted') {
+          setMicError(`Mic error: ${err}. Try again, or use Chrome/Edge over HTTPS.`);
+        }
+      };
     }
 
     return () => {
@@ -281,15 +299,53 @@ function VoiceControl({ onNavigate, isOpen, onClose }) {
     }
   };
 
-  const toggleListening = () => {
+  const toggleListening = async () => {
     if (!recognitionSupported) return;
     if (isListening) {
       recognitionRef.current.stop();
       setIsListening(false);
-    } else {
+      return;
+    }
+
+    setMicError('');
+
+    // Secure-context guard: getUserMedia + speech recognition require HTTPS
+    // (or localhost). On plain HTTP the browser silently blocks the mic.
+    if (!window.isSecureContext) {
+      setMicError('Microphone needs a secure connection. Open this app over https:// (or localhost) and try again.');
+      return;
+    }
+
+    // Explicitly request the microphone FIRST. This is the fix for desktop:
+    // the plain mic used to call recognition.start() without ever prompting for
+    // permission, so it captured nothing. This forces the permission prompt and
+    // gives a clear error if the mic is blocked/missing.
+    try {
+      if (navigator.mediaDevices?.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // We don't need to keep the raw stream for the Web Speech API; release it
+        // so the browser mic indicator doesn't stay on while recognition runs.
+        stream.getTracks().forEach(t => t.stop());
+      }
+    } catch (e) {
+      if (e?.name === 'NotAllowedError' || e?.name === 'SecurityError') {
+        setMicError('Microphone permission denied. Click the padlock/camera icon in the address bar, allow the mic, then try again.');
+      } else if (e?.name === 'NotFoundError' || e?.name === 'DevicesNotFoundError') {
+        setMicError('No microphone found. Connect a mic and select it in your system settings.');
+      } else {
+        setMicError(`Couldn't access the microphone: ${e?.message || e?.name || 'unknown error'}.`);
+      }
+      return;
+    }
+
+    try {
       setTranscript('');
       recognitionRef.current.start();
       setIsListening(true);
+    } catch (e) {
+      // start() throws if called while already running — reset cleanly.
+      setIsListening(false);
+      setMicError('Could not start listening. Please try again.');
     }
   };
 
@@ -421,6 +477,16 @@ function VoiceControl({ onNavigate, isOpen, onClose }) {
                 {!speechSupported && 'Text-to-speech not supported. '}
                 Use Chrome or Edge for full features.
               </span>
+            </div>
+          </div>
+        )}
+
+        {/* Microphone error (permission denied, no mic, insecure context, etc.) */}
+        {micError && (
+          <div className="px-4 py-2 bg-red-500/10 border-b border-red-500/30">
+            <div className="flex items-start gap-2 text-red-400 text-xs">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>{micError}</span>
             </div>
           </div>
         )}
