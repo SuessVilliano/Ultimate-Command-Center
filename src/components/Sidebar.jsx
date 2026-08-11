@@ -25,10 +25,23 @@ import {
   Mic,
   BarChart3,
   Terminal,
-  Glasses
+  Glasses,
+  Network,
+  Heart,
+  Target,
+  Sparkles
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
+import { FEATURES } from '../config';
+
+// Highest Self OS — additive life-operating-system surfaces (feature-flagged).
+const highestSelfItems = [
+  { id: 'highest-self', label: 'Highest Self', icon: Sparkles, flag: 'TODAY' },
+  { id: 'life-map', label: 'Life Map', icon: Network, flag: 'LIFE_MAP' },
+  { id: 'health-os', label: 'Health OS', icon: Heart, flag: 'HEALTH' },
+  { id: 'trading-process', label: 'Trading Process', icon: Target, flag: 'TRADING' },
+].filter((i) => FEATURES.HIGHEST_SELF?.[i.flag]);
 
 const menuItems = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -127,6 +140,40 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
 
         {/* Navigation */}
         <nav className="flex-1 p-4 overflow-y-auto">
+          {/* Highest Self OS group */}
+          {highestSelfItems.length > 0 && (
+            <div className="mb-6">
+              <h3 className={`px-4 text-xs font-semibold uppercase tracking-wider mb-3 ${
+                isDark ? 'text-teal-500/70' : 'text-teal-600/80'
+              }`}>
+                Highest Self OS
+              </h3>
+              <ul className="space-y-2">
+                {highestSelfItems.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = activePage === item.id;
+                  return (
+                    <li key={item.id}>
+                      <button
+                        onClick={() => handleNavClick(item.id)}
+                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${
+                          isActive
+                            ? 'bg-teal-600/20 text-teal-400 border border-teal-500/30'
+                            : isDark
+                              ? 'text-gray-400 hover:text-white hover:bg-white/5'
+                              : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                        }`}
+                      >
+                        <Icon className="w-5 h-5" />
+                        <span className="font-medium">{item.label}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
           <ul className="space-y-2">
             {menuItems.map((item) => {
               const Icon = item.icon;

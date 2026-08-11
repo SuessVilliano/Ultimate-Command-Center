@@ -24,6 +24,10 @@ import VoiceAgents from './pages/VoiceAgents';
 import APIBuilder from './pages/APIBuilder';
 import Glasses from './pages/Glasses';
 import ContentEngine from './pages/ContentEngine';
+import LifeMap from './pages/LifeMap';
+import HighestSelf from './pages/HighestSelf';
+import HealthOS from './pages/HealthOS';
+import TradingProcess from './pages/TradingProcess';
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -105,6 +109,14 @@ function AppContent() {
         return <AdminPanel />;
       case 'content-engine':
         return <ContentEngine />;
+      case 'highest-self':
+        return <HighestSelf />;
+      case 'life-map':
+        return <LifeMap />;
+      case 'health-os':
+        return <HealthOS />;
+      case 'trading-process':
+        return <TradingProcess />;
       case 'glasses':
         return <Glasses onExit={() => setActivePage('dashboard')} />;
       default:

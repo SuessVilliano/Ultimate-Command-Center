@@ -37,6 +37,8 @@ import * as emailService from './lib/email-service.js';
 import * as orchestrator from './lib/agent-orchestrator.js';
 import { registerNiftyRoutes } from './routes/nifty-routes.js';
 import { registerScraperRoutes } from './routes/scraper-routes.js';
+import { registerHighestSelfRoutes } from './routes/highest-self-routes.js';
+import * as highestSelf from './lib/highest-self-db.js';
 import * as scrapers from './lib/scrapers.js';
 import { taskmagicMCP } from './lib/taskmagic-mcp.js';
 import { unifiedTasks } from './lib/unified-tasks.js';
@@ -89,6 +91,7 @@ try {
   briefing.initBriefingTables();
   unifiedInbox.initUnifiedInboxTables();
   telegram.initTelegram();
+  highestSelf.initHighestSelfTables();
   console.log('Database: Initialized');
   console.log('Conversation Memory: Initialized');
   console.log('Task Sync: Initialized');
@@ -5710,6 +5713,7 @@ app.get('/api/clickup/status', (req, res) => {
 
 // Register Nifty routes
 registerNiftyRoutes(app);
+registerHighestSelfRoutes(app);
 
 // Register Scraper routes (RapidAPI + Apify)
 registerScraperRoutes(app);

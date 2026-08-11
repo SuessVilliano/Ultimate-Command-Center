@@ -18,7 +18,15 @@ export const FEATURES = {
   AGENT_TEAM: true,
   VOICE_COMMANDS: true,
   SCHEDULED_ANALYSIS: true,
-  KNOWLEDGE_BASE: true
+  KNOWLEDGE_BASE: true,
+  // Highest Self OS — additive life-operating-system surfaces.
+  // All read/draft-only; existing names/pages are untouched.
+  HIGHEST_SELF: {
+    TODAY: true,        // Highest Self (Today + Self)
+    LIFE_MAP: true,     // Mind-map / web of notes -> master plans
+    HEALTH: true,       // Recomposition + labs
+    TRADING: true,      // Alert-adherence process
+  }
 };
 
 export default {
