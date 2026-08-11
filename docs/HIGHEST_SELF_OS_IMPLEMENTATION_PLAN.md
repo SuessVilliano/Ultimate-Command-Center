@@ -53,6 +53,76 @@ are the deliberate improvements that make it actually shippable for an ADHD oper
 
 ---
 
+## 0.5 User direction — v2 (supersedes ordering above)
+
+Direct clarifications from the operator. These **override the default sequencing** and the
+"defer 3D" recommendation where they conflict.
+
+### A. No renaming — features only
+Keep every existing name and brand: **LIV8 Command Center, Hybrid, Hybrid Funding, Hybrid
+Journal, Trade Hybrid, Smart Life Brokers, LIV8 Health**, etc. This is an *additive feature
+upgrade*, not a rebrand. No page titles, product names, or nav labels get renamed — new surfaces
+are added alongside the existing ones.
+
+### B. The 3D mind-map is the signature interface — bring it forward
+This is the operator's #1 want, not a Phase-6 afterthought. The experience:
+- **Notes rendered as a web** — nodes connected by edges, physically tied together.
+- **Real zoom** — zoom out for the whole life graph; zoom into a cluster to read the note's detail.
+- **Interconnection** — a note links to related notes, projects, domains, ideas.
+- **Master plans grow out of clusters** — select/expand a cluster of connected notes and
+  **promote it into a "Master Plan"** (a structured, buildable plan node). The mind-map is both
+  the *capture* surface and the *planning* surface — Idea Orbit, Life Map, and notes unified into
+  one zoomable graph.
+
+**Reconciled approach (still additive, still grounded in data):**
+- **Phase 1 now also ships a lightweight graph data layer** — `notes` + `note_links` (and a thin
+  `graph_nodes` projection). This is small and concrete; it is *not* the heavy abstract
+  `life_nodes/life_edges` schema, which still waits.
+- **The mind-map UI moves to Phase 2** (right after Today/Self), rendered first in **2D
+  (force-directed web)**, then upgraded to **3D** once it's useful. 2D-first keeps it mobile-
+  friendly and fast to ship; same data feeds both.
+- **"Master Plan" = a saved cluster** → becomes a plan you can build out (checklist / milestones),
+  linked back to the notes it grew from.
+- Tech: force-directed 2D first (canvas/SVG, no heavy dep), then evaluate React Three Fiber for
+  the 3D view; lazy-loaded; 2D fallback on mobile; same API.
+
+### C. Trading = alert-adherence tracking (wired to the real workflow)
+The operator's actual process: pre-plan the week + key levels → wait for an **order block** to
+form → **Hybrid AI alert** (or **Auto Hybrid AI** strategy) fires "setup appeared" → get
+prepared → price hits the level → **execute**. So the system should measure *"did I trade my
+setup, or did I trade randomly?"*
+- **Ingest alerts** from the existing **webhook** into an `alerts` table (source: Hybrid AI /
+  Auto Hybrid AI / TradingView / Telegram), with symbol, setup type (e.g. order block), level,
+  timestamp.
+- **Link alerts → trades** from **Hybrid Journal**: for each executed trade, was there a
+  preceding valid alert/setup? Tag each trade **on-setup** vs **off-setup (random)**.
+- **Alert-adherence score** = of the valid setups that fired, how many did I take per plan; and of
+  my trades, how many were on-setup. This *is* the process score — "did I follow my system?" —
+  separate from P&L.
+- Surface: today's live/pending alerts, order-block watch, "prepared" state, and a weekly
+  **setup-adherence** stat. Still **no autonomous order placement.**
+
+### D. Health = body-recomposition + labs formula
+Concrete goals, not generic wellness:
+- **Body composition:** build lean muscle, get "cut up" / fighter-lean — **sustainably** (reach it
+  *and stay there*), tracked toward an **ideal weight** target.
+- **Labs to move:** lower **cholesterol**, correct **anemia** — track lab values over time with
+  targets and trend, flag when re-testing is due (never diagnose; supportive + evidence-based).
+- **A real formula:** a training + nutrition plan for recomposition (progressive strength for
+  muscle, iron-forward nutrition for the anemia, heart-healthy fats for cholesterol), reconciled
+  so the goals don't fight each other. Store as an editable plan, adjust off Oura recovery + labs.
+- **Mind + recovery + me-time:** meditation, stretching/mobility, and **protected "Hour of Me"
+  time scheduled in** — first-class blocks, not leftovers.
+
+### Revised leverage order
+`Phase 1 Today+Self (+ notes/graph data layer)` → **`Phase 2 Mind-Map (2D web → 3D) + Master
+Plans`** → `Phase 3 Trading alert-adherence` → `Phase 4 Health recomposition + labs` →
+`Phase 5 Family OS` → `Phase 6 Business/Creation + Idea Orbit (folds into the mind-map)` →
+`Phase 7 AI Coach` → `Phase 8 Time Machine + quarterly audit`. Family can move earlier on request;
+the mind-map and trading/health specifics are the operator's stated priorities.
+
+---
+
 ## 1. Foundations (shared, built once in Phase 1)
 
 **Feature flags** — `src/config.js`:
