@@ -217,6 +217,9 @@ export function registerHighestSelfRoutes(app) {
 
   // ---------- HYBRID JOURNAL (read-only import) ----------
   app.get('/api/hs/trading/hybrid-journal/status', (req, res) => { res.json(hybridJournal.status()); });
+  app.get('/api/hs/trading/hybrid-journal/preview', async (req, res) => {
+    try { res.json(await hybridJournal.preview()); } catch (e) { fail(res, e); }
+  });
   app.post('/api/hs/trading/hybrid-journal/sync', async (req, res) => {
     try { res.json(await hybridJournal.sync({ limit: +(req.body?.limit || 200) })); } catch (e) { fail(res, e); }
   });

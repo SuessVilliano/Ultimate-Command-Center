@@ -36,13 +36,20 @@ ANTHROPIC_API_KEY=...
 # Personal Access Token from https://cloud.ouraring.com/personal-access-tokens
 OURA_ACCESS_TOKEN=your_oura_personal_access_token
 
-# --- Hybrid Journal (Trading Process import) ---
-HYBRID_JOURNAL_TOKEN=your_hybrid_journal_token
-HYBRID_JOURNAL_URL=https://<your-journal-api-base>      # e.g. https://journal.tradehybrid.co/api
-HYBRID_JOURNAL_TRADES_PATH=/trades                      # the trades list endpoint
-# optional, defaults shown:
-# HYBRID_JOURNAL_AUTH_HEADER=Authorization
-# HYBRID_JOURNAL_AUTH_SCHEME=Bearer
+# --- Hybrid Journal (Trading Process import) — Base44 app ---
+# API: GET https://hybridjournal.base44.app/api/functions/apiData?entity=Trade&action=list
+#      header:  api_key: <your key>
+HYBRID_JOURNAL_TOKEN=your_hybrid_journal_api_key        # the api_key value (do NOT commit)
+# Defaults already target Hybrid Journal's Base44 API — only set these to override:
+# HYBRID_JOURNAL_URL=https://hybridjournal.base44.app/api/functions/apiData
+# HYBRID_JOURNAL_ENTITY=Trade
+# HYBRID_JOURNAL_SIGNAL_ENTITY=Signal
+# HYBRID_JOURNAL_AUTH_HEADER=api_key
+# HYBRID_JOURNAL_AUTH_SCHEME=          (empty = raw key, no "Bearer ")
+
+# Optional: also POST your Hybrid AI / TradingView alerts to the Command Center
+# webhook so setups appear on the Trading Process page in real time:
+#   http://localhost:3005/api/hs/trading/webhook
 
 # --- GitHub (Business & Creation repo sync) ---
 GITHUB_TOKEN=ghp_...            # (whatever the existing github-portfolio module uses)
