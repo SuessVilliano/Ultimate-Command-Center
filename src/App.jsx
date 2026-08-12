@@ -28,6 +28,7 @@ import LifeMap from './pages/LifeMap';
 import HighestSelf from './pages/HighestSelf';
 import HealthOS from './pages/HealthOS';
 import TradingProcess from './pages/TradingProcess';
+import FamilyOS from './pages/FamilyOS';
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -117,6 +118,8 @@ function AppContent() {
         return <HealthOS />;
       case 'trading-process':
         return <TradingProcess />;
+      case 'family-os':
+        return <FamilyOS />;
       case 'glasses':
         return <Glasses onExit={() => setActivePage('dashboard')} />;
       default:

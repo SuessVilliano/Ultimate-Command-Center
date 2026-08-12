@@ -210,7 +210,98 @@ export async function saveHealthDaily(date, v) {
   catch { writeLocal({ [`hd_${date}`]: { date, ...v } }); return { date, ...v }; }
 }
 
+/* ---------------- FAMILY ---------------- */
+export async function getPeople() {
+  try { return await api('/api/hs/family/people'); }
+  catch { return readLocal().people_family || seedFamily().people; }
+}
+export async function addPerson(p) {
+  try { return await api('/api/hs/family/people', { method: 'POST', body: p }); }
+  catch { const l = readLocal(); const people = l.people_family || seedFamily().people; const x = { id: Date.now(), ...p }; writeLocal({ people_family: [...people, x] }); return x; }
+}
+export async function updatePerson(id, patch) {
+  try { return await api(`/api/hs/family/people/${id}`, { method: 'PUT', body: patch }); }
+  catch { const l = readLocal(); const people = (l.people_family || []).map(p => p.id === id ? { ...p, ...patch } : p); writeLocal({ people_family: people }); return people.find(p => p.id === id); }
+}
+export async function deletePerson(id) {
+  try { return await api(`/api/hs/family/people/${id}`, { method: 'DELETE' }); }
+  catch { const l = readLocal(); writeLocal({ people_family: (l.people_family || []).filter(p => p.id !== id) }); return { deleted: id }; }
+}
+export async function getProtectedDates() {
+  try { return await api('/api/hs/family/protected'); }
+  catch { return readLocal().protected_dates || seedFamily().protectedDates; }
+}
+export async function addProtectedDate(v) {
+  try { return await api('/api/hs/family/protected', { method: 'POST', body: v }); }
+  catch { const l = readLocal(); const arr = l.protected_dates || []; const x = { id: Date.now(), ...v }; writeLocal({ protected_dates: [...arr, x] }); return x; }
+}
+export async function deleteProtectedDate(id) {
+  try { return await api(`/api/hs/family/protected/${id}`, { method: 'DELETE' }); }
+  catch { const l = readLocal(); writeLocal({ protected_dates: (l.protected_dates || []).filter(p => p.id !== id) }); return { deleted: id }; }
+}
+export async function getFamilyEvents() {
+  try { return await api('/api/hs/family/events'); }
+  catch { return readLocal().family_events || []; }
+}
+export async function addFamilyEvent(v) {
+  try { return await api('/api/hs/family/events', { method: 'POST', body: v }); }
+  catch { const l = readLocal(); const arr = l.family_events || []; const x = { id: Date.now(), ...v }; writeLocal({ family_events: [...arr, x] }); return x; }
+}
+export async function deleteFamilyEvent(id) {
+  try { return await api(`/api/hs/family/events/${id}`, { method: 'DELETE' }); }
+  catch { const l = readLocal(); writeLocal({ family_events: (l.family_events || []).filter(p => p.id !== id) }); return { deleted: id }; }
+}
+export async function getFamilyHorizon(days = 120) {
+  try { return await api(`/api/hs/family/horizon?days=${days}`); }
+  catch { return localFamilyHorizon(days); }
+}
+
+/* ---------------- OURA ---------------- */
+export async function getOuraStatus() {
+  try { return await api('/api/hs/health/oura/status'); } catch { return { configured: false }; }
+}
+export async function getOuraSnapshot() {
+  try { return await api('/api/hs/health/oura/snapshot'); } catch { return { configured: false }; }
+}
+export async function syncOura(days = 14) {
+  try { return await api('/api/hs/health/oura/sync', { method: 'POST', body: { days } }); }
+  catch { return { ok: false, reason: 'server_unavailable' }; }
+}
+
 /* ---------------- local fallbacks ---------------- */
+function seedFamily() {
+  const people = [
+    { id: 1, name: 'Jovi', relationship: 'child', city: 'Wesley Chapel', school_name: 'Watergrass Elementary', lives_with: 1, birthday_month: 11, birthday_day: 22, color: '#f59e0b' },
+    { id: 2, name: 'Jionni', relationship: 'child', city: 'Orlando', school_name: 'Innovation', birthday_month: 2, birthday_day: 25, color: '#60a5fa' },
+    { id: 3, name: 'Justis', relationship: 'child', city: 'Sandy Springs / Atlanta', school_name: 'Riverwood', birthday_month: 4, birthday_day: 23, color: '#f472b6' },
+    { id: 4, name: 'Me', relationship: 'self', birthday_month: 8, birthday_day: 6, color: '#a78bfa' },
+    { id: 5, name: 'Mom', relationship: 'parent', birthday_month: 8, birthday_day: 17, color: '#2dd4bf' },
+  ];
+  const protectedDates = [
+    { id: 1, person_id: 4, title: 'My birthday', event_type: 'birthday', month: 8, day: 6, protection_level: 'soft' },
+    { id: 2, person_id: 5, title: "Mom's birthday", event_type: 'birthday', month: 8, day: 17, protection_level: 'soft' },
+    { id: 3, person_id: 1, title: "Jovi's birthday", event_type: 'birthday', month: 11, day: 22, protection_level: 'hard' },
+    { id: 4, person_id: 2, title: "Jionni's birthday", event_type: 'birthday', month: 2, day: 25, protection_level: 'hard', travel_required: 1 },
+    { id: 5, person_id: 3, title: "Justis's birthday", event_type: 'birthday', month: 4, day: 23, protection_level: 'hard', travel_required: 1 },
+  ];
+  const l = readLocal();
+  if (!l.people_family) writeLocal({ people_family: people, protected_dates: protectedDates });
+  return { people, protectedDates };
+}
+function localFamilyHorizon(days) {
+  const { people, protectedDates } = { people: readLocal().people_family || seedFamily().people, protectedDates: readLocal().protected_dates || seedFamily().protectedDates };
+  const today = new Date();
+  const horizon = new Date(today.getTime() + days * 864e5);
+  const pMap = Object.fromEntries(people.map(p => [p.id, p]));
+  const nextOcc = (m, d) => { if (!m || !d) return null; let y = today.getFullYear(); let x = new Date(y, m - 1, d); if (x < new Date(today.getFullYear(), today.getMonth(), today.getDate())) x = new Date(y + 1, m - 1, d); return x; };
+  const upcoming = protectedDates.map(pd => {
+    const dt = nextOcc(pd.month, pd.day); if (!dt || dt > horizon) return null;
+    const daysUntil = Math.round((dt - today) / 864e5);
+    return { id: pd.id, title: pd.title, event_type: pd.event_type, person: pd.person_id ? pMap[pd.person_id]?.name : null, date: dt.toISOString().slice(0, 10), daysUntil, protection_level: pd.protection_level, travel_required: !!pd.travel_required, planningWindow: pd.travel_required && daysUntil <= 45 };
+  }).filter(Boolean).sort((a, b) => a.daysUntil - b.daysUntil);
+  return { people, upcoming, overlaps: [], ptoCandidates: [] };
+}
+
 function summarizeLabs(labs) {
   const by = {};
   for (const l of labs) { (by[l.marker] ||= []).push(l); }

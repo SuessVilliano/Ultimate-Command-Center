@@ -220,7 +220,50 @@ export function initHighestSelfTables() {
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
+
+    -- ===== FAMILY =====
+    CREATE TABLE IF NOT EXISTS hs_people (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      relationship TEXT DEFAULT 'child',  -- child | self | parent | partner | other
+      birthday_month INTEGER,
+      birthday_day INTEGER,
+      school_name TEXT DEFAULT '',
+      grade TEXT DEFAULT '',
+      city TEXT DEFAULT '',
+      lives_with INTEGER DEFAULT 0,
+      color TEXT,
+      metadata_json TEXT DEFAULT '{}',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS hs_protected_dates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      person_id INTEGER,
+      title TEXT NOT NULL,
+      event_type TEXT DEFAULT 'birthday', -- birthday | holiday | tradition | special | anchor
+      month INTEGER, day INTEGER,
+      recurring INTEGER DEFAULT 1,
+      protection_level TEXT DEFAULT 'soft', -- hard | soft | flexible
+      travel_required INTEGER DEFAULT 0,
+      notes TEXT DEFAULT '',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS hs_family_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      person_id INTEGER,                  -- null = all-kids / general
+      title TEXT NOT NULL,
+      event_type TEXT DEFAULT 'school_off', -- school_off | long_weekend | holiday | all_kids | visit | travel | pickup
+      date_start TEXT NOT NULL,
+      date_end TEXT,
+      source TEXT DEFAULT 'manual',
+      notes TEXT DEFAULT '',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
   `);
+  seedFamilyIfEmpty();
   console.log('Highest Self OS: tables initialized');
 }
 
@@ -496,6 +539,163 @@ function seedHealthPlan() {
       'Sustainable > extreme: small deficit, keep the muscle, don\'t crash',
     ],
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* FAMILY                                                              */
+/* ------------------------------------------------------------------ */
+export function listPeople() { return all('SELECT * FROM hs_people ORDER BY id'); }
+export function addPerson(p = {}) {
+  const r = run(`INSERT INTO hs_people (name, relationship, birthday_month, birthday_day, school_name, grade, city, lives_with, color, metadata_json)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    [p.name, p.relationship || 'child', p.birthday_month ?? null, p.birthday_day ?? null,
+     p.school_name || '', p.grade || '', p.city || '', p.lives_with ? 1 : 0, p.color || null, JSON.stringify(p.metadata || {})]);
+  return one('SELECT * FROM hs_people WHERE id=?', [r.lastInsertRowid]);
+}
+export function updatePerson(id, patch = {}) {
+  const cur = one('SELECT * FROM hs_people WHERE id=?', [id]);
+  if (!cur) return null;
+  const m = { ...cur, ...patch };
+  run(`UPDATE hs_people SET name=?, relationship=?, birthday_month=?, birthday_day=?, school_name=?, grade=?, city=?, lives_with=?, color=?, updated_at=? WHERE id=?`,
+    [m.name, m.relationship, m.birthday_month ?? null, m.birthday_day ?? null, m.school_name || '', m.grade || '', m.city || '', m.lives_with ? 1 : 0, m.color || null, now(), id]);
+  return one('SELECT * FROM hs_people WHERE id=?', [id]);
+}
+export function deletePerson(id) {
+  run('DELETE FROM hs_protected_dates WHERE person_id=?', [id]);
+  run('DELETE FROM hs_family_events WHERE person_id=?', [id]);
+  run('DELETE FROM hs_people WHERE id=?', [id]);
+  return { deleted: id };
+}
+
+export function listProtectedDates() { return all('SELECT * FROM hs_protected_dates ORDER BY month, day'); }
+export function addProtectedDate(v = {}) {
+  const r = run(`INSERT INTO hs_protected_dates (person_id, title, event_type, month, day, recurring, protection_level, travel_required, notes)
+    VALUES (?,?,?,?,?,?,?,?,?)`,
+    [v.person_id ?? null, v.title, v.event_type || 'birthday', v.month ?? null, v.day ?? null,
+     v.recurring == null ? 1 : (v.recurring ? 1 : 0), v.protection_level || 'soft', v.travel_required ? 1 : 0, v.notes || '']);
+  return one('SELECT * FROM hs_protected_dates WHERE id=?', [r.lastInsertRowid]);
+}
+export function updateProtectedDate(id, patch = {}) {
+  const cur = one('SELECT * FROM hs_protected_dates WHERE id=?', [id]);
+  if (!cur) return null;
+  const m = { ...cur, ...patch };
+  run(`UPDATE hs_protected_dates SET title=?, event_type=?, month=?, day=?, protection_level=?, travel_required=?, notes=? WHERE id=?`,
+    [m.title, m.event_type, m.month ?? null, m.day ?? null, m.protection_level, m.travel_required ? 1 : 0, m.notes || '', id]);
+  return one('SELECT * FROM hs_protected_dates WHERE id=?', [id]);
+}
+export function deleteProtectedDate(id) { run('DELETE FROM hs_protected_dates WHERE id=?', [id]); return { deleted: id }; }
+
+export function listFamilyEvents() { return all('SELECT * FROM hs_family_events ORDER BY date_start'); }
+export function addFamilyEvent(v = {}) {
+  const r = run(`INSERT INTO hs_family_events (person_id, title, event_type, date_start, date_end, source, notes)
+    VALUES (?,?,?,?,?,?,?)`,
+    [v.person_id ?? null, v.title, v.event_type || 'school_off', v.date_start, v.date_end || v.date_start, v.source || 'manual', v.notes || '']);
+  return one('SELECT * FROM hs_family_events WHERE id=?', [r.lastInsertRowid]);
+}
+export function deleteFamilyEvent(id) { run('DELETE FROM hs_family_events WHERE id=?', [id]); return { deleted: id }; }
+
+/**
+ * Family horizon: upcoming protected dates + all-kids overlap windows + PTO
+ * candidates within `days`. Supportive planning, never shaming.
+ */
+export function familyHorizon(days = 120) {
+  const people = listPeople();
+  const protectedDates = listProtectedDates();
+  const events = listFamilyEvents();
+  const today = new Date();
+  const horizon = new Date(today.getTime() + days * 864e5);
+
+  // upcoming birthdays / anchors (recurring, next occurrence)
+  const nextOccurrence = (month, day) => {
+    if (!month || !day) return null;
+    let y = today.getFullYear();
+    let d = new Date(y, month - 1, day);
+    if (d < new Date(today.getFullYear(), today.getMonth(), today.getDate())) d = new Date(y + 1, month - 1, day);
+    return d;
+  };
+  const pMap = Object.fromEntries(people.map(p => [p.id, p]));
+  const upcoming = protectedDates.map(pd => {
+    const d = nextOccurrence(pd.month, pd.day);
+    if (!d || d > horizon) return null;
+    const daysUntil = Math.round((d - today) / 864e5);
+    return {
+      id: pd.id, title: pd.title, event_type: pd.event_type,
+      person: pd.person_id ? pMap[pd.person_id]?.name : null,
+      date: d.toISOString().slice(0, 10), daysUntil,
+      protection_level: pd.protection_level, travel_required: !!pd.travel_required,
+      planningWindow: pd.travel_required && daysUntil <= 45,
+    };
+  }).filter(Boolean).sort((a, b) => a.daysUntil - b.daysUntil);
+
+  // all-kids overlap windows from school-off / visit events among children
+  const kids = people.filter(p => p.relationship === 'child');
+  const kidEvents = events.filter(e => e.person_id && kids.some(k => k.id === e.person_id) &&
+    ['school_off', 'long_weekend', 'holiday', 'visit', 'travel'].includes(e.event_type));
+  const overlaps = detectAllKidsWindows(kidEvents, kids, pMap).filter(w => new Date(w.end) >= today);
+
+  return { people, upcoming, overlaps, ptoCandidates: overlaps.filter(o => o.kids.length >= 2 || o.days >= 3) };
+}
+
+function detectAllKidsWindows(kidEvents, kids, pMap) {
+  // Build a day -> set(kids off) map, then merge consecutive days where >=2 kids overlap.
+  const dayKids = {};
+  for (const e of kidEvents) {
+    const start = new Date(e.date_start), end = new Date(e.date_end || e.date_start);
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const key = d.toISOString().slice(0, 10);
+      (dayKids[key] ||= new Set()).add(e.person_id);
+    }
+  }
+  const days = Object.keys(dayKids).sort();
+  const windows = [];
+  let cur = null;
+  for (const day of days) {
+    const set = dayKids[day];
+    if (!cur) { cur = { start: day, end: day, kidSet: new Set(set) }; }
+    else {
+      const prev = new Date(cur.end); const now2 = new Date(day);
+      if ((now2 - prev) <= 864e5 * 1.5) { cur.end = day; set.forEach(k => cur.kidSet.add(k)); }
+      else { windows.push(cur); cur = { start: day, end: day, kidSet: new Set(set) }; }
+    }
+  }
+  if (cur) windows.push(cur);
+  return windows.map(w => {
+    const kidsIn = [...w.kidSet];
+    const dd = Math.round((new Date(w.end) - new Date(w.start)) / 864e5) + 1;
+    return {
+      start: w.start, end: w.end, days: dd,
+      kids: kidsIn.map(id => pMap[id]?.name).filter(Boolean),
+      allKids: kidsIn.length === kids.length && kids.length > 0,
+      highValue: kidsIn.length >= 2 && dd >= 3,
+    };
+  });
+}
+
+/** Seed the user's children + protected birthdays once (all editable later). */
+function seedFamilyIfEmpty() {
+  const count = one('SELECT COUNT(*) c FROM hs_people');
+  if (count && count.c > 0) return;
+  const kids = [
+    { name: 'Jovi', city: 'Wesley Chapel', school_name: 'Watergrass Elementary', lives_with: 1, birthday_month: 11, birthday_day: 22, color: '#f59e0b' },
+    { name: 'Jionni', city: 'Orlando', school_name: 'Innovation', birthday_month: 2, birthday_day: 25, color: '#60a5fa' },
+    { name: 'Justis', city: 'Sandy Springs / Atlanta', school_name: 'Riverwood', birthday_month: 4, birthday_day: 23, color: '#f472b6' },
+  ];
+  const ids = {};
+  for (const k of kids) ids[k.name] = addPerson({ ...k, relationship: 'child' }).id;
+  const self = addPerson({ name: 'Me', relationship: 'self', birthday_month: 8, birthday_day: 6, color: '#a78bfa' });
+  const mom = addPerson({ name: 'Mom', relationship: 'parent', birthday_month: 8, birthday_day: 17, color: '#2dd4bf' });
+
+  const pd = (person_id, title, month, day, level = 'soft', travel = 0) =>
+    addProtectedDate({ person_id, title, event_type: 'birthday', month, day, protection_level: level, travel_required: travel });
+  pd(self.id, 'My birthday', 8, 6, 'soft');
+  pd(mom.id, "Mom's birthday", 8, 17, 'soft');
+  pd(ids.Jovi, "Jovi's birthday", 11, 22, 'hard');
+  pd(ids.Jionni, "Jionni's birthday", 2, 25, 'hard', 1);
+  pd(ids.Justis, "Justis's birthday", 4, 23, 'hard', 1); // "I want to be there"
+  // co-parent birthdays (context, flexible)
+  addProtectedDate({ title: "Jovi's mom's birthday", event_type: 'anchor', month: 12, day: 16, protection_level: 'flexible' });
+  addProtectedDate({ title: "Jionni's mom's birthday", event_type: 'anchor', month: 2, day: 1, protection_level: 'flexible' });
+  addProtectedDate({ title: "Justis's mom's birthday", event_type: 'anchor', month: 2, day: 1, protection_level: 'flexible' });
 }
 
 /** Combined health snapshot with lab trend + latest metrics. */

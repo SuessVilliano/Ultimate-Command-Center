@@ -26,6 +26,7 @@ export const FEATURES = {
     LIFE_MAP: true,     // Mind-map / web of notes -> master plans
     HEALTH: true,       // Recomposition + labs
     TRADING: true,      // Alert-adherence process
+    FAMILY: true,       // Family OS — people, protected dates, all-kids windows
   }
 };
 

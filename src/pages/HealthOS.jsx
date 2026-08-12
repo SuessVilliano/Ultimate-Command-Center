@@ -28,9 +28,14 @@ export default function HealthOS() {
   const [labForm, setLabForm] = useState(MARKER_PRESETS[0]);
   const [labValue, setLabValue] = useState('');
   const [metricForm, setMetricForm] = useState({ weight: '', body_fat: '', waist: '' });
+  const [oura, setOura] = useState(null);
+  const [ouraSyncing, setOuraSyncing] = useState(false);
+
+  const loadOura = async () => setOura(await svc.getOuraSnapshot());
+  const syncOura = async () => { setOuraSyncing(true); await svc.syncOura(14); await loadOura(); await load(); setOuraSyncing(false); };
 
   const load = async () => setSnap(await svc.getHealthSnapshot());
-  useEffect(() => { load(); (async () => { const d = await svc.getHealthDaily(date); if (d && d.date) setDaily({ movement_min: d.movement_min || 0, meditation_min: d.meditation_min || 0, mobility_min: d.mobility_min || 0, protein_g: d.protein_g || 0, strength: d.strength || 0 }); })(); }, [date]);
+  useEffect(() => { load(); loadOura(); (async () => { const d = await svc.getHealthDaily(date); if (d && d.date) setDaily({ movement_min: d.movement_min || 0, meditation_min: d.meditation_min || 0, mobility_min: d.mobility_min || 0, protein_g: d.protein_g || 0, strength: d.strength || 0 }); })(); }, [date]);
 
   const saveDaily = async (patch) => { const next = { ...daily, ...patch }; setDaily(next); await svc.saveHealthDaily(date, next); };
   const addLab = async () => { if (labValue === '') return; await svc.addLab({ ...labForm, value: +labValue, date }); setLabValue(''); load(); };
@@ -68,6 +73,36 @@ export default function HealthOS() {
           <Stat label="Body fat" value={latest?.body_fat ? `${latest.body_fat}` : '—'} unit="%" isDark={isDark} />
           <Stat label="Protein target" value={targets.protein_g_per_day || 180} unit="g/day" isDark={isDark} />
           <Stat label="Training" value={targets.training_days_per_week || 4} unit="days/wk" isDark={isDark} />
+        </div>
+      </section>
+
+      {/* Oura connect / recovery */}
+      <section className={`rounded-2xl border p-4 ${card}`}>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-2">
+            <Activity className="w-5 h-5 text-teal-400" />
+            <div>
+              <h2 className={`font-semibold text-sm ${isDark ? 'text-white' : 'text-gray-900'}`}>Oura recovery</h2>
+              <p className={`text-[11px] ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                {oura?.configured
+                  ? (oura?.unauthorized ? 'Token set but unauthorized — check scopes.' : 'Connected · read-only')
+                  : 'Not connected — add OURA_ACCESS_TOKEN in the server env, then Sync.'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            {oura?.configured && oura?.latest && (
+              <div className="flex items-center gap-3">
+                <MiniStat label="Readiness" value={oura.latest.readiness} isDark={isDark} />
+                <MiniStat label="Sleep" value={oura.latest.sleep} isDark={isDark} />
+                <MiniStat label="Activity" value={oura.latest.activity} isDark={isDark} />
+              </div>
+            )}
+            <button onClick={syncOura} disabled={ouraSyncing}
+              className={`px-3 py-2 rounded-lg text-sm font-medium ${oura?.configured ? 'bg-teal-600 hover:bg-teal-500 text-white' : isDark ? 'bg-[#0e1413] text-gray-400 border border-[#243130]' : 'bg-gray-100 text-gray-600'}`}>
+              {ouraSyncing ? 'Syncing…' : oura?.configured ? 'Sync Oura' : 'Connect Oura'}
+            </button>
+          </div>
         </div>
       </section>
 
@@ -180,6 +215,14 @@ function LabCard({ m, isDark }) {
         {m.trend != null && <span className={`ml-auto flex items-center gap-0.5 text-[11px] ${improving ? 'text-teal-400' : 'text-amber-400'}`}><TrendIcon className="w-3 h-3" />{Math.abs(m.trend)}</span>}
       </div>
       <p className={`text-[10px] mt-1 ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>target {m.goal_direction === 'higher' ? '≥' : '≤'} {m.target ?? '—'}</p>
+    </div>
+  );
+}
+function MiniStat({ label, value, isDark }) {
+  return (
+    <div className="text-center">
+      <div className={`text-lg font-bold tabular-nums ${value >= 85 ? 'text-teal-400' : value >= 70 ? 'text-amber-400' : value != null ? 'text-red-400' : isDark ? 'text-gray-600' : 'text-gray-300'}`}>{value ?? '—'}</div>
+      <div className={`text-[9px] uppercase ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>{label}</div>
     </div>
   );
 }

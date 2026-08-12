@@ -39,6 +39,7 @@ import { FEATURES } from '../config';
 const highestSelfItems = [
   { id: 'highest-self', label: 'Highest Self', icon: Sparkles, flag: 'TODAY' },
   { id: 'life-map', label: 'Life Map', icon: Network, flag: 'LIFE_MAP' },
+  { id: 'family-os', label: 'Family OS', icon: Users, flag: 'FAMILY' },
   { id: 'health-os', label: 'Health OS', icon: Heart, flag: 'HEALTH' },
   { id: 'trading-process', label: 'Trading Process', icon: Target, flag: 'TRADING' },
 ].filter((i) => FEATURES.HIGHEST_SELF?.[i.flag]);

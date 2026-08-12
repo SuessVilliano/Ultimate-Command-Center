@@ -6,6 +6,7 @@
  */
 
 import * as hs from '../lib/highest-self-db.js';
+import * as oura from '../lib/oura-adapter.js';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -142,6 +143,47 @@ export function registerHighestSelfRoutes(app) {
   });
   app.post('/api/hs/health/daily', (req, res) => {
     try { res.json(hs.upsertHealthDaily(req.body?.date || today(), req.body || {})); } catch (e) { fail(res, e); }
+  });
+
+  // ---------- FAMILY ----------
+  app.get('/api/hs/family/people', (req, res) => { try { res.json(hs.listPeople()); } catch (e) { fail(res, e); } });
+  app.post('/api/hs/family/people', (req, res) => { try { res.json(hs.addPerson(req.body || {})); } catch (e) { fail(res, e); } });
+  app.put('/api/hs/family/people/:id', (req, res) => { try { res.json(hs.updatePerson(+req.params.id, req.body || {})); } catch (e) { fail(res, e); } });
+  app.delete('/api/hs/family/people/:id', (req, res) => { try { res.json(hs.deletePerson(+req.params.id)); } catch (e) { fail(res, e); } });
+
+  app.get('/api/hs/family/protected', (req, res) => { try { res.json(hs.listProtectedDates()); } catch (e) { fail(res, e); } });
+  app.post('/api/hs/family/protected', (req, res) => { try { res.json(hs.addProtectedDate(req.body || {})); } catch (e) { fail(res, e); } });
+  app.put('/api/hs/family/protected/:id', (req, res) => { try { res.json(hs.updateProtectedDate(+req.params.id, req.body || {})); } catch (e) { fail(res, e); } });
+  app.delete('/api/hs/family/protected/:id', (req, res) => { try { res.json(hs.deleteProtectedDate(+req.params.id)); } catch (e) { fail(res, e); } });
+
+  app.get('/api/hs/family/events', (req, res) => { try { res.json(hs.listFamilyEvents()); } catch (e) { fail(res, e); } });
+  app.post('/api/hs/family/events', (req, res) => { try { res.json(hs.addFamilyEvent(req.body || {})); } catch (e) { fail(res, e); } });
+  app.delete('/api/hs/family/events/:id', (req, res) => { try { res.json(hs.deleteFamilyEvent(+req.params.id)); } catch (e) { fail(res, e); } });
+
+  app.get('/api/hs/family/horizon', (req, res) => { try { res.json(hs.familyHorizon(+(req.query.days || 120))); } catch (e) { fail(res, e); } });
+
+  // ---------- OURA (read-only health provider) ----------
+  app.get('/api/hs/health/oura/status', (req, res) => { res.json({ configured: oura.isConfigured() }); });
+  app.get('/api/hs/health/oura/snapshot', async (req, res) => { try { res.json(await oura.snapshot()); } catch (e) { fail(res, e); } });
+  app.post('/api/hs/health/oura/sync', async (req, res) => {
+    try { res.json(await oura.syncToHealthDaily({ days: +(req.body?.days || 14) })); } catch (e) { fail(res, e); }
+  });
+
+  // ---------- HYBRID JOURNAL trade import (bulk, draft-only) ----------
+  // Accepts an array of trades exported from Hybrid Journal and records them
+  // for adherence analysis. Never executes anything.
+  app.post('/api/hs/trading/import', (req, res) => {
+    try {
+      const rows = Array.isArray(req.body) ? req.body : (req.body?.trades || []);
+      const saved = rows.map(t => hs.addTrade({
+        symbol: t.symbol || t.ticker, direction: t.direction || t.side,
+        entry: t.entry ?? t.entry_price, exit: t.exit ?? t.exit_price, size: t.size ?? t.qty,
+        pnl: t.pnl ?? t.profit, setup_type: t.setup || t.setup_type,
+        on_setup: t.on_setup ?? (t.setup ? 1 : 0), followed_plan: t.followed_plan ?? 0,
+        journal_ref: t.id || t.journal_ref || t.ref, notes: t.notes || '',
+      }));
+      res.json({ ok: true, imported: saved.length });
+    } catch (e) { fail(res, e); }
   });
 
   console.log('Highest Self OS: routes registered (/api/hs/*)');
