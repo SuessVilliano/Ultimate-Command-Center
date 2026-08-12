@@ -268,7 +268,97 @@ export async function syncOura(days = 14) {
   catch { return { ok: false, reason: 'server_unavailable' }; }
 }
 
+/* ---------------- WEALTH / CREATION ---------------- */
+export async function getProjects() {
+  try { return await api('/api/hs/projects'); }
+  catch { const l = readLocal(); const projects = l.projects_hs || seedProjects(); return localProjectsOverview(projects, l.project_cap || 4); }
+}
+export async function addProject(p) {
+  try { return await api('/api/hs/projects', { method: 'POST', body: p }); }
+  catch { const l = readLocal(); const projects = l.projects_hs || seedProjects(); const x = { id: Date.now(), operating_state: 'idea', strategic_type: 'cash_flow', domain: 'wealth', ...p }; writeLocal({ projects_hs: [...projects, x] }); return x; }
+}
+export async function updateProject(id, patch) {
+  try { return await api(`/api/hs/projects/${id}`, { method: 'PUT', body: patch }); }
+  catch { const l = readLocal(); const projects = (l.projects_hs || []).map(p => p.id === id ? { ...p, ...patch } : p); writeLocal({ projects_hs: projects }); return projects.find(p => p.id === id); }
+}
+export async function deleteProject(id) {
+  try { return await api(`/api/hs/projects/${id}`, { method: 'DELETE' }); }
+  catch { const l = readLocal(); writeLocal({ projects_hs: (l.projects_hs || []).filter(p => p.id !== id) }); return { deleted: id }; }
+}
+export async function setProjectCap(cap) {
+  try { return await api('/api/hs/projects/cap', { method: 'POST', body: { cap } }); }
+  catch { writeLocal({ project_cap: cap }); return { cap }; }
+}
+export async function getIdeas() {
+  try { return await api('/api/hs/ideas'); }
+  catch { return readLocal().ideas_hs || []; }
+}
+export async function addIdea(v) {
+  try { return await api('/api/hs/ideas', { method: 'POST', body: v }); }
+  catch { const l = readLocal(); const arr = l.ideas_hs || []; const x = { id: Date.now(), stage: 'idea', ...v }; writeLocal({ ideas_hs: [x, ...arr] }); return x; }
+}
+export async function updateIdea(id, patch) {
+  try { return await api(`/api/hs/ideas/${id}`, { method: 'PUT', body: patch }); }
+  catch { const l = readLocal(); const arr = (l.ideas_hs || []).map(i => i.id === id ? { ...i, ...patch } : i); writeLocal({ ideas_hs: arr }); return arr.find(i => i.id === id); }
+}
+export async function deleteIdea(id) {
+  try { return await api(`/api/hs/ideas/${id}`, { method: 'DELETE' }); }
+  catch { const l = readLocal(); writeLocal({ ideas_hs: (l.ideas_hs || []).filter(i => i.id !== id) }); return { deleted: id }; }
+}
+export async function promoteIdea(id, opts = {}) {
+  try { return await api(`/api/hs/ideas/${id}/promote`, { method: 'POST', body: opts }); }
+  catch {
+    const l = readLocal(); const idea = (l.ideas_hs || []).find(i => i.id === id); if (!idea) return { error: 'not_found' };
+    const projects = l.projects_hs || seedProjects();
+    if (opts.operating_state === 'active' && projects.filter(p => p.operating_state === 'active').length >= (l.project_cap || 4)) return { error: 'over_capacity', cap: l.project_cap || 4 };
+    const project = { id: Date.now(), name: idea.title, domain: idea.domain, strategic_type: idea.strategic_type, operating_state: opts.operating_state || 'idea' };
+    writeLocal({ projects_hs: [...projects, project], ideas_hs: (l.ideas_hs || []).map(i => i.id === id ? { ...i, stage: 'project', promoted_project_id: project.id } : i) });
+    return { project };
+  }
+}
+
+/* ---------------- TODAY ---------------- */
+export async function getTodayBrief(date) {
+  try { return await api(`/api/hs/today${date ? `?date=${date}` : ''}`); }
+  catch { return null; }
+}
+
+/* ---------------- HYBRID JOURNAL ---------------- */
+export async function getHybridJournalStatus() {
+  try { return await api('/api/hs/trading/hybrid-journal/status'); } catch { return { configured: false }; }
+}
+export async function syncHybridJournal(limit = 200) {
+  try { return await api('/api/hs/trading/hybrid-journal/sync', { method: 'POST', body: { limit } }); }
+  catch { return { ok: false, reason: 'server_unavailable' }; }
+}
+
 /* ---------------- local fallbacks ---------------- */
+function seedProjects() {
+  const P = (id, name, strategic_type, operating_state, domain) => ({ id, name, strategic_type, operating_state, domain });
+  const list = [
+    P(1, 'Smart Life Brokers', 'asset', 'active', 'wealth'),
+    P(2, 'Hybrid Funding', 'cash_flow', 'active', 'wealth'),
+    P(3, 'Trade Hybrid', 'asset', 'active', 'wealth'),
+    P(4, 'Hybrid Journal', 'asset', 'active', 'creation'),
+    P(5, 'LIV8 Health', 'cash_flow', 'maintenance', 'wealth'),
+    P(6, 'LIV8 AI / Elevate OS', 'moonshot', 'active', 'creation'),
+    P(7, 'LIV8 Solar', 'cash_flow', 'maintenance', 'wealth'),
+    P(8, 'Agency Owner Support', 'cash_flow', 'parked', 'wealth'),
+    P(9, 'OMet', 'moonshot', 'idea', 'creation'),
+    P(10, 'Broker Aggregator', 'asset', 'parked', 'creation'),
+    P(11, 'ABATEV', 'moonshot', 'idea', 'creation'),
+  ];
+  writeLocal({ projects_hs: list });
+  return list;
+}
+function localProjectsOverview(projects, cap) {
+  const byType = { cash_flow: 0, asset: 0, moonshot: 0 }, byState = { active: 0, maintenance: 0, parked: 0, idea: 0, archived: 0 };
+  let monthlyCost = 0, recurring = 0;
+  for (const p of projects) { byType[p.strategic_type] = (byType[p.strategic_type] || 0) + 1; byState[p.operating_state] = (byState[p.operating_state] || 0) + 1; monthlyCost += p.monthly_cost || 0; recurring += p.recurring_revenue || 0; }
+  const activeCount = byState.active;
+  return { projects, cap, activeCount, overCapacity: activeCount > cap, byType, byState, monthlyCost, recurring };
+}
+
 function seedFamily() {
   const people = [
     { id: 1, name: 'Jovi', relationship: 'child', city: 'Wesley Chapel', school_name: 'Watergrass Elementary', lives_with: 1, birthday_month: 11, birthday_day: 22, color: '#f59e0b' },

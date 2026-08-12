@@ -262,8 +262,52 @@ export function initHighestSelfTables() {
       notes TEXT DEFAULT '',
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
+
+    -- ===== WEALTH / CREATION =====
+    CREATE TABLE IF NOT EXISTS hs_projects (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      domain TEXT DEFAULT 'wealth',       -- wealth | creation
+      strategic_type TEXT DEFAULT 'cash_flow', -- cash_flow | asset | moonshot
+      operating_state TEXT DEFAULT 'idea', -- active | maintenance | parked | idea | archived
+      repo_url TEXT DEFAULT '',
+      website_url TEXT DEFAULT '',
+      monthly_cost REAL,
+      current_revenue REAL,
+      recurring_revenue REAL,
+      next_milestone TEXT DEFAULT '',
+      last_activity TEXT,
+      why TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS hs_ideas (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      stage TEXT DEFAULT 'idea',          -- idea | research | validated | project | active
+      domain TEXT DEFAULT 'creation',
+      problem TEXT DEFAULT '',
+      audience TEXT DEFAULT '',
+      evidence TEXT DEFAULT '',
+      business_model TEXT DEFAULT '',
+      strategic_type TEXT DEFAULT 'moonshot',
+      estimated_effort TEXT DEFAULT '',
+      next_validation_step TEXT DEFAULT '',
+      source TEXT DEFAULT 'manual',
+      promoted_project_id INTEGER,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS hs_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
   `);
   seedFamilyIfEmpty();
+  seedProjectsIfEmpty();
   console.log('Highest Self OS: tables initialized');
 }
 
@@ -697,6 +741,138 @@ function seedFamilyIfEmpty() {
   addProtectedDate({ title: "Jionni's mom's birthday", event_type: 'anchor', month: 2, day: 1, protection_level: 'flexible' });
   addProtectedDate({ title: "Justis's mom's birthday", event_type: 'anchor', month: 2, day: 1, protection_level: 'flexible' });
 }
+
+/* ------------------------------------------------------------------ */
+/* WEALTH / CREATION — projects + ideas                                */
+/* ------------------------------------------------------------------ */
+const ACTIVE_CAP_KEY = 'active_project_cap';
+
+export function getSetting(key, fallback = null) {
+  const r = one('SELECT value FROM hs_settings WHERE key=?', [key]);
+  return r ? r.value : fallback;
+}
+export function setSetting(key, value) {
+  run('INSERT INTO hs_settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', [key, String(value)]);
+  return { key, value };
+}
+
+export function listProjects() { return all('SELECT * FROM hs_projects ORDER BY operating_state, name'); }
+export function addProject(p = {}) {
+  const r = run(`INSERT INTO hs_projects (name, domain, strategic_type, operating_state, repo_url, website_url, monthly_cost, current_revenue, recurring_revenue, next_milestone, last_activity, why, notes)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [p.name, p.domain || 'wealth', p.strategic_type || 'cash_flow', p.operating_state || 'idea',
+     p.repo_url || '', p.website_url || '', p.monthly_cost ?? null, p.current_revenue ?? null,
+     p.recurring_revenue ?? null, p.next_milestone || '', p.last_activity || null, p.why || '', p.notes || '']);
+  return one('SELECT * FROM hs_projects WHERE id=?', [r.lastInsertRowid]);
+}
+export function updateProject(id, patch = {}) {
+  const cur = one('SELECT * FROM hs_projects WHERE id=?', [id]);
+  if (!cur) return null;
+  const m = { ...cur, ...patch };
+  run(`UPDATE hs_projects SET name=?, domain=?, strategic_type=?, operating_state=?, repo_url=?, website_url=?, monthly_cost=?, current_revenue=?, recurring_revenue=?, next_milestone=?, last_activity=?, why=?, notes=?, updated_at=? WHERE id=?`,
+    [m.name, m.domain, m.strategic_type, m.operating_state, m.repo_url || '', m.website_url || '',
+     m.monthly_cost ?? null, m.current_revenue ?? null, m.recurring_revenue ?? null, m.next_milestone || '',
+     m.last_activity || null, m.why || '', m.notes || '', now(), id]);
+  return one('SELECT * FROM hs_projects WHERE id=?', [id]);
+}
+export function deleteProject(id) { run('DELETE FROM hs_projects WHERE id=?', [id]); return { deleted: id }; }
+
+export function projectsOverview() {
+  const projects = listProjects();
+  const cap = +(getSetting(ACTIVE_CAP_KEY, '4'));
+  const active = projects.filter(p => p.operating_state === 'active');
+  const byType = { cash_flow: 0, asset: 0, moonshot: 0 };
+  const byState = { active: 0, maintenance: 0, parked: 0, idea: 0, archived: 0 };
+  let monthlyCost = 0, recurring = 0;
+  for (const p of projects) {
+    byType[p.strategic_type] = (byType[p.strategic_type] || 0) + 1;
+    byState[p.operating_state] = (byState[p.operating_state] || 0) + 1;
+    monthlyCost += p.monthly_cost || 0;
+    recurring += p.recurring_revenue || 0;
+  }
+  return { projects, cap, activeCount: active.length, overCapacity: active.length > cap, byType, byState, monthlyCost, recurring };
+}
+
+export function listIdeas() { return all('SELECT * FROM hs_ideas ORDER BY updated_at DESC'); }
+export function addIdea(v = {}) {
+  const r = run(`INSERT INTO hs_ideas (title, stage, domain, problem, audience, evidence, business_model, strategic_type, estimated_effort, next_validation_step, source)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    [v.title, v.stage || 'idea', v.domain || 'creation', v.problem || '', v.audience || '',
+     v.evidence || '', v.business_model || '', v.strategic_type || 'moonshot', v.estimated_effort || '',
+     v.next_validation_step || '', v.source || 'manual']);
+  return one('SELECT * FROM hs_ideas WHERE id=?', [r.lastInsertRowid]);
+}
+export function updateIdea(id, patch = {}) {
+  const cur = one('SELECT * FROM hs_ideas WHERE id=?', [id]);
+  if (!cur) return null;
+  const m = { ...cur, ...patch };
+  run(`UPDATE hs_ideas SET title=?, stage=?, domain=?, problem=?, audience=?, evidence=?, business_model=?, strategic_type=?, estimated_effort=?, next_validation_step=?, updated_at=? WHERE id=?`,
+    [m.title, m.stage, m.domain, m.problem || '', m.audience || '', m.evidence || '', m.business_model || '',
+     m.strategic_type, m.estimated_effort || '', m.next_validation_step || '', now(), id]);
+  return one('SELECT * FROM hs_ideas WHERE id=?', [id]);
+}
+export function deleteIdea(id) { run('DELETE FROM hs_ideas WHERE id=?', [id]); return { deleted: id }; }
+
+/** Promote an idea to a project (respects capacity if activating). */
+export function promoteIdea(id, { operating_state = 'idea' } = {}) {
+  const idea = one('SELECT * FROM hs_ideas WHERE id=?', [id]);
+  if (!idea) return { error: 'not_found' };
+  if (operating_state === 'active') {
+    const ov = projectsOverview();
+    if (ov.activeCount >= ov.cap) return { error: 'over_capacity', cap: ov.cap, activeCount: ov.activeCount };
+  }
+  const project = addProject({
+    name: idea.title, domain: idea.domain, strategic_type: idea.strategic_type,
+    operating_state, why: idea.problem, next_milestone: idea.next_validation_step, notes: idea.evidence,
+  });
+  run('UPDATE hs_ideas SET stage=?, promoted_project_id=?, updated_at=? WHERE id=?', ['project', project.id, now(), id]);
+  return { project, idea: one('SELECT * FROM hs_ideas WHERE id=?', [id]) };
+}
+
+/** Seed the known business/project universe (all editable; conservative states). */
+function seedProjectsIfEmpty() {
+  const c = one('SELECT COUNT(*) c FROM hs_projects');
+  if (c && c.c > 0) return;
+  const P = (name, strategic_type, operating_state, domain, extra = {}) =>
+    addProject({ name, strategic_type, operating_state, domain, ...extra });
+  P('Smart Life Brokers', 'asset', 'active', 'wealth', { why: 'Recurring insurance asset', recurring_revenue: null });
+  P('Hybrid Funding', 'cash_flow', 'active', 'wealth', { website_url: 'https://hybridfunding.co' });
+  P('Trade Hybrid', 'asset', 'active', 'wealth', { website_url: 'https://tradehybrid.co' });
+  P('Hybrid Journal', 'asset', 'active', 'creation', { why: 'Trading journal — feeds adherence' });
+  P('LIV8 Health', 'cash_flow', 'maintenance', 'wealth', { website_url: 'https://liv8health.com' });
+  P('LIV8 AI / Elevate OS', 'moonshot', 'active', 'creation');
+  P('LIV8 Solar', 'cash_flow', 'maintenance', 'wealth');
+  P('Agency Owner Support', 'cash_flow', 'parked', 'wealth');
+  P('OMet', 'moonshot', 'idea', 'creation');
+  P('Broker Aggregator', 'asset', 'parked', 'creation');
+  P('ABATEV', 'moonshot', 'idea', 'creation');
+}
+
+/**
+ * Today brief — one aggregated glance: intention, health/recovery, trading day
+ * type, next family anchor, project capacity. Distinguishes evidence vs plan.
+ */
+export function todayBrief(date) {
+  const d = date || now().slice(0, 10);
+  const jsDay = new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long' });
+  const DAY_TYPES = { Sunday: 'no_trade', Monday: 'setup', Tuesday: 'execute', Wednesday: 'execute', Thursday: 'execute', Friday: 'review', Saturday: 'no_trade' };
+  const intention = getIntention(d);
+  const health = getHealthDaily(d);
+  const tradingDay = getTradingDay(d);
+  const horizon = familyHorizon(60);
+  const ov = projectsOverview();
+  return {
+    date: d, dayName: jsDay,
+    dayType: tradingDay?.day_type || DAY_TYPES[jsDay] || 'setup',
+    intention: intention || null,
+    topOutcomes: intention ? safeJson(intention.top_outcomes_json, []) : [],
+    health: health || null,
+    readiness: health?.readiness ?? null,
+    nextFamily: horizon.upcoming[0] || null,
+    activeProjects: ov.activeCount, projectCap: ov.cap, overCapacity: ov.overCapacity,
+  };
+}
+function safeJson(s, f) { try { return JSON.parse(s || 'null') ?? f; } catch { return f; } }
 
 /** Combined health snapshot with lab trend + latest metrics. */
 export function healthSnapshot() {

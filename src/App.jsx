@@ -29,6 +29,8 @@ import HighestSelf from './pages/HighestSelf';
 import HealthOS from './pages/HealthOS';
 import TradingProcess from './pages/TradingProcess';
 import FamilyOS from './pages/FamilyOS';
+import BusinessOS from './pages/BusinessOS';
+import Today from './pages/Today';
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -120,6 +122,10 @@ function AppContent() {
         return <TradingProcess />;
       case 'family-os':
         return <FamilyOS />;
+      case 'business-os':
+        return <BusinessOS />;
+      case 'hs-today':
+        return <Today onNavigate={setActivePage} />;
       case 'glasses':
         return <Glasses onExit={() => setActivePage('dashboard')} />;
       default:

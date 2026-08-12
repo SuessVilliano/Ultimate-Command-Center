@@ -27,6 +27,8 @@ export const FEATURES = {
     HEALTH: true,       // Recomposition + labs
     TRADING: true,      // Alert-adherence process
     FAMILY: true,       // Family OS — people, protected dates, all-kids windows
+    BUSINESS: true,     // Business/Creation OS + Idea Orbit
+    GLANCE: true,       // Unified Today glance
   }
 };
 

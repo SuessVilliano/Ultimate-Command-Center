@@ -7,6 +7,7 @@
 
 import * as hs from '../lib/highest-self-db.js';
 import * as oura from '../lib/oura-adapter.js';
+import * as hybridJournal from '../lib/hybrid-journal-adapter.js';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -184,6 +185,29 @@ export function registerHighestSelfRoutes(app) {
       }));
       res.json({ ok: true, imported: saved.length });
     } catch (e) { fail(res, e); }
+  });
+
+  // ---------- WEALTH / CREATION ----------
+  app.get('/api/hs/projects', (req, res) => { try { res.json(hs.projectsOverview()); } catch (e) { fail(res, e); } });
+  app.post('/api/hs/projects', (req, res) => { try { res.json(hs.addProject(req.body || {})); } catch (e) { fail(res, e); } });
+  app.put('/api/hs/projects/:id', (req, res) => { try { res.json(hs.updateProject(+req.params.id, req.body || {})); } catch (e) { fail(res, e); } });
+  app.delete('/api/hs/projects/:id', (req, res) => { try { res.json(hs.deleteProject(+req.params.id)); } catch (e) { fail(res, e); } });
+  app.get('/api/hs/projects/cap', (req, res) => { try { res.json({ cap: +(hs.getSetting('active_project_cap', '4')) }); } catch (e) { fail(res, e); } });
+  app.post('/api/hs/projects/cap', (req, res) => { try { res.json(hs.setSetting('active_project_cap', +(req.body?.cap || 4))); } catch (e) { fail(res, e); } });
+
+  app.get('/api/hs/ideas', (req, res) => { try { res.json(hs.listIdeas()); } catch (e) { fail(res, e); } });
+  app.post('/api/hs/ideas', (req, res) => { try { res.json(hs.addIdea(req.body || {})); } catch (e) { fail(res, e); } });
+  app.put('/api/hs/ideas/:id', (req, res) => { try { res.json(hs.updateIdea(+req.params.id, req.body || {})); } catch (e) { fail(res, e); } });
+  app.delete('/api/hs/ideas/:id', (req, res) => { try { res.json(hs.deleteIdea(+req.params.id)); } catch (e) { fail(res, e); } });
+  app.post('/api/hs/ideas/:id/promote', (req, res) => { try { res.json(hs.promoteIdea(+req.params.id, req.body || {})); } catch (e) { fail(res, e); } });
+
+  // ---------- TODAY (aggregated glance) ----------
+  app.get('/api/hs/today', (req, res) => { try { res.json(hs.todayBrief(req.query.date)); } catch (e) { fail(res, e); } });
+
+  // ---------- HYBRID JOURNAL (read-only import) ----------
+  app.get('/api/hs/trading/hybrid-journal/status', (req, res) => { res.json(hybridJournal.status()); });
+  app.post('/api/hs/trading/hybrid-journal/sync', async (req, res) => {
+    try { res.json(await hybridJournal.sync({ limit: +(req.body?.limit || 200) })); } catch (e) { fail(res, e); }
   });
 
   console.log('Highest Self OS: routes registered (/api/hs/*)');

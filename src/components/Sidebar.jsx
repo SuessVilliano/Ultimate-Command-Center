@@ -29,7 +29,9 @@ import {
   Network,
   Heart,
   Target,
-  Sparkles
+  Sparkles,
+  Briefcase,
+  Sunrise
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -37,11 +39,13 @@ import { FEATURES } from '../config';
 
 // Highest Self OS — additive life-operating-system surfaces (feature-flagged).
 const highestSelfItems = [
+  { id: 'hs-today', label: 'Today', icon: Sunrise, flag: 'GLANCE' },
   { id: 'highest-self', label: 'Highest Self', icon: Sparkles, flag: 'TODAY' },
   { id: 'life-map', label: 'Life Map', icon: Network, flag: 'LIFE_MAP' },
   { id: 'family-os', label: 'Family OS', icon: Users, flag: 'FAMILY' },
   { id: 'health-os', label: 'Health OS', icon: Heart, flag: 'HEALTH' },
   { id: 'trading-process', label: 'Trading Process', icon: Target, flag: 'TRADING' },
+  { id: 'business-os', label: 'Business & Creation', icon: Briefcase, flag: 'BUSINESS' },
 ].filter((i) => FEATURES.HIGHEST_SELF?.[i.flag]);
 
 const menuItems = [
