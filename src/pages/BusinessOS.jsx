@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Briefcase, Lightbulb, Plus, Trash2, TrendingUp, Archive, Pause,
-  Circle, Rocket, Coins, Gem, AlertTriangle, ArrowRight, DollarSign
+  Circle, Rocket, Coins, Gem, AlertTriangle, ArrowRight, DollarSign, Github
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import * as svc from '../services/highestSelfService';
@@ -31,10 +31,18 @@ export default function BusinessOS() {
   const [ideaTitle, setIdeaTitle] = useState('');
   const [notice, setNotice] = useState('');
 
+  const [ghSyncing, setGhSyncing] = useState(false);
   const load = async () => { setOv(await svc.getProjects()); setIdeas(await svc.getIdeas()); };
   useEffect(() => { load(); }, []);
 
-  const flash = (m) => { setNotice(m); setTimeout(() => setNotice(''), 2500); };
+  const flash = (m) => { setNotice(m); setTimeout(() => setNotice(''), 3500); };
+  const syncGitHub = async () => {
+    setGhSyncing(true);
+    const r = await svc.syncGitHubProjects(true);
+    if (r?.ok) flash(`GitHub synced — ${r.created} added, ${r.updated} updated.`);
+    else flash('GitHub sync needs the server running with a GitHub token.');
+    await load(); setGhSyncing(false);
+  };
   const addProject = async () => { if (!projForm.name) return; await svc.addProject(projForm); setProjForm({ ...projForm, name: '' }); load(); };
   const setState = async (id, operating_state) => { await svc.updateProject(id, { operating_state }); load(); };
   const setType = async (id, strategic_type) => { await svc.updateProject(id, { strategic_type }); load(); };
@@ -65,7 +73,12 @@ export default function BusinessOS() {
           <h1 className={`text-2xl font-bold flex items-center gap-2 ${isDark ? 'text-white' : 'text-gray-900'}`}><Briefcase className="w-6 h-6 text-blue-400" /> Business &amp; Creation</h1>
           <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>See what's active, and deliberately stop doing things. Ideas land without becoming obligations.</p>
         </div>
-        {notice && <span className="text-xs px-3 py-1.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 max-w-xs">{notice}</span>}
+        <div className="flex items-center gap-2">
+          {notice && <span className="text-xs px-3 py-1.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 max-w-xs">{notice}</span>}
+          <button onClick={syncGitHub} disabled={ghSyncing} className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm ${card} ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+            <Github className="w-4 h-4" /> {ghSyncing ? 'Syncing…' : 'Sync GitHub'}
+          </button>
+        </div>
       </div>
 
       {/* capacity banner */}

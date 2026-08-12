@@ -8,6 +8,7 @@
 import * as hs from '../lib/highest-self-db.js';
 import * as oura from '../lib/oura-adapter.js';
 import * as hybridJournal from '../lib/hybrid-journal-adapter.js';
+import * as githubPortfolio from '../lib/github-portfolio.js';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -200,6 +201,16 @@ export function registerHighestSelfRoutes(app) {
   app.put('/api/hs/ideas/:id', (req, res) => { try { res.json(hs.updateIdea(+req.params.id, req.body || {})); } catch (e) { fail(res, e); } });
   app.delete('/api/hs/ideas/:id', (req, res) => { try { res.json(hs.deleteIdea(+req.params.id)); } catch (e) { fail(res, e); } });
   app.post('/api/hs/ideas/:id/promote', (req, res) => { try { res.json(hs.promoteIdea(+req.params.id, req.body || {})); } catch (e) { fail(res, e); } });
+
+  // Sync GitHub repos into projects (commit activity != strategic value).
+  app.post('/api/hs/projects/sync-github', async (req, res) => {
+    try {
+      const portfolio = await githubPortfolio.getPortfolio(req.body?.refresh === true);
+      const repos = portfolio?.repos || portfolio?.projects || portfolio?.items || [];
+      const result = hs.upsertProjectsFromRepos(repos);
+      res.json({ ok: true, ...result, source: 'github' });
+    } catch (e) { fail(res, e); }
+  });
 
   // ---------- TODAY (aggregated glance) ----------
   app.get('/api/hs/today', (req, res) => { try { res.json(hs.todayBrief(req.query.date)); } catch (e) { fail(res, e); } });

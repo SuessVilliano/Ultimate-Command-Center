@@ -317,6 +317,11 @@ export async function promoteIdea(id, opts = {}) {
   }
 }
 
+export async function syncGitHubProjects(refresh = false) {
+  try { return await api('/api/hs/projects/sync-github', { method: 'POST', body: { refresh } }); }
+  catch { return { ok: false, reason: 'server_unavailable' }; }
+}
+
 /* ---------------- TODAY ---------------- */
 export async function getTodayBrief(date) {
   try { return await api(`/api/hs/today${date ? `?date=${date}` : ''}`); }

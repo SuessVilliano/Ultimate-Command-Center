@@ -849,6 +849,34 @@ function seedProjectsIfEmpty() {
 }
 
 /**
+ * Upsert projects from GitHub repos (dedup by repo_url, else by name).
+ * Commit activity informs last_activity — but never sets strategic value.
+ */
+export function upsertProjectsFromRepos(repos = []) {
+  const existing = listProjects();
+  let created = 0, updated = 0;
+  for (const r of repos) {
+    const repoUrl = r.url || r.html_url || r.repo_url || '';
+    const name = r.name || r.repo || 'Untitled repo';
+    const last = r.lastActivity || r.pushed_at || r.updated_at || null;
+    let match = existing.find(p => p.repo_url && repoUrl && p.repo_url === repoUrl)
+      || existing.find(p => p.name && p.name.toLowerCase() === name.toLowerCase());
+    if (match) {
+      updateProject(match.id, { repo_url: repoUrl || match.repo_url, last_activity: last || match.last_activity });
+      updated++;
+    } else {
+      addProject({
+        name, domain: 'creation', strategic_type: 'moonshot', operating_state: 'idea',
+        repo_url: repoUrl, website_url: r.homepage || r.website_url || '', last_activity: last,
+        notes: r.description || '',
+      });
+      created++;
+    }
+  }
+  return { created, updated, total: created + updated };
+}
+
+/**
  * Today brief — one aggregated glance: intention, health/recovery, trading day
  * type, next family anchor, project capacity. Distinguishes evidence vs plan.
  */

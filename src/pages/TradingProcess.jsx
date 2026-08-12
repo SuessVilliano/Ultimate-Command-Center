@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Target, Zap, CheckCircle2, XCircle, Bell, Plus, Activity,
-  ShieldCheck, Webhook, TrendingUp, Copy, Clock
+  ShieldCheck, Webhook, TrendingUp, Copy, Clock, BookOpen
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { API_URL } from '../config';
@@ -31,6 +31,9 @@ export default function TradingProcess() {
   const [trades, setTrades] = useState([]);
   const [adh, setAdh] = useState(null);
   const [tradeForm, setTradeForm] = useState({ symbol: '', direction: 'long', pnl: '', on_setup: true, followed_plan: true, setup_type: 'order_block', alert_id: '' });
+  const [hjStatus, setHjStatus] = useState(null);
+  const [hjSyncing, setHjSyncing] = useState(false);
+  const [notice, setNotice] = useState('');
 
   const dayName = new Date().toLocaleDateString('en-US', { weekday: 'long' });
   const dt = DAY_TYPES[dayName] || DAY_TYPES.Monday;
@@ -42,9 +45,17 @@ export default function TradingProcess() {
     setTrades(await svc.getTrades(50));
     setAdh(await svc.getAdherence(30));
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); (async () => setHjStatus(await svc.getHybridJournalStatus()))(); }, []);
 
   const webhookUrl = `${API_URL}/api/hs/trading/webhook`;
+  const flash = (m) => { setNotice(m); setTimeout(() => setNotice(''), 3500); };
+  const syncHJ = async () => {
+    setHjSyncing(true);
+    const r = await svc.syncHybridJournal(200);
+    if (r?.ok) flash(`Hybrid Journal synced — ${r.imported} new trades imported.`);
+    else flash(r?.reason === 'not_configured' ? 'Set HYBRID_JOURNAL_TOKEN + URL on the server first.' : `Sync failed: ${r?.reason || 'unknown'}`);
+    await load(); setHjSyncing(false);
+  };
 
   const markAlert = async (id, status) => { await svc.setAlertStatus(id, status); setAlerts(await svc.getAlerts(50)); };
   const logTrade = async () => {
@@ -71,7 +82,11 @@ export default function TradingProcess() {
           <h1 className={`text-2xl font-bold flex items-center gap-2 ${isDark ? 'text-white' : 'text-gray-900'}`}><Target className="w-6 h-6 text-teal-400" /> Trading Process</h1>
           <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Did I trade my setup — or did I trade random? Process over P&amp;L.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {notice && <span className="text-xs px-3 py-1.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 max-w-xs">{notice}</span>}
+          <button onClick={syncHJ} disabled={hjSyncing} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border ${hjStatus?.configured ? 'border-teal-500/40 text-teal-400' : isDark ? 'border-[#243130] text-gray-400' : 'border-gray-200 text-gray-500'}`}>
+            <BookOpen className="w-3 h-3" /> {hjSyncing ? 'Syncing…' : hjStatus?.configured ? 'Sync Hybrid Journal' : 'Connect Hybrid Journal'}
+          </button>
           <span className="px-3 py-1.5 rounded-full text-xs font-semibold text-white" style={{ background: ts.c }}>{dayName}: {ts.t}</span>
           <span className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${tradingClosed ? 'border-red-500/40 text-red-400' : 'border-teal-500/40 text-teal-400'}`}>
             <Clock className="w-3 h-3 inline mr-1" />{tradingClosed ? 'Trading Closed (after 12pm)' : 'Session Open'}
