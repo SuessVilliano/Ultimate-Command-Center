@@ -62,9 +62,9 @@ function AdminPanel() {
     );
   }
 
-  const handleCreateUser = (e) => {
+  const handleCreateUser = async (e) => {
     e.preventDefault();
-    const result = createUser({
+    const result = await createUser({
       ...newUser,
       agentName: newUser.agentName || newUser.name
     });
@@ -88,9 +88,9 @@ function AdminPanel() {
     setTimeout(() => setMessage({ type: '', text: '' }), 3000);
   };
 
-  const handleUpdateUser = (e) => {
+  const handleUpdateUser = async (e) => {
     e.preventDefault();
-    const result = updateUser(editingUser.id, editingUser);
+    const result = await updateUser(editingUser.id, editingUser);
 
     if (result.success) {
       setMessage({ type: 'success', text: 'User updated successfully!' });
@@ -102,9 +102,9 @@ function AdminPanel() {
     setTimeout(() => setMessage({ type: '', text: '' }), 3000);
   };
 
-  const handleResetPassword = (e) => {
+  const handleResetPassword = async (e) => {
     e.preventDefault();
-    const result = resetPassword(resetPasswordUser.id, newPassword);
+    const result = await resetPassword(resetPasswordUser.id, newPassword);
 
     if (result.success) {
       setMessage({ type: 'success', text: `Password reset for "${resetPasswordUser.username}"` });

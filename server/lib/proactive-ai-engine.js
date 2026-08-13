@@ -142,10 +142,17 @@ export function initProactiveEngine(options = {}) {
     clearInterval(proactiveState.checkInterval);
   }
 
-  proactiveState.checkInterval = setInterval(
-    () => runProactiveCheck(),
-    checkIntervalMinutes * 60 * 1000
-  );
+  // Wrap so an exception inside a check doesn't kill the interval silently.
+  proactiveState.checkInterval = setInterval(() => {
+    try {
+      const maybePromise = runProactiveCheck();
+      if (maybePromise && typeof maybePromise.catch === 'function') {
+        maybePromise.catch(e => console.error('[Proactive] check failed:', e.message));
+      }
+    } catch (e) {
+      console.error('[Proactive] check threw synchronously:', e.message);
+    }
+  }, checkIntervalMinutes * 60 * 1000);
 
   proactiveState.isRunning = true;
   proactiveState.enableAutoActions = enableAutoActions;
@@ -198,7 +205,7 @@ async function runProactiveCheck() {
     // Auto-draft responses for any open tickets missing drafts
     let autoDraftCount = 0;
     try {
-      const openTickets = platformData.tickets.filter(t => [2, 3, 6, 7].includes(t.status));
+      const openTickets = platformData.tickets.filter(t => [2, 3, 8].includes(t.status));
       if (openTickets.length > 0) {
         const pipeline = await import('./ticket-pipeline.js');
         for (const ticket of openTickets) {
@@ -365,7 +372,7 @@ async function runProactiveRules(data) {
   }
 
   // Check tickets for urgent issues
-  for (const ticket of data.tickets.filter(t => [2, 3, 6, 7].includes(t.status))) {
+  for (const ticket of data.tickets.filter(t => [2, 3, 8].includes(t.status))) {
     if (PROACTIVE_RULES.URGENT_TICKET.check(ticket, ticket.analysis)) {
       issues.push({
         type: 'URGENT_TICKET',
@@ -379,7 +386,7 @@ async function runProactiveRules(data) {
   }
 
   // Check for ticket patterns
-  const activeTickets = data.tickets.filter(t => [2, 3, 6, 7].includes(t.status));
+  const activeTickets = data.tickets.filter(t => [2, 3, 8].includes(t.status));
   const patterns = PROACTIVE_RULES.TICKET_PATTERN.check(activeTickets);
   for (const [category, count] of patterns) {
     issues.push({
@@ -474,8 +481,8 @@ function buildAIContext(data, issues) {
     context += `- ${t.name || t.title} [${t.status || 'pending'}] in ${t.projectName || 'Unknown project'}\n`;
   });
 
-  context += `\n== ACTIVE TICKETS (${data.tickets.filter(t => [2,3,6,7].includes(t.status)).length}) ==\n`;
-  data.tickets.filter(t => [2,3,6,7].includes(t.status)).slice(0, 5).forEach(t => {
+  context += `\n== ACTIVE TICKETS (${data.tickets.filter(t => [2, 3, 8].includes(t.status)).length}) ==\n`;
+  data.tickets.filter(t => [2, 3, 8].includes(t.status)).slice(0, 5).forEach(t => {
     context += `- #${t.id}: ${t.subject} (Urgency: ${t.analysis?.URGENCY_SCORE || 'N/A'})\n`;
   });
 

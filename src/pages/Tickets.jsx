@@ -36,6 +36,7 @@ import {
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import DraftQueue from '../components/DraftQueue';
+import SmartQueue from '../components/SmartQueue';
 import PortingTool from '../components/PortingTool';
 import { aiService } from '../services/aiService';
 
@@ -1580,6 +1581,14 @@ function Tickets() {
             ))}
           </div>
         )}
+      </div>
+
+      {/* Smart Queue — prioritized New / Recent / Ready / Needs-you with one-click copy */}
+      <div className="mt-4">
+        <SmartQueue isDark={isDark} onSelectTicket={(ticketId) => {
+          const ticket = tickets.find(t => t.id === ticketId);
+          if (ticket) handleSelectTicket(ticket);
+        }} />
       </div>
 
       {/* Draft Queue */}

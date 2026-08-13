@@ -27,7 +27,7 @@ function getFreshdeskConfig() {
 /**
  * Fetch tickets directly from Freshdesk API (fallback when DB is empty)
  */
-async function fetchFreshdeskTicketsDirect(statuses = [2, 3, 6, 7]) {
+async function fetchFreshdeskTicketsDirect(statuses = [2, 3, 8]) {
   const config = getFreshdeskConfig();
   if (!config.domain || !config.apiKey) {
     console.log('Freshdesk not configured for direct fetch');
@@ -102,14 +102,13 @@ function normalizeFreshdeskTicket(ticket) {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Status code mapping
+// Status code mapping (matches this Freshdesk account's actual status IDs)
 const STATUS_MAP = {
   2: 'Open',
   3: 'Pending',
   4: 'Resolved',
   5: 'Closed',
-  6: 'Waiting on Customer',
-  7: 'Waiting on Third Party'
+  8: 'On-Hold'
 };
 
 // Priority mapping
@@ -137,13 +136,13 @@ export async function generateReportData() {
   console.log('Generating daily report data...');
 
   // Get all open/pending tickets with their analysis
-  let tickets = getAllTicketsWithAnalysis([2, 3, 6, 7]) || [];
+  let tickets = getAllTicketsWithAnalysis([2, 3, 8]) || [];
 
   // FALLBACK: If DB is empty, fetch directly from Freshdesk API
   if (tickets.length === 0) {
     console.log('No tickets in database, fetching directly from Freshdesk...');
     try {
-      const freshdeskTickets = await fetchFreshdeskTicketsDirect([2, 3, 6, 7]);
+      const freshdeskTickets = await fetchFreshdeskTicketsDirect([2, 3, 8]);
       if (freshdeskTickets.length > 0) {
         console.log(`Fetched ${freshdeskTickets.length} tickets directly from Freshdesk`);
         tickets = freshdeskTickets.map(normalizeFreshdeskTicket);
@@ -693,15 +692,19 @@ export function cleanupOldReports(keepCount = 30) {
  */
 export async function sendReportToTelegram(reportData = null) {
   const TELEGRAM_CONFIG = {
-    botToken: process.env.TELEGRAM_BOT_TOKEN || '8301866763:AAG_449bdRcxGSlH-YiN-feMCBfmRYXu5Kw',
-    chatId: process.env.TELEGRAM_CHAT_ID || '364565164'
+    botToken: process.env.TELEGRAM_BOT_TOKEN || '',
+    chatId: process.env.TELEGRAM_CHAT_ID || ''
   };
+  if (!TELEGRAM_CONFIG.botToken || !TELEGRAM_CONFIG.chatId) {
+    console.log('[Telegram] Skipping send — TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set.');
+    return { success: false, reason: 'not_configured' };
+  }
 
   try {
     // Generate report data if not provided
     const data = reportData || await generateReportData();
     const timestamp = new Date().toLocaleString('en-US', {
-      timeZone: 'America/New_York',
+      timeZone: process.env.SCHEDULE_TIMEZONE || 'America/Chicago',
       weekday: 'short',
       month: 'short',
       day: 'numeric',
@@ -812,18 +815,22 @@ export async function sendReportToTelegram(reportData = null) {
  */
 export async function sendQuickStatusToTelegram() {
   const TELEGRAM_CONFIG = {
-    botToken: process.env.TELEGRAM_BOT_TOKEN || '8301866763:AAG_449bdRcxGSlH-YiN-feMCBfmRYXu5Kw',
-    chatId: process.env.TELEGRAM_CHAT_ID || '364565164'
+    botToken: process.env.TELEGRAM_BOT_TOKEN || '',
+    chatId: process.env.TELEGRAM_CHAT_ID || ''
   };
+  if (!TELEGRAM_CONFIG.botToken || !TELEGRAM_CONFIG.chatId) {
+    console.log('[Telegram] Skipping send — TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set.');
+    return { success: false, reason: 'not_configured' };
+  }
 
   try {
-    const tickets = getAllTicketsWithAnalysis([2, 3, 6, 7]) || [];
+    const tickets = getAllTicketsWithAnalysis([2, 3, 8]) || [];
     const urgentCount = tickets.filter(t =>
       t.priority === 4 || (t.urgency_score && t.urgency_score >= 7)
     ).length;
 
     const timestamp = new Date().toLocaleString('en-US', {
-      timeZone: 'America/New_York',
+      timeZone: process.env.SCHEDULE_TIMEZONE || 'America/Chicago',
       hour: 'numeric',
       minute: '2-digit'
     });

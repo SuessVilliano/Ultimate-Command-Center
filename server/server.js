@@ -63,18 +63,86 @@ const app = express();
 const PORT = process.env.PORT || 3005;
 
 // Multer configuration for file uploads
+const ALLOWED_UPLOAD_EXTS = new Set([
+  '.pdf', '.csv', '.txt', '.json', '.md', '.docx', '.xlsx',
+  '.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg',
+  '.mp3', '.wav', '.m4a', '.ogg', '.webm',
+  '.mp4', '.mov'
+]);
+const ALLOWED_UPLOAD_MIME_PREFIXES = ['image/', 'audio/', 'video/', 'text/'];
+const ALLOWED_UPLOAD_MIME = new Set([
+  'application/pdf',
+  'application/json',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/octet-stream'
+]);
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
   fileFilter: (req, file, cb) => {
-    // Allow all file types
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    const mime = (file.mimetype || '').toLowerCase();
+    const safeName = /^[\w\-.\s()]+$/.test(file.originalname || '');
+    const extOk = ALLOWED_UPLOAD_EXTS.has(ext);
+    const mimeOk = ALLOWED_UPLOAD_MIME.has(mime) || ALLOWED_UPLOAD_MIME_PREFIXES.some(p => mime.startsWith(p));
+    if (!safeName) return cb(new Error('Unsafe filename'));
+    if (!extOk || !mimeOk) return cb(new Error(`File type not allowed (${ext} / ${mime})`));
     cb(null, true);
   }
 });
 
-// Middleware
-app.use(cors());
+// Middleware — CORS restricted to local dev origins. Extend via CORS_ORIGINS env (comma-separated).
+const DEFAULT_CORS_ORIGINS = ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:5174', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173', 'http://127.0.0.1:5174'];
+const ALLOWED_CORS_ORIGINS = new Set([
+  ...DEFAULT_CORS_ORIGINS,
+  ...((process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean))
+]);
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true); // same-origin, curl, server-to-server
+    if (ALLOWED_CORS_ORIGINS.has(origin)) return cb(null, true);
+    // Don't throw — just refuse to set CORS headers. Browsers block the response;
+    // curl/server-to-server traffic isn't affected. Real access control for sensitive
+    // routes is `requireLocal`, applied per-route below.
+    cb(null, false);
+  },
+  credentials: true
+}));
 app.use(express.json({ limit: '10mb' }));
+
+// Normalize multer upload errors → 400 (instead of default 500 HTML stack trace).
+// Registered at end of middleware chain, after all routes — see bottom of file.
+function multerErrorHandler(err, req, res, next) {
+  if (err && (err.code === 'LIMIT_FILE_SIZE' || /file type|filename/i.test(err.message || ''))) {
+    return res.status(400).json({ error: err.message });
+  }
+  next(err);
+}
+
+// safeId — parse req.params.id as a positive integer, return null if invalid.
+// Replaces ad-hoc `safeId(req)` which silently coerces "abc" to NaN
+// and lets it flow into DB queries.
+function safeId(req) {
+  const raw = req?.params?.id;
+  if (raw == null) return null;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 0 || String(n) !== String(raw).trim()) return null;
+  return n;
+}
+
+// requireLocal — gate sensitive routes that handle secrets (API keys, settings dump).
+// Only allows requests from loopback or whitelisted origins. Frontend running on
+// localhost:3000 passes; external machines and the public internet do not.
+function requireLocal(req, res, next) {
+  const ip = req.ip || req.socket?.remoteAddress || '';
+  const isLoopback = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1' || ip.endsWith(':127.0.0.1');
+  const origin = req.headers.origin || '';
+  const isLocalOrigin = !origin || ALLOWED_CORS_ORIGINS.has(origin);
+  if (isLoopback && isLocalOrigin) return next();
+  return res.status(403).json({ error: 'Forbidden: this endpoint is restricted to local clients' });
+}
 
 // ============================================
 // INITIALIZATION
@@ -108,7 +176,7 @@ const aiStatus = ai.initAIProviders({
   geminiKey: process.env.GEMINI_API_KEY,
   kimiKey: process.env.KIMI_API_KEY || process.env.NVIDIA_API_KEY,
   groqKey: process.env.GROQ_API_KEY,
-  provider: process.env.AI_PROVIDER || 'gemini'
+  provider: process.env.AI_PROVIDER || 'ollama'
 });
 console.log('AI Providers:', aiStatus);
 
@@ -155,6 +223,108 @@ if (scheduleEnabled) {
   scheduler.startScheduledJobs(true);
 } else {
   console.log('Scheduled jobs: Disabled (set SCHEDULE_ENABLED=true to enable)');
+}
+
+// Start the continuous "around the clock" drafting worker.
+// Enabled by default now that the free local engine (Ollama) costs no credits.
+// Disable with WORKER_ENABLED=false; tune with WORKER_INTERVAL_MINUTES.
+let workerEnabled = process.env.WORKER_ENABLED !== 'false';
+let workerInterval = parseInt(process.env.WORKER_INTERVAL_MINUTES) || 10;
+try {
+  const persisted = db.getSetting('worker_enabled', null);
+  if (persisted !== null) workerEnabled = persisted === 'true';
+  const persistedInterval = parseInt(db.getSetting('worker_interval_minutes', null));
+  if (persistedInterval) workerInterval = persistedInterval;
+} catch (e) {}
+// Push a live "queue updated" event whenever the background worker finishes a cycle.
+scheduler.onWorkerComplete((status) => broadcastEvent('queue.updated', { worker: status }));
+
+const freshdeskReady = !!(process.env.FRESHDESK_DOMAIN && process.env.FRESHDESK_API_KEY);
+if (workerEnabled && freshdeskReady) {
+  scheduler.startContinuousWorker(workerInterval);
+} else {
+  console.log(`Continuous worker: ${workerEnabled ? 'waiting (Freshdesk not configured — set FRESHDESK_DOMAIN/API_KEY)' : 'disabled (WORKER_ENABLED=false)'}`);
+}
+
+/**
+ * Build the smart prioritized queue: merge open tickets with their latest draft and
+ * bucket each into New / Recent / Ready-to-copy / Needs-you so the user can clear the
+ * queue fast instead of staring at a flat list. Each ticket gets ONE primary bucket
+ * (priority: needs_you > ready > new > recent > waiting).
+ */
+function buildPriorityQueue() {
+  const DAY = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  let tickets = [];
+  try { tickets = db.getAllTicketsWithAnalysis([2, 3, 8]) || []; } catch (e) { tickets = []; }
+
+  const buckets = { needs_you: [], ready: [], new: [], recent: [], waiting: [] };
+
+  for (const t of tickets) {
+    let draft = null;
+    try { draft = db.getDraftForTicket(t.id); } catch (e) {}
+    const analysis = t.analysis || t || {};
+    const urgency = Number(analysis.URGENCY_SCORE ?? analysis.urgency_score ?? 0) || 0;
+    const escalationType = analysis.ESCALATION_TYPE || analysis.escalation_type || null;
+    const createdMs = t.created_at ? new Date(t.created_at).getTime() : 0;
+    const updatedMs = t.updated_at ? new Date(t.updated_at).getTime() : createdMs;
+    const isNew = createdMs && (now - createdMs) < DAY;
+    const isRecent = updatedMs && (now - updatedMs) < DAY;
+
+    const draftStatus = draft?.status || null;
+    const draftReady = draft && draftStatus === 'PENDING_REVIEW' && (draft.qa_passed === 1 || draft.qa_passed === null);
+    const needsAttention =
+      draftStatus === 'NEEDS_EDIT' ||
+      draftStatus === 'ESCALATION_RECOMMENDED' ||
+      urgency >= 8 ||
+      ['DEV', 'TWILIO', 'BUG'].includes(escalationType);
+
+    const item = {
+      ticketId: t.id,
+      freshdeskId: t.freshdesk_id,
+      subject: t.subject,
+      requester: t.requester_name || t.requester_email || null,
+      status: t.status,
+      urgency,
+      escalationType,
+      summary: analysis.summary || analysis.SUMMARY || null,
+      createdAt: t.created_at,
+      updatedAt: t.updated_at,
+      hasDraft: !!draft,
+      draftId: draft?.id || null,
+      draftStatus,
+      draftText: draft?.draft_text || null,
+      draftReady: !!draftReady
+    };
+
+    let bucket;
+    if (needsAttention) bucket = 'needs_you';
+    else if (draftReady) bucket = 'ready';
+    else if (isNew) bucket = 'new';
+    else if (isRecent) bucket = 'recent';
+    else bucket = 'waiting';
+    item.bucket = bucket;
+    buckets[bucket].push(item);
+  }
+
+  // Sort each bucket: highest urgency first, then most recently updated.
+  for (const key of Object.keys(buckets)) {
+    buckets[key].sort((a, b) => (b.urgency - a.urgency) || (new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0)));
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    counts: {
+      needs_you: buckets.needs_you.length,
+      ready: buckets.ready.length,
+      new: buckets.new.length,
+      recent: buckets.recent.length,
+      waiting: buckets.waiting.length,
+      total: tickets.length
+    },
+    buckets,
+    worker: scheduler.getWorkerStatus()
+  };
 }
 
 // Initialize Proactive AI Engine — DISABLED by default to save API quota
@@ -226,7 +396,11 @@ app.post('/api/ai/switch', (req, res) => {
   try {
     const { provider, model } = req.body;
     const result = ai.switchProvider(provider, model);
-    rag.switchLangChainModel(provider);
+    // LangChain (used for RAG retrieval) only knows the cloud providers; local engines
+    // answer through ai.chat() directly, so don't let an unknown provider break the switch.
+    try { rag.switchLangChainModel(provider); } catch (e) {
+      console.log(`LangChain has no adapter for ${provider} (using direct engine) — ${e.message}`);
+    }
     res.json({ success: true, ...result });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -234,7 +408,7 @@ app.post('/api/ai/switch', (req, res) => {
 });
 
 // Update API key
-app.post('/api/ai/key', (req, res) => {
+app.post('/api/ai/key', requireLocal, (req, res) => {
   try {
     const { provider, apiKey } = req.body;
 
@@ -263,6 +437,37 @@ app.post('/api/ai/key', (req, res) => {
   } catch (error) {
     console.error('Error updating API key:', error);
     res.status(400).json({ error: error.message });
+  }
+});
+
+// Configure a local / login-based engine (Ollama, Claude CLI, Gemini CLI).
+// Body: { provider: 'ollama'|'claude-cli'|'gemini-cli', enabled?, baseUrl?, model?, command? }
+// These need NO API key — they run on the user's machine for free.
+app.post('/api/ai/local', (req, res) => {
+  try {
+    const { provider, ...patch } = req.body || {};
+    if (!['ollama', 'claude-cli', 'gemini-cli'].includes(provider)) {
+      return res.status(400).json({ error: 'provider must be ollama, claude-cli, or gemini-cli' });
+    }
+    const config = ai.configureLocalProvider(provider, patch);
+    res.json({ success: true, provider, config });
+  } catch (error) {
+    console.error('Error configuring local engine:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Health-check a local engine so Settings can show green/red status.
+app.get('/api/ai/local/check', async (req, res) => {
+  try {
+    const provider = req.query.provider;
+    if (!['ollama', 'claude-cli', 'gemini-cli'].includes(provider)) {
+      return res.status(400).json({ error: 'provider must be ollama, claude-cli, or gemini-cli' });
+    }
+    const result = await ai.checkLocalEngine(provider);
+    res.json({ provider, ...result });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
   }
 });
 
@@ -468,7 +673,7 @@ app.post('/api/casebook/search', (req, res) => {
 // Delete casebook entry
 app.delete('/api/casebook/:id', (req, res) => {
   try {
-    db.deleteCasebookEntry(parseInt(req.params.id));
+    db.deleteCasebookEntry(safeId(req));
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -507,7 +712,7 @@ app.get('/api/drafts', (req, res) => {
 app.get('/api/drafts/:id', (req, res) => {
   try {
     const dbInstance = db.getDb();
-    const draft = dbInstance.prepare('SELECT * FROM drafts WHERE id = ?').get(parseInt(req.params.id));
+    const draft = dbInstance.prepare('SELECT * FROM drafts WHERE id = ?').get(safeId(req));
     if (!draft) return res.status(404).json({ error: 'Draft not found' });
 
     // Parse JSON fields
@@ -544,7 +749,7 @@ app.patch('/api/drafts/:id/status', async (req, res) => {
       return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
     }
 
-    db.updateDraftStatus(parseInt(req.params.id), status, reviewed_by || 'human');
+    db.updateDraftStatus(safeId(req), status, reviewed_by || 'human');
 
     // Emit event
     try {
@@ -552,7 +757,7 @@ app.patch('/api/drafts/:id/status', async (req, res) => {
       const eventType = status === 'APPROVED' ? eventBus.EVENTS.DRAFT_APPROVED
         : status === 'REJECTED' ? eventBus.EVENTS.DRAFT_REJECTED
         : eventBus.EVENTS.DRAFT_CREATED;
-      eventBus.emit(eventType, { draftId: parseInt(req.params.id), status });
+      eventBus.emit(eventType, { draftId: safeId(req), status });
     } catch (e) {}
 
     res.json({ success: true, status });
@@ -574,7 +779,7 @@ app.get('/api/drafts/stats', (req, res) => {
 // Delete a draft
 app.delete('/api/drafts/:id', (req, res) => {
   try {
-    db.deleteDraft(parseInt(req.params.id));
+    db.deleteDraft(safeId(req));
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -676,7 +881,7 @@ app.get('/api/briefing/god-mode', async (req, res) => {
     ]);
 
     // Get ticket queue from DB
-    const openTickets = db.getTicketsByStatus([2, 3, 6, 7]);
+    const openTickets = db.getTicketsByStatus([2, 3, 8]);
     const urgentTickets = openTickets.filter(t => t.priority >= 3);
 
     // Get proactive state if available
@@ -863,7 +1068,7 @@ app.post('/api/intent', async (req, res) => {
           };
           // Just gather the data directly
           const draftStats = db.getDraftStats();
-          const openTickets = db.getTicketsByStatus([2, 3, 6, 7]);
+          const openTickets = db.getTicketsByStatus([2, 3, 8]);
           resolve({
             type: 'god_brief',
             priorities: [],
@@ -880,7 +1085,7 @@ app.post('/api/intent', async (req, res) => {
       }
 
       case 'tickets_focus': {
-        const statuses = params.new_only ? [2] : [2, 3, 6, 7];
+        const statuses = params.new_only ? [2] : [2, 3, 8];
         const tickets = db.getTicketsByStatus(statuses);
         const filtered = params.sla_risk === 'high'
           ? tickets.filter(t => t.priority >= 3)
@@ -1203,9 +1408,9 @@ app.post('/api/voice', async (req, res) => {
     try {
       const ticketsWithAnalysis = db.getAllTicketsWithAnalysis();
       const tickets = ticketsWithAnalysis.map(t => t.ticket ? JSON.parse(t.ticket) : t);
-      const active = tickets.filter(t => [2, 3, 6, 7].includes(t.status));
+      const active = tickets.filter(t => [2, 3, 8].includes(t.status));
       if (active.length > 0) {
-        const statusLabels = { 2: 'Open', 3: 'Pending', 6: 'Waiting on Customer', 7: 'On Hold' };
+        const statusLabels = { 2: 'Open', 3: 'Pending', 4: 'Resolved', 5: 'Closed', 8: 'On-Hold' };
         const ticketList = active.slice(0, 15).map(t =>
           `#${t.id}: ${t.subject} (${statusLabels[t.status] || 'Unknown'}) - ${t.source || 'Freshdesk'}`
         ).join('\n');
@@ -1866,7 +2071,7 @@ app.post('/api/chat', async (req, res) => {
     const ticketKeywords = /ticket|freshdesk|open.*ticket|pending|support.*queue|how many|escalat/i;
     if (ticketKeywords.test(message)) {
       try {
-        const ticketsWithAnalysis = db.getAllTicketsWithAnalysis([2, 3, 6, 7]);
+        const ticketsWithAnalysis = db.getAllTicketsWithAnalysis([2, 3, 8]);
         if (ticketsWithAnalysis && ticketsWithAnalysis.length > 0) {
           let ticketContext = `\n\nREAL FRESHDESK TICKET DATA (use ONLY these real ticket numbers — NEVER make up ticket IDs):\n`;
           ticketContext += `Active tickets: ${ticketsWithAnalysis.length}\n`;
@@ -1904,6 +2109,51 @@ app.post('/api/chat', async (req, res) => {
     });
   } catch (error) {
     console.error('Chat error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Focus-mode chat: natural conversation grounded in a chosen slice of the command center.
+// Body: { message, focus, conversationId, userId, voice }
+// The AI gets real ticket data + prepared drafts for the focus so it can summarize and
+// work toward resolution accurately — e.g. "let's focus on GHL tickets".
+app.post('/api/commander/focus', async (req, res) => {
+  try {
+    const { message, focus = '', conversationId, userId, voice } = req.body || {};
+    if (!message) return res.status(400).json({ error: 'Message is required' });
+
+    const convId = conversationId || memory.getActiveConversation(userId || 'default');
+    const history = memory.getConversationHistory(convId, 12);
+    const messages = [
+      ...history.map(h => ({ role: h.role, content: h.content })),
+      { role: 'user', content: message }
+    ];
+
+    // Grounded, real-data context for this focus.
+    let focusContext = '';
+    try { focusContext = buildFocusContext(focus); } catch (e) { console.log('focus context error:', e.message); }
+
+    // Voice answers stay short; text can be fuller. Both stay grounded via commander prompt.
+    const base = getCommanderPrompt(focusContext);
+    const systemPrompt = voice
+      ? `${base}\n\nYou are on a VOICE call — keep replies to 1-3 natural sentences. When the user wants to act on a ticket, tell them the prepared draft is ready to copy in the queue.`
+      : base;
+
+    memory.addMessage(convId, 'user', message, { focus });
+
+    const result = await ai.chat(messages, { systemPrompt, agentId: 'commander-focus' });
+
+    memory.addMessage(convId, 'assistant', result.text, { provider: result.provider, model: result.model });
+
+    res.json({
+      response: result.text,
+      provider: result.provider,
+      model: result.model,
+      conversationId: convId,
+      focus
+    });
+  } catch (error) {
+    console.error('Focus chat error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1950,7 +2200,7 @@ app.get('/api/tickets/summary', async (req, res) => {
     }
 
     const stats = {
-      total: tickets.filter(t => [2, 3, 6, 7].includes(t.status)).length,
+      total: tickets.filter(t => [2, 3, 8].includes(t.status)).length,
       open: open.length,
       pending: pending.length,
       waiting: waiting.length,
@@ -2133,6 +2383,70 @@ app.post('/api/knowledge/ask', async (req, res) => {
   }
 });
 
+// ---- Live event stream (SSE) so the UI "listens" instead of polling ----
+const sseClients = new Set();
+
+/**
+ * Push an event to every connected dashboard. Used when a ticket changes, a draft is
+ * ready, or the worker finishes — so the Smart Queue updates the instant something happens.
+ */
+function broadcastEvent(type, data = {}) {
+  const payload = `event: ${type}\ndata: ${JSON.stringify({ type, ...data, at: new Date().toISOString() })}\n\n`;
+  for (const res of sseClients) {
+    try { res.write(payload); } catch (e) { sseClients.delete(res); }
+  }
+}
+
+/**
+ * Build a grounded context block for voice/chat "focus mode".
+ * `focus` is a free-text area the user wants to work (e.g. "ghl tickets", "urgent", "new").
+ * Returns real ticket data + prepared drafts so the AI can summarize and work resolutions
+ * accurately instead of guessing. Caps size to stay within token limits.
+ */
+function buildFocusContext(focus = '') {
+  const f = String(focus || '').toLowerCase();
+  const queue = buildPriorityQueue();
+  const wantsGhl = /ghl|highlevel|high level|gohighlevel/.test(f);
+  const wantsUrgent = /urgent|escalat|fire|priority|important/.test(f);
+  const wantsNew = /\bnew\b|just came|recent arriv/.test(f);
+  const wantsReady = /ready|draft|to copy|to send/.test(f);
+
+  // Pick the most relevant tickets for this focus.
+  let pool = [
+    ...queue.buckets.needs_you,
+    ...queue.buckets.ready,
+    ...queue.buckets.new,
+    ...queue.buckets.recent
+  ];
+  if (wantsUrgent) pool = queue.buckets.needs_you;
+  else if (wantsNew) pool = [...queue.buckets.new, ...queue.buckets.recent];
+  else if (wantsReady) pool = queue.buckets.ready;
+  if (wantsGhl) {
+    const ghlMatch = pool.filter(t => /ghl|highlevel|high ?level|sub.?account|location|snapshot|twilio/i.test(`${t.subject} ${t.summary || ''} ${t.escalationType || ''}`));
+    if (ghlMatch.length) pool = ghlMatch;
+  }
+
+  const focused = pool.slice(0, 12);
+  const lines = [];
+  lines.push(`FOCUS: ${focus || 'whole command center'}`);
+  lines.push(`Queue snapshot — Needs you: ${queue.counts.needs_you}, Ready to copy: ${queue.counts.ready}, New: ${queue.counts.new}, Recent: ${queue.counts.recent}, Total open: ${queue.counts.total}`);
+  if (wantsGhl) {
+    lines.push('GHL tools: Freshdesk dashboard, GHL Knowledgebase (help.gohighlevel.com), HQ, Twilio, Slack. Common GHL escalations: TWILIO (phone/A2P), DEV (sub-account/snapshot), BILLING.');
+  }
+  lines.push('\nFOCUSED TICKETS (real data — never invent ticket numbers or details):');
+  if (focused.length === 0) {
+    lines.push('(none match this focus right now)');
+  } else {
+    for (const t of focused) {
+      lines.push(`\n#${t.freshdeskId || t.ticketId} "${t.subject}"`);
+      lines.push(`  requester: ${t.requester || 'unknown'} | urgency: ${t.urgency || 'n/a'} | type: ${t.escalationType || 'n/a'} | draft: ${t.draftStatus || 'none'}`);
+      if (t.summary) lines.push(`  issue: ${t.summary}`);
+      if (t.draftText) lines.push(`  prepared draft: ${String(t.draftText).slice(0, 600)}`);
+    }
+  }
+  return lines.join('\n');
+}
+
 // ============================================
 // SCHEDULER ENDPOINTS
 // ============================================
@@ -2172,6 +2486,136 @@ app.post('/api/schedule/toggle', (req, res) => {
       scheduler.stopScheduledJobs();
     }
     res.json({ enabled, status: scheduler.getScheduleStatus() });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// AROUND-THE-CLOCK WORKER + SMART QUEUE
+// ============================================
+
+// Worker status
+app.get('/api/worker/status', (req, res) => {
+  res.json(scheduler.getWorkerStatus());
+});
+
+// Start/stop the continuous worker; optionally set interval (minutes)
+app.post('/api/worker/toggle', (req, res) => {
+  try {
+    const { enabled, intervalMinutes } = req.body || {};
+    const status = enabled
+      ? scheduler.startContinuousWorker(intervalMinutes)
+      : scheduler.stopContinuousWorker();
+    res.json({ success: true, worker: status });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Run one worker cycle right now (does not change enabled state)
+app.post('/api/worker/run-now', async (req, res) => {
+  try {
+    const result = await scheduler.runScheduledAnalysis('manual-now');
+    res.json({ success: true, stats: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Smart prioritized queue: buckets tickets+drafts into New / Recent / Ready / Needs-you.
+app.get('/api/queue/priority', (req, res) => {
+  try {
+    res.json(buildPriorityQueue());
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// LISTEN: event-driven updates (webhooks + live stream)
+// ============================================
+
+// Live event stream the dashboard subscribes to (Server-Sent Events).
+app.get('/api/stream/events', (req, res) => {
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  res.flushHeaders?.();
+  res.write(`event: connected\ndata: ${JSON.stringify({ ok: true, at: new Date().toISOString() })}\n\n`);
+  sseClients.add(res);
+  // Heartbeat so proxies don't drop the connection.
+  const ping = setInterval(() => {
+    try { res.write(': ping\n\n'); }
+    catch (e) {
+      // SSE client is gone — stop pinging, clear interval, drop from active set.
+      clearInterval(ping);
+      try { sseClients?.delete?.(res); } catch (_) {}
+    }
+  }, 25000);
+  req.on('close', () => { clearInterval(ping); sseClients.delete(res); });
+});
+
+// Freshdesk webhook — fires the instant a ticket is created or updated.
+// Configure in Freshdesk → Admin → Automations → "Trigger a webhook" pointing here.
+// Accepts the ticket id under several common shapes so it's robust to payload config.
+async function handleTicketWebhook(body, reason, res) {
+  try {
+    const fid =
+      body?.freshdesk_id || body?.ticket_id || body?.id ||
+      body?.ticket?.id || body?.freshdesk_webhook?.ticket_id ||
+      body?.data?.ticket?.id;
+    if (!fid) {
+      return res.status(400).json({ error: 'Could not find a ticket id in the webhook payload', received: Object.keys(body || {}) });
+    }
+    // Acknowledge fast; process in the background so Freshdesk doesn't time out.
+    res.json({ ok: true, freshdeskId: fid, queued: true });
+    broadcastEvent('ticket.incoming', { freshdeskId: fid, reason });
+    try {
+      const result = await scheduler.processTicketByFreshdeskId(fid, { reason });
+      const evType = reason === 'created' ? 'ticket.created' : 'ticket.updated';
+      broadcastEvent(evType, result);
+      if (result.drafted) broadcastEvent('draft.ready', result);
+      try {
+        eventBus.emit(reason === 'created' ? eventBus.EVENTS.TICKET_CREATED : eventBus.EVENTS.TICKET_UPDATED, result, { source: 'freshdesk-webhook' });
+      } catch (e) {}
+    } catch (e) {
+      console.error('[Listen] webhook processing failed:', e.message);
+      broadcastEvent('listen.error', { freshdeskId: fid, error: e.message });
+    }
+  } catch (error) {
+    if (!res.headersSent) res.status(500).json({ error: error.message });
+  }
+}
+
+app.post('/api/webhooks/freshdesk', (req, res) => handleTicketWebhook(req.body, req.body?.event || 'updated', res));
+app.post('/api/webhooks/freshdesk/created', (req, res) => handleTicketWebhook(req.body, 'created', res));
+app.post('/api/webhooks/freshdesk/updated', (req, res) => handleTicketWebhook(req.body, 'updated', res));
+
+// Generic "anything about my account" listener — any integration can POST an event here
+// (billing, GHL, Twilio, etc.). It's recorded, broadcast to the UI, and run through the
+// event bus chains. Optionally triggers ticket processing if a ticket id is present.
+app.post('/api/listen/event', async (req, res) => {
+  try {
+    const { source = 'external', type = 'account.event', data = {} } = req.body || {};
+    broadcastEvent(type, { source, ...data });
+    try { eventBus.emit(type, data, { source }); } catch (e) {}
+    const fid = data?.freshdesk_id || data?.ticket_id;
+    if (fid) {
+      // Fire-and-forget by design (we don't want to keep the webhook caller waiting),
+      // but errors must NOT be swallowed silently — surface them via the event stream
+      // and the server log so failures are visible.
+      scheduler.processTicketByFreshdeskId(fid, { reason: type })
+        .then(r => { broadcastEvent('ticket.updated', r); if (r.drafted) broadcastEvent('draft.ready', r); })
+        .catch(err => {
+          console.error(`[Webhook] processTicketByFreshdeskId(${fid}, ${type}) failed:`, err.message);
+          broadcastEvent('ticket.process_failed', { freshdeskId: fid, reason: type, error: err.message });
+        });
+    }
+    res.json({ ok: true, type, source });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -2271,7 +2715,7 @@ app.get('/api/email/status', (req, res) => {
 // ============================================
 
 // Get all settings
-app.get('/api/settings', (req, res) => {
+app.get('/api/settings', requireLocal, (req, res) => {
   try {
     const settings = db.getAllSettings();
     const providerInfo = ai.getCurrentProvider();
@@ -2287,8 +2731,9 @@ app.get('/api/settings', (req, res) => {
   }
 });
 
-// Freshdesk config endpoint — frontend fetches this so key rotation only needs Render env var update
-app.get('/api/config/freshdesk', (req, res) => {
+// Freshdesk config endpoint — local-only. The frontend (running on localhost) reads this once
+// to bootstrap; remote callers get 403. Key rotation still works via FRESHDESK_API_KEY env var.
+app.get('/api/config/freshdesk', requireLocal, (req, res) => {
   res.json({
     domain: process.env.FRESHDESK_DOMAIN || '',
     apiKey: process.env.FRESHDESK_API_KEY || '',
@@ -2297,7 +2742,7 @@ app.get('/api/config/freshdesk', (req, res) => {
 });
 
 // Update setting
-app.post('/api/settings', (req, res) => {
+app.post('/api/settings', requireLocal, (req, res) => {
   try {
     const { key, value } = req.body;
     db.setSetting(key, value);
@@ -2905,7 +3350,7 @@ app.delete('/api/memory/facts/:id', (req, res) => {
   try {
     const dbInstance = db.getDb();
     const stmt = dbInstance.prepare('DELETE FROM memory_facts WHERE id = ?');
-    stmt.run(parseInt(req.params.id));
+    stmt.run(safeId(req));
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -3547,7 +3992,7 @@ app.post('/api/commander/chat', async (req, res) => {
 
     if (tickets.length > 0) {
       // Only include ACTIVE tickets in context to stay within token limits
-      const activeTickets = tickets.filter(t => [2, 3, 6, 7].includes(t.status));
+      const activeTickets = tickets.filter(t => [2, 3, 8].includes(t.status));
       const resolvedCount = tickets.filter(t => [4, 5].includes(t.status)).length;
 
       context += `\n\n=== SUPPORT QUEUE (${activeTickets.length} active, ${resolvedCount} resolved/closed) ===\n`;
@@ -3556,8 +4001,7 @@ app.post('/api/commander/chat', async (req, res) => {
       const statusGroups = {
         'Open': activeTickets.filter(t => t.status === 2),
         'Pending': activeTickets.filter(t => t.status === 3),
-        'Waiting on Customer': activeTickets.filter(t => t.status === 6),
-        'On Hold': activeTickets.filter(t => t.status === 7)
+        'On-Hold': activeTickets.filter(t => t.status === 8)
       };
 
       for (const [status, group] of Object.entries(statusGroups)) {
@@ -3593,7 +4037,7 @@ app.post('/api/commander/chat', async (req, res) => {
       }
 
       context += `\n=== TICKET SUMMARY ===\n`;
-      context += `Total Active: ${tickets.filter(t => [2,3,6,7].includes(t.status)).length}\n`;
+      context += `Total Active: ${tickets.filter(t => [2, 3, 8].includes(t.status)).length}\n`;
       context += `Urgent (8+ urgency): ${urgentCount}\n`;
       context += `Needs Escalation: ${escalationCount}\n`;
     }
@@ -3640,14 +4084,14 @@ app.get('/api/commander/execution-plan', async (req, res) => {
 
     // Build context
     let ticketContext = '';
-    const activeTickets = tickets.filter(t => [2, 3, 6, 7].includes(t.status));
+    const activeTickets = tickets.filter(t => [2, 3, 8].includes(t.status));
 
     for (const ticket of activeTickets) {
       const analysis = analysisMap[String(ticket.id)];
       const parsed = analysis ? (typeof analysis === 'string' ? JSON.parse(analysis) : analysis) : null;
 
       ticketContext += `\nTicket #${ticket.id}: ${ticket.subject}
-  Status: ${['Open', 'Pending', 'Waiting', 'On Hold'][ticket.status - 2] || 'Unknown'}
+  Status: ${ ({2:'Open', 3:'Pending', 4:'Resolved', 5:'Closed', 8:'On-Hold'}[ticket.status]) || 'Unknown' }
   Priority: ${['Low', 'Medium', 'High', 'Urgent'][ticket.priority - 1] || 'Unknown'}
   Requester: ${ticket.requester?.name || 'Unknown'}
   Created: ${ticket.created_at}`;
@@ -4468,7 +4912,7 @@ app.post('/api/inbox', (req, res) => {
 app.post('/api/inbox/:id/read', (req, res) => {
   try {
     const { feedType } = req.body;
-    const result = unifiedInbox.markAsRead(parseInt(req.params.id), feedType);
+    const result = unifiedInbox.markAsRead(safeId(req), feedType);
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -4479,7 +4923,7 @@ app.post('/api/inbox/:id/read', (req, res) => {
 app.post('/api/inbox/:id/snooze', (req, res) => {
   try {
     const { minutes } = req.body;
-    const result = unifiedInbox.snoozeItem(parseInt(req.params.id), minutes || 60);
+    const result = unifiedInbox.snoozeItem(safeId(req), minutes || 60);
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -4490,7 +4934,7 @@ app.post('/api/inbox/:id/snooze', (req, res) => {
 app.post('/api/inbox/:id/dismiss', (req, res) => {
   try {
     const { feedType } = req.body;
-    const result = unifiedInbox.dismissItem(parseInt(req.params.id), feedType);
+    const result = unifiedInbox.dismissItem(safeId(req), feedType);
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -4919,7 +5363,7 @@ app.post('/api/projects', (req, res) => {
 // Update project
 app.put('/api/projects/:id', (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = safeId(req);
     const index = projectsStore.findIndex(p => p.id === id);
     if (index === -1) {
       return res.status(404).json({ error: 'Project not found' });
@@ -4939,7 +5383,7 @@ app.put('/api/projects/:id', (req, res) => {
 // Delete project
 app.delete('/api/projects/:id', (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = safeId(req);
     projectsStore = projectsStore.filter(p => p.id !== id);
     db.setSetting('projects', JSON.stringify(projectsStore));
     res.json({ success: true });
@@ -5129,7 +5573,7 @@ app.post('/api/action-items', (req, res) => {
 
 app.patch('/api/action-items/:id', (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = safeId(req);
     const index = actionItemsStore.findIndex(item => item.id === id);
     if (index !== -1) {
       actionItemsStore[index] = { ...actionItemsStore[index], ...req.body };
@@ -5145,7 +5589,7 @@ app.patch('/api/action-items/:id', (req, res) => {
 
 app.delete('/api/action-items/:id', (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = safeId(req);
     actionItemsStore = actionItemsStore.filter(item => item.id !== id);
     db.setSetting('action_items', JSON.stringify(actionItemsStore));
     res.json({ success: true });
@@ -5567,7 +6011,7 @@ app.get('/api/clickup/sop-log', (req, res) => {
 // Get single SOP log entry
 app.get('/api/clickup/sop-log/:id', (req, res) => {
   try {
-    const entry = db.getSOPLogEntry(parseInt(req.params.id));
+    const entry = db.getSOPLogEntry(safeId(req));
     if (!entry) return res.status(404).json({ error: 'Entry not found' });
     res.json({ success: true, entry });
   } catch (error) {
@@ -5863,7 +6307,7 @@ app.post('/api/trade-signals/webhook', (req, res) => {
 
     // Try to persist to DB
     try {
-      db.saveSetting(`trade_signal_${signal.id}`, JSON.stringify(signal));
+      db.setSetting(`trade_signal_${signal.id}`, JSON.stringify(signal));
     } catch (e) { /* non-critical */ }
 
     console.log(`[TRADE SIGNAL] ${signal.symbol} ${signal.action} @ ${signal.entry} | SL: ${signal.stopLoss} | TP1: ${signal.tp1}`);
@@ -6178,7 +6622,7 @@ app.post('/api/porting/requests', upload.single('billingStatement'), async (req,
 
     // Save to Supabase if available
     try {
-      db.saveSetting(`port_request_${portSid}`, JSON.stringify(requestRecord));
+      db.setSetting(`port_request_${portSid}`, JSON.stringify(requestRecord));
     } catch (e) {
       console.log('Could not save port request to DB:', e.message);
     }
@@ -6423,6 +6867,10 @@ app.post('/api/porting/generate-loa', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Error-handling middleware must come AFTER all routes — Express scans forward
+// for the next 4-arg handler when a middleware calls next(err).
+app.use(multerErrorHandler);
 
 // Create HTTP server and attach WebSocket for streaming
 import { createServer } from 'http';

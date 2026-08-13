@@ -45,7 +45,9 @@ export async function processTicket(ticketId, options = {}) {
       db.saveAnalysis(ticketId, analysis, analysis.provider || 'gemini', analysis.model || '');
       pipelineResult.steps.push({ step: 'triage', result: 'new_analysis', urgency: analysis.URGENCY_SCORE || analysis.urgency_score });
     } catch (e) {
-      analysis = { ESCALATION_TYPE: 'general', URGENCY_SCORE: 5, SUMMARY: ticket.subject };
+      analysis = { ESCALATION_TYPE: 'general', URGENCY_SCORE: 5, SUMMARY: ticket.subject, isFallback: true, fallbackReason: e.message };
+      // Persist the fallback so re-runs don't keep producing duplicate drafts from a fresh fallback.
+      try { db.saveAnalysis(ticketId, analysis, 'fallback', 'rule-based'); } catch (_) {}
       pipelineResult.steps.push({ step: 'triage', result: 'fallback', error: e.message });
     }
   } else {

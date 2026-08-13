@@ -12,6 +12,13 @@ const PROVIDERS = [
   { id: 'kimi', name: 'NVIDIA/Kimi', icon: '🔷', color: 'emerald', description: 'Nemotron/Mixtral' }
 ];
 
+// Local / login-based engines — no API key, no credits. Run on the user's own machine.
+const LOCAL_ENGINES = [
+  { id: 'ollama', name: 'Ollama (Local)', icon: '🦙', color: 'green', description: 'Fully local models — free, runs 24/7 on your computer. No credits ever.' },
+  { id: 'claude-cli', name: 'Claude Subscription', icon: '🟣', color: 'purple', description: 'Uses your logged-in `claude` CLI subscription — no API billing.' },
+  { id: 'gemini-cli', name: 'Gemini CLI', icon: '✴️', color: 'blue', description: 'Uses your `gemini` CLI Google login — free tier, no API key.' }
+];
+
 export default function AISettings({ isDark = true, onClose, onProviderChange }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -42,9 +49,85 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
   const [selectedModel, setSelectedModel] = useState('');
   const [message, setMessage] = useState({ type: '', text: '' });
 
+  // Local engine state: live health checks + editable config (Ollama URL/model, CLI command).
+  const [localChecks, setLocalChecks] = useState({}); // { ollama: { ok, reason, models } }
+  const [localConfig, setLocalConfig] = useState({
+    ollama: { baseUrl: '', model: '' },
+    'claude-cli': { command: '' },
+    'gemini-cli': { command: '' }
+  });
+
   useEffect(() => {
     fetchProviderStatus();
   }, []);
+
+  // Seed editable local config from server status once loaded.
+  useEffect(() => {
+    const local = providerStatus.local;
+    if (!local) return;
+    setLocalConfig({
+      ollama: { baseUrl: local.ollama?.baseUrl || '', model: local.ollama?.model || '' },
+      'claude-cli': { command: local['claude-cli']?.command || '' },
+      'gemini-cli': { command: local['gemini-cli']?.command || '' }
+    });
+  }, [providerStatus.local]);
+
+  const handleToggleLocal = async (engineId, enabled) => {
+    try {
+      setSaving(true);
+      const response = await fetch(`${BACKEND_URL}/api/ai/local`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: engineId, enabled })
+      });
+      if (response.ok) {
+        setMessage({ type: 'success', text: `${engineId} ${enabled ? 'enabled' : 'disabled'}` });
+        await fetchProviderStatus();
+        if (enabled) handleCheckLocal(engineId);
+      } else {
+        const err = await response.json();
+        setMessage({ type: 'error', text: err.error || 'Failed to update engine' });
+      }
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Failed to update engine' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveLocalConfig = async (engineId) => {
+    try {
+      setSaving(true);
+      const patch = engineId === 'ollama'
+        ? { baseUrl: localConfig.ollama.baseUrl || undefined, model: localConfig.ollama.model || undefined }
+        : { command: localConfig[engineId]?.command || undefined };
+      const response = await fetch(`${BACKEND_URL}/api/ai/local`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: engineId, ...patch })
+      });
+      if (response.ok) {
+        setMessage({ type: 'success', text: `${engineId} settings saved` });
+        await fetchProviderStatus();
+        handleCheckLocal(engineId);
+      }
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Failed to save settings' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCheckLocal = async (engineId) => {
+    setLocalChecks(prev => ({ ...prev, [engineId]: { checking: true } }));
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/ai/local/check?provider=${engineId}`);
+      const data = await response.json();
+      setLocalChecks(prev => ({ ...prev, [engineId]: data }));
+    } catch (e) {
+      setLocalChecks(prev => ({ ...prev, [engineId]: { ok: false, reason: 'Check failed' } }));
+    }
+  };
 
   const fetchProviderStatus = async () => {
     try {
@@ -181,10 +264,93 @@ export default function AISettings({ isDark = true, onClose, onProviderChange })
         </div>
       )}
 
+      {/* Local / Free Engines — no credits, runs on your machine */}
+      <div className="mb-5">
+        <label className={`text-xs font-medium ${isDark ? 'text-emerald-400' : 'text-emerald-600'} mb-2 block`}>
+          ⚡ Free Engines (no credits — runs on your computer)
+        </label>
+        <div className="space-y-2">
+          {LOCAL_ENGINES.map(engine => {
+            const enabled = !!providerStatus.available?.[engine.id];
+            const active = providerStatus.provider === engine.id;
+            const check = localChecks[engine.id];
+            return (
+              <div key={engine.id} className={`p-3 rounded-lg border ${active ? 'border-emerald-500 bg-emerald-500/10' : isDark ? 'border-gray-700 bg-gray-900' : 'border-gray-200 bg-gray-50'}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-xl">{engine.icon}</span>
+                    <div className="min-w-0">
+                      <div className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{engine.name}</div>
+                      <div className={`text-[11px] truncate ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>{engine.description}</div>
+                    </div>
+                  </div>
+                  {/* Enable toggle */}
+                  <button
+                    onClick={() => handleToggleLocal(engine.id, !enabled)}
+                    disabled={saving}
+                    className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${enabled ? 'bg-emerald-500' : 'bg-gray-600'}`}
+                    title={enabled ? 'Enabled' : 'Disabled'}
+                  >
+                    <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${enabled ? 'translate-x-5' : ''}`} />
+                  </button>
+                </div>
+
+                {enabled && (
+                  <div className="mt-2 space-y-2">
+                    {engine.id === 'ollama' && (
+                      <div className="flex flex-wrap gap-2">
+                        <input
+                          value={localConfig.ollama.baseUrl}
+                          onChange={e => setLocalConfig(p => ({ ...p, ollama: { ...p.ollama, baseUrl: e.target.value } }))}
+                          placeholder="e.g. http://localhost:11434 (Ollama local)"
+                          className={`flex-1 min-w-[140px] px-2 py-1 rounded text-xs border ${isDark ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
+                        />
+                        <input
+                          value={localConfig.ollama.model}
+                          onChange={e => setLocalConfig(p => ({ ...p, ollama: { ...p.ollama, model: e.target.value } }))}
+                          placeholder="llama3.1"
+                          className={`w-28 px-2 py-1 rounded text-xs border ${isDark ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
+                        />
+                      </div>
+                    )}
+                    {(engine.id === 'claude-cli' || engine.id === 'gemini-cli') && (
+                      <input
+                        value={localConfig[engine.id]?.command || ''}
+                        onChange={e => setLocalConfig(p => ({ ...p, [engine.id]: { command: e.target.value } }))}
+                        placeholder={engine.id === 'claude-cli' ? 'claude' : 'gemini'}
+                        className={`w-full px-2 py-1 rounded text-xs border ${isDark ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
+                      />
+                    )}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button onClick={() => handleSaveLocalConfig(engine.id)} disabled={saving}
+                        className="px-2 py-1 text-xs rounded bg-gray-700 text-white hover:bg-gray-600">Save</button>
+                      <button onClick={() => handleCheckLocal(engine.id)}
+                        className="px-2 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-500">Test connection</button>
+                      {!active && (
+                        <button onClick={() => handleProviderSwitch(engine.id)} disabled={saving}
+                          className="px-2 py-1 text-xs rounded bg-emerald-600 text-white hover:bg-emerald-500">Set active</button>
+                      )}
+                      {active && <span className="text-xs text-emerald-400 font-medium">● Active engine</span>}
+                      {check && (
+                        check.checking
+                          ? <span className="text-xs text-gray-400">Checking…</span>
+                          : check.ok
+                            ? <span className="text-xs text-green-400">✓ Connected{check.models?.length ? ` (${check.models.length} models)` : ''}</span>
+                            : <span className="text-xs text-red-400" title={check.reason}>✗ {(check.reason || 'Not reachable').slice(0, 40)}</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Provider Selection */}
       <div className="mb-4">
         <label className={`text-xs font-medium ${isDark ? 'text-gray-400' : 'text-gray-500'} mb-2 block`}>
-          Active Provider
+          Cloud Providers (API key required)
         </label>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
           {PROVIDERS.map(provider => (

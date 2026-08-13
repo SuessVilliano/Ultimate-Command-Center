@@ -305,14 +305,24 @@ When suggesting commands, always format them in code blocks. Be concise but help
       let page = 1;
       let hasMore = true;
 
+      // Authenticated requests get 5000 req/hr instead of the 60 req/hr anonymous cap.
+      // Set VITE_GITHUB_TOKEN in .env to enable (any classic PAT with public_repo scope works).
+      const ghToken = import.meta.env?.VITE_GITHUB_TOKEN || '';
+      const ghHeaders = ghToken ? { Authorization: `token ${ghToken}` } : {};
+
       while (hasMore) {
         const response = await fetch(
-          `https://api.github.com/users/${GITHUB_USERNAME}/repos?per_page=100&page=${page}&sort=updated`
+          `https://api.github.com/users/${GITHUB_USERNAME}/repos?per_page=100&page=${page}&sort=updated`,
+          { headers: ghHeaders }
         );
 
         if (!response.ok) {
           if (response.status === 403) {
-            throw new Error('GitHub API rate limit exceeded. Try again in a few minutes.');
+            const remaining = response.headers.get('x-ratelimit-remaining');
+            const resetAt = response.headers.get('x-ratelimit-reset');
+            const resetIn = resetAt ? Math.max(0, Math.ceil((parseInt(resetAt) * 1000 - Date.now()) / 60000)) : null;
+            const hint = ghToken ? '' : ' Set VITE_GITHUB_TOKEN in .env for a 5000/hr quota.';
+            throw new Error(`GitHub API rate limit exceeded (remaining: ${remaining}${resetIn != null ? `, resets in ~${resetIn} min` : ''}).${hint}`);
           }
           throw new Error(`GitHub API error: ${response.status}`);
         }

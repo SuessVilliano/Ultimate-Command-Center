@@ -9,6 +9,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import * as supabaseDb from './supabase-db.js';
+import * as secretCrypto from './secret-crypto.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -661,7 +662,7 @@ export function getSetting(key, defaultValue = null) {
       if (db) {
         const stmt = db.prepare('SELECT value FROM settings WHERE key = ?');
         const result = stmt.get(key);
-        if (result) return result.value;
+        if (result) return secretCrypto.unwrapValue(key, result.value);
       }
     } catch (e) {
       // SQLite not available
@@ -674,7 +675,7 @@ export function getSetting(key, defaultValue = null) {
   try {
     const stmt = db.prepare('SELECT value FROM settings WHERE key = ?');
     const result = stmt.get(key);
-    return result ? result.value : defaultValue;
+    return result ? secretCrypto.unwrapValue(key, result.value) : defaultValue;
   } catch (e) {
     return defaultValue;
   }
@@ -687,7 +688,7 @@ export async function getSettingAsync(key, defaultValue = null) {
   // Try Supabase first
   if (useSupabase) {
     const value = await supabaseDb.getSetting(key, null);
-    if (value !== null) return value;
+    if (value !== null) return secretCrypto.unwrapValue(key, value);
   }
 
   // Fall back to SQLite
@@ -695,7 +696,7 @@ export async function getSettingAsync(key, defaultValue = null) {
     try {
       const stmt = db.prepare('SELECT value FROM settings WHERE key = ?');
       const result = stmt.get(key);
-      if (result) return result.value;
+      if (result) return secretCrypto.unwrapValue(key, result.value);
     } catch (e) {}
   }
 
@@ -709,6 +710,8 @@ export function setSetting(key, value) {
   let sqliteSuccess = false;
   let supabaseSuccess = false;
 
+  const storedValue = secretCrypto.wrapValue(key, value);
+
   // Save to SQLite if available
   if (db) {
     try {
@@ -719,7 +722,7 @@ export function setSetting(key, value) {
           value = excluded.value,
           updated_at = CURRENT_TIMESTAMP
       `);
-      stmt.run(key, value);
+      stmt.run(key, storedValue);
       sqliteSuccess = true;
     } catch (e) {
       console.log('SQLite setSetting failed:', e.message);
@@ -728,7 +731,7 @@ export function setSetting(key, value) {
 
   // Save to Supabase if available (async, fire and forget for sync API)
   if (useSupabase) {
-    supabaseDb.setSetting(key, value)
+    supabaseDb.setSetting(key, storedValue)
       .then(success => {
         if (success) console.log(`Setting '${key}' saved to Supabase`);
       })
@@ -744,6 +747,7 @@ export function setSetting(key, value) {
  */
 export async function setSettingAsync(key, value) {
   const results = { sqlite: false, supabase: false };
+  const storedValue = secretCrypto.wrapValue(key, value);
 
   // Save to SQLite if available
   if (db) {
@@ -755,7 +759,7 @@ export async function setSettingAsync(key, value) {
           value = excluded.value,
           updated_at = CURRENT_TIMESTAMP
       `);
-      stmt.run(key, value);
+      stmt.run(key, storedValue);
       results.sqlite = true;
     } catch (e) {
       console.log('SQLite setSetting failed:', e.message);
@@ -764,7 +768,7 @@ export async function setSettingAsync(key, value) {
 
   // Save to Supabase if available
   if (useSupabase) {
-    results.supabase = await supabaseDb.setSetting(key, value);
+    results.supabase = await supabaseDb.setSetting(key, storedValue);
   }
 
   return results.sqlite || results.supabase;

@@ -91,8 +91,8 @@ export async function generateBriefing(type = 'morning') {
     getParkingLotItems(5)
   ]);
 
-  const now = new Date();
-  const hour = now.getHours();
+  const tz = process.env.SCHEDULE_TIMEZONE || 'America/Chicago';
+  const hour = parseInt(new Date().toLocaleString('en-US', { hour: '2-digit', hour12: false, timeZone: tz }), 10);
 
   let greeting = 'Good morning';
   if (hour >= 12 && hour < 17) greeting = 'Good afternoon';

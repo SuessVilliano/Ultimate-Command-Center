@@ -8,7 +8,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "server": "cd server && node server.js",
-    "start:all": "concurrently \"npm run dev\" \"npm run server\""
+    "start:all": "concurrently \"npm run dev\" \"npm run server\"",
+    "setup": "npm install && cd server && npm install",
+    "service:start": "pm2 start ecosystem.config.cjs && pm2 save",
+    "service:stop": "pm2 stop ecosystem.config.cjs",
+    "service:logs": "pm2 logs"
   },
   "dependencies": {
     "lucide-react": "^0.294.0",

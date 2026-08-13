@@ -1,8 +1,8 @@
 /**
  * LIV8 Command Center - Scheduler Module
  * Handles automated ticket polling, analysis, and daily report generation
- * Default schedule: 8 AM, 12 PM, 4 PM, 12 AM EST
- * Daily Report: 6 AM EST
+ * Schedule times follow SCHEDULE_TIMEZONE env var (default America/Chicago).
+ * Default schedule: 7 AM daily report, 8 AM analysis, hourly polls 8AM-4PM Tue-Sat
  */
 
 import cron from 'node-cron';
@@ -27,6 +27,171 @@ let notificationConfig = {
   n8nWebhookUrl: null,
   taskmagicToken: null
 };
+
+// Optional listener invoked after each worker cycle (used to push live UI updates).
+let workerCompleteListener = null;
+export function onWorkerComplete(cb) { workerCompleteListener = cb; }
+
+// Continuous "around the clock" worker — keeps drafts fresh while the user is away.
+// Safe to run often because the default engine (Ollama) is free/local.
+let continuousWorker = {
+  timer: null,
+  intervalMinutes: 10,
+  running: false,      // a run is currently in progress
+  enabled: false,      // the loop is scheduled
+  lastRunAt: null,
+  nextRunAt: null,
+  lastStats: null,
+  lastError: null
+};
+
+/**
+ * Run one worker cycle, guarding against overlapping runs.
+ */
+async function runWorkerCycle() {
+  if (continuousWorker.running) {
+    console.log('[Worker] Previous cycle still running — skipping this tick');
+    return;
+  }
+  continuousWorker.running = true;
+  try {
+    const stats = await runScheduledAnalysis('continuous');
+    continuousWorker.lastStats = stats;
+    continuousWorker.lastError = null;
+  } catch (e) {
+    continuousWorker.lastError = e.message;
+    console.error('[Worker] Cycle failed:', e.message);
+  } finally {
+    continuousWorker.running = false;
+    continuousWorker.lastRunAt = new Date().toISOString();
+    continuousWorker.nextRunAt = new Date(Date.now() + continuousWorker.intervalMinutes * 60 * 1000).toISOString();
+    try { workerCompleteListener?.(getWorkerStatus()); } catch (e) {}
+  }
+}
+
+/**
+ * Start the continuous worker loop (around-the-clock drafting).
+ */
+export function startContinuousWorker(intervalMinutes) {
+  if (intervalMinutes && intervalMinutes > 0) continuousWorker.intervalMinutes = intervalMinutes;
+  stopContinuousWorker();
+  continuousWorker.enabled = true;
+  const ms = continuousWorker.intervalMinutes * 60 * 1000;
+  // Kick off the first cycle shortly after boot, then on the interval.
+  setTimeout(() => { runWorkerCycle(); }, 15 * 1000);
+  continuousWorker.timer = setInterval(() => { runWorkerCycle(); }, ms);
+  continuousWorker.nextRunAt = new Date(Date.now() + 15 * 1000).toISOString();
+  try { db.setSetting('worker_enabled', 'true'); db.setSetting('worker_interval_minutes', String(continuousWorker.intervalMinutes)); } catch (e) {}
+  console.log(`[Worker] Continuous drafting started — every ${continuousWorker.intervalMinutes} min`);
+  return getWorkerStatus();
+}
+
+/**
+ * Stop the continuous worker loop.
+ */
+export function stopContinuousWorker() {
+  if (continuousWorker.timer) clearInterval(continuousWorker.timer);
+  continuousWorker.timer = null;
+  continuousWorker.enabled = false;
+  continuousWorker.nextRunAt = null;
+  try { db.setSetting('worker_enabled', 'false'); } catch (e) {}
+  return getWorkerStatus();
+}
+
+/**
+ * Worker status for the dashboard.
+ */
+export function getWorkerStatus() {
+  return {
+    enabled: continuousWorker.enabled,
+    running: continuousWorker.running,
+    intervalMinutes: continuousWorker.intervalMinutes,
+    lastRunAt: continuousWorker.lastRunAt,
+    nextRunAt: continuousWorker.nextRunAt,
+    lastStats: continuousWorker.lastStats,
+    lastError: continuousWorker.lastError
+  };
+}
+
+// Debounce repeated webhook hits for the same ticket (Freshdesk can fire several in seconds).
+const ticketDebounce = new Map();
+
+/**
+ * Fetch a single ticket from Freshdesk by id.
+ */
+async function fetchFreshdeskTicket(freshdeskId) {
+  if (!freshdeskConfig.domain || !freshdeskConfig.apiKey) throw new Error('Freshdesk not configured');
+  const auth = Buffer.from(`${freshdeskConfig.apiKey}:X`).toString('base64');
+  const url = `https://${freshdeskConfig.domain}.freshdesk.com/api/v2/tickets/${freshdeskId}?include=requester`;
+  const response = await fetch(url, { headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' } });
+  if (!response.ok) throw new Error(`Freshdesk ticket fetch failed: ${response.status}`);
+  return response.json();
+}
+
+/**
+ * EVENT-DRIVEN: process one ticket the moment it's created/updated (from a webhook),
+ * instead of waiting for the next poll. Upserts, analyzes, and drafts a reply immediately.
+ * Debounced per ticket. Returns a summary the caller can broadcast.
+ */
+export async function processTicketByFreshdeskId(freshdeskId, { reason = 'webhook' } = {}) {
+  if (!freshdeskId) throw new Error('freshdeskId required');
+
+  // Debounce: if we processed/queued this ticket in the last 8s, skip the duplicate.
+  const last = ticketDebounce.get(freshdeskId);
+  if (last && Date.now() - last < 8000) {
+    return { freshdeskId, skipped: 'debounced' };
+  }
+  ticketDebounce.set(freshdeskId, Date.now());
+
+  const ticket = await fetchFreshdeskTicket(freshdeskId);
+  if (!ticket.subject) ticket.subject = `Ticket #${freshdeskId}`;
+
+  // Store / refresh in DB.
+  db.upsertTicket(ticket);
+  let dbTicket = null;
+  try {
+    dbTicket = db.getDb().prepare('SELECT id, status FROM tickets WHERE freshdesk_id = ?').get(freshdeskId);
+  } catch (e) {}
+  const dbId = dbTicket?.id;
+  if (!dbId) return { freshdeskId, error: 'ticket not stored' };
+
+  // Analyze (cheapest/free engine) so urgency + type are fresh.
+  let analysis = null;
+  let analysisError = null;
+  try {
+    const cp = ai.getCostEffectiveProvider();
+    analysis = await ai.analyzeTicket(ticket, { provider: cp.provider, model: cp.model });
+    db.saveAnalysis(dbId, analysis, analysis.provider, analysis.model);
+  } catch (e) {
+    analysisError = e.message;
+    console.error(`[Listen] Analysis failed for #${freshdeskId}: ${e.message}`);
+  }
+
+  // Draft a reply immediately for open/pending tickets (never sends).
+  let drafted = false;
+  if ([2, 3, 8].includes(ticket.status)) {
+    try {
+      const pipeline = await import('./ticket-pipeline.js');
+      await pipeline.processTicket(dbId, { skipQA: false });
+      drafted = true;
+    } catch (e) {
+      console.log(`[Listen] Draft failed for #${freshdeskId}: ${e.message}`);
+    }
+  }
+
+  console.log(`[Listen] Processed ticket #${freshdeskId} (${reason}) — analyzed:${!!analysis} drafted:${drafted}`);
+  return {
+    freshdeskId,
+    ticketId: dbId,
+    subject: ticket.subject,
+    status: ticket.status,
+    urgency: analysis?.URGENCY_SCORE ?? null,
+    escalationType: analysis?.ESCALATION_TYPE ?? null,
+    drafted,
+    analysisError,
+    reason
+  };
+}
 
 /**
  * Initialize scheduler with configuration
@@ -55,7 +220,7 @@ export function initScheduler(config = {}) {
 /**
  * Fetch tickets from Freshdesk API (with pagination)
  */
-async function fetchFreshdeskTickets(statuses = [2, 3, 6, 7]) {
+async function fetchFreshdeskTickets(statuses = [2, 3, 8]) {
   if (!freshdeskConfig.domain || !freshdeskConfig.apiKey) {
     throw new Error('Freshdesk not configured');
   }
@@ -168,7 +333,7 @@ export async function runScheduledAnalysis(scheduleName = 'manual') {
   try {
     // 1. Fetch tickets from Freshdesk (include resolved for knowledge base)
     console.log('\n1. Fetching tickets from Freshdesk...');
-    const tickets = await fetchFreshdeskTickets([2, 3, 6, 7, 4, 5]); // Open, Pending, Waiting on Customer, Waiting on 3rd Party, Resolved, Closed
+    const tickets = await fetchFreshdeskTickets([2, 3, 8, 4]); // Open, Pending, On-Hold, Resolved (Closed=5 skipped — historical, 1700+ rows)
     stats.ticketsFetched = tickets.length;
     console.log(`   Fetched ${tickets.length} tickets`);
 
@@ -192,7 +357,7 @@ export async function runScheduledAnalysis(scheduleName = 'manual') {
       // Mark stale tickets as closed — if a ticket is open/pending in DB
       // but NOT returned by Freshdesk, it was resolved/closed externally
       const freshIds = new Set(tickets.map(t => t.id));
-      const dbOpenTickets = db.getAllTicketsWithAnalysis([2, 3, 6, 7]) || [];
+      const dbOpenTickets = db.getAllTicketsWithAnalysis([2, 3, 8]) || [];
       let staleClosed = 0;
       for (const dbTicket of dbOpenTickets) {
         if (!freshIds.has(dbTicket.freshdesk_id)) {
@@ -272,7 +437,7 @@ export async function runScheduledAnalysis(scheduleName = 'manual') {
     let draftsGenerated = 0;
     try {
       const pipeline = await import('./ticket-pipeline.js');
-      const openTickets = tickets.filter(t => [2, 3, 6, 7].includes(t.status));
+      const openTickets = tickets.filter(t => [2, 3, 8].includes(t.status));
 
       for (const ticket of openTickets) {
         try {
@@ -521,22 +686,33 @@ export function startScheduledJobs(enabled = true) {
   // Initialize email service
   emailService.initEmailService();
 
-  // Daily Report Email - Tuesday through Saturday at 7 AM EST only
+  // Daily Report Email — runs in SCHEDULE_TIMEZONE
   // Cron: minute hour * * day-of-week (0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat)
   const dailyReportCron = process.env.SCHEDULE_DAILY_REPORT || '0 7 * * 2-6';
   const dailyReportJob = cron.schedule(dailyReportCron, () => {
     generateAndSendDailyReport();
   }, { timezone });
   scheduledJobs.set('daily_report', dailyReportJob);
-  console.log(`Scheduled: Daily Report Tue-Sat 7 AM EST (${dailyReportCron})`);
+  console.log(`Scheduled: Daily Report (${dailyReportCron}) in ${timezone}`);
 
-  // Morning ticket analysis - Tuesday through Saturday at 8 AM EST only
+  // Morning ticket analysis — runs in SCHEDULE_TIMEZONE
   const morningCron = process.env.SCHEDULE_MORNING || '0 8 * * 2-6';
   const morningJob = cron.schedule(morningCron, () => {
     runScheduledAnalysis('morning_8am');
   }, { timezone });
   scheduledJobs.set('morning', morningJob);
-  console.log(`Scheduled: Morning analysis Tue-Sat 8 AM EST (${morningCron})`);
+  console.log(`Scheduled: Morning analysis (${morningCron}) in ${timezone}`);
+
+  // Hourly poll during work hours (default Tue-Sat 8AM-4PM in SCHEDULE_TIMEZONE).
+  // Tune with SCHEDULE_WORK_HOURS; disable by setting it to 'off'.
+  const workHoursCron = process.env.SCHEDULE_WORK_HOURS || '0 8-16 * * 2-6';
+  if (workHoursCron && workHoursCron !== 'off') {
+    const workHoursJob = cron.schedule(workHoursCron, () => {
+      runScheduledAnalysis('work_hour');
+    }, { timezone });
+    scheduledJobs.set('work_hours', workHoursJob);
+    console.log(`Scheduled: Work-hour poll (${workHoursCron}) in ${timezone}`);
+  }
 
   // Noon, afternoon, and midnight analysis DISABLED to save API quota
   // These can be re-enabled by setting env vars:
@@ -598,6 +774,7 @@ export function getScheduleStatus() {
 
   return {
     enabled: scheduledJobs.size > 0,
+    worker: getWorkerStatus(),
     timezone: process.env.SCHEDULE_TIMEZONE || 'America/New_York',
     jobs,
     schedules: {

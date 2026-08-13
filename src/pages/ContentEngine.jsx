@@ -48,7 +48,7 @@ const SCRIPTS_MINDSET = [
 ];
 
 const ACTION_ITEMS = [
-  { id: 1, title: 'Approve daily drafts at localhost:4444',        priority: 'critical', note: 'Do this every day. Takes 5 min. Fires the whole chain.', done: false },
+  { id: 1, title: 'Approve daily drafts in the Draft Queue',       priority: 'critical', note: 'Open the Draft Queue panel on the Dashboard. Takes 5 min. Fires the whole chain.', done: false },
   { id: 2, title: 'Top up fal.ai for Seedance / Kling B-roll',    priority: 'high',     note: 'fal.ai/dashboard/billing — even $50 generates significant footage.', done: false },
   { id: 3, title: 'Set up Trade Hybrid Community PIT token',       priority: 'high',     note: 'GHL → Trade Hybrid → Settings → Private Integrations → New token → add to .env', done: false },
   { id: 4, title: 'Monitor HeyGen credits (30 left)',              priority: 'medium',   note: 'Top up at app.heygen.com before hitting zero. ~1 credit per video.', done: false },
