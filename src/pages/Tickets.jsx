@@ -6,6 +6,7 @@ import {
   CheckCircle,
   XCircle,
   User,
+  Users,
   Phone,
   Code,
   ArrowUpCircle,
@@ -37,6 +38,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import DraftQueue from '../components/DraftQueue';
 import PortingTool from '../components/PortingTool';
+import AffiliateHub from '../components/affiliates/AffiliateHub';
 import { aiService } from '../services/aiService';
 
 // Storage keys
@@ -50,6 +52,13 @@ const STORAGE_KEYS = {
 
 // GHL Quick Links - Work Tools
 const GHL_QUICK_LINKS = [
+  {
+    id: 'first-promoters',
+    label: 'First Promoters',
+    url: 'https://firstpromoter.com/login',
+    icon: '🚀',
+    description: 'First Promoters — affiliate tracking & payouts'
+  },
   {
     id: 'hq',
     label: 'HQ',
@@ -227,7 +236,7 @@ function Tickets() {
   const [sendingToPA, setSendingToPA] = useState(false); // Sending to Personal Assistant
   const [sentToPA, setSentToPA] = useState({}); // Track which tickets were sent
   const [quickLinksCollapsed, setQuickLinksCollapsed] = useState(false); // Collapsible quick links
-  const [mainView, setMainView] = useState('tickets'); // 'tickets' or 'porting'
+  const [mainView, setMainView] = useState('affiliates'); // 'affiliates' | 'tickets' (legacy support) | 'porting'
   const [portingPrefill, setPortingPrefill] = useState(null); // Pre-fill data from port request tickets
   const [ticketConversations, setTicketConversations] = useState({}); // Cache conversations by ticket ID
   const [loadingConversation, setLoadingConversation] = useState(false);
@@ -1397,22 +1406,22 @@ function Tickets() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-            GHL Command Center
+            GHL Affiliate Command Center
           </h1>
           <p className={`mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-            GoHighLevel Support Hub - Tickets, Tools & Resources
+            Recruit, activate & grow your affiliates and their teams — powered by GoHighLevel
           </p>
           {/* View Toggle */}
           <div className="flex gap-1 mt-2">
             <button
-              onClick={() => setMainView('tickets')}
+              onClick={() => setMainView('affiliates')}
               className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
-                mainView === 'tickets'
+                mainView === 'affiliates'
                   ? 'bg-purple-600 text-white'
                   : isDark ? 'bg-white/10 text-gray-400 hover:bg-white/20' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
               }`}
             >
-              <Ticket className="w-3 h-3 inline mr-1" /> Tickets
+              <Users className="w-3 h-3 inline mr-1" /> Affiliates
             </button>
             <button
               onClick={() => setMainView('porting')}
@@ -1424,8 +1433,21 @@ function Tickets() {
             >
               <Phone className="w-3 h-3 inline mr-1" /> Porting
             </button>
+            <button
+              onClick={() => setMainView('tickets')}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
+                mainView === 'tickets'
+                  ? 'bg-gray-600 text-white'
+                  : isDark ? 'bg-white/5 text-gray-500 hover:bg-white/10' : 'bg-gray-50 text-gray-400 hover:bg-gray-100'
+              }`}
+              title="Legacy support ticket console"
+            >
+              <Ticket className="w-3 h-3 inline mr-1" /> Support (Legacy)
+            </button>
           </div>
         </div>
+        {/* Ticket-console actions — hidden in the affiliate view, which renders its own action bar */}
+        {mainView !== 'affiliates' && (
         <div className="flex items-center gap-3">
           {/* AI Server Status Indicator */}
           <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs ${
@@ -1526,6 +1548,7 @@ function Tickets() {
             <Settings className="w-5 h-5" />
           </button>
         </div>
+        )}
       </div>
 
       {/* ─── Porting View ─── */}
@@ -1533,8 +1556,8 @@ function Tickets() {
         <PortingTool isDark={isDark} prefillData={portingPrefill} />
       )}
 
-      {/* ─── Tickets View ─── */}
-      {mainView === 'tickets' && (<>
+      {/* ─── Affiliate + Tickets shared chrome (Quick Links + Settings) ─── */}
+      {mainView !== 'porting' && (<>
 
       {/* GHL Quick Links - Collapsible */}
       <div className={`rounded-xl border transition-all ${
@@ -1582,13 +1605,27 @@ function Tickets() {
         )}
       </div>
 
-      {/* Draft Queue */}
+      {/* Affiliate Hub — primary affiliate console (replaces the ticket list & detail) */}
+      {mainView === 'affiliates' && (
+        <div className="mt-4">
+          <AffiliateHub
+            isDark={isDark}
+            currentUser={currentUser}
+            aiServerStatus={aiServerStatus}
+            onOpenSettings={() => setShowSettings(true)}
+          />
+        </div>
+      )}
+
+      {/* Draft Queue (legacy support tickets) */}
+      {mainView === 'tickets' && (
       <div className="mt-4">
         <DraftQueue isDark={isDark} onSelectTicket={(ticketId) => {
           const ticket = tickets.find(t => t.id === ticketId);
           if (ticket) handleSelectTicket(ticket);
         }} />
       </div>
+      )}
 
       {/* Settings Modal - Updated v2.0 with tabs */}
       {showSettings && (
@@ -2245,6 +2282,9 @@ function Tickets() {
           </div>
         </div>
       )}
+
+      {/* ─── Legacy support ticket console (search, status cards, list & detail) ─── */}
+      {mainView === 'tickets' && (<>
 
       {/* Search Bar */}
       <div className={`p-4 rounded-xl border ${
@@ -3001,6 +3041,9 @@ function Tickets() {
           )}
         </div>
       </div>
+
+      </>)}
+      {/* end legacy support ticket console */}
 
       </>)}
     </div>
