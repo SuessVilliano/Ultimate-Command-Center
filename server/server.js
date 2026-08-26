@@ -524,11 +524,21 @@ app.get('/api/drafts/:id', (req, res) => {
 // Create a draft manually
 app.post('/api/drafts', (req, res) => {
   try {
-    const { ticket_id, ticket_subject, draft_text, status } = req.body;
+    const { ticket_id, ticket_subject, draft_text, status, pipeline_metadata, created_by } = req.body;
     if (!ticket_id || !draft_text) {
       return res.status(400).json({ error: 'ticket_id and draft_text are required' });
     }
-    const id = db.saveDraft({ ticket_id, ticket_subject, draft_text, status: status || 'PENDING_REVIEW' });
+    const id = db.saveDraft({
+      ticket_id,
+      ticket_subject,
+      draft_text,
+      status: status || 'PENDING_REVIEW',
+      // Channel/audience/kind metadata (e.g. affiliate outbound messages & content).
+      pipeline_metadata: pipeline_metadata
+        ? (typeof pipeline_metadata === 'string' ? pipeline_metadata : JSON.stringify(pipeline_metadata))
+        : null,
+      created_by: created_by || 'manual'
+    });
     res.json({ success: true, id });
   } catch (error) {
     res.status(500).json({ error: error.message });
