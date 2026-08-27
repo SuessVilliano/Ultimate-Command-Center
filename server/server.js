@@ -4660,9 +4660,15 @@ app.post('/api/proactive/execute-suggestion', async (req, res) => {
 // Start/stop proactive engine
 app.post('/api/proactive/toggle', (req, res) => {
   try {
-    const { enabled, checkIntervalMinutes } = req.body;
+    const { enabled, checkIntervalMinutes, enableAutoActions = false } = req.body;
     if (enabled) {
-      proactiveEngine.initProactiveEngine({ checkIntervalMinutes: checkIntervalMinutes || 5 });
+      // External auto-actions require both an explicit request and the server-side
+      // production flag. Normal proactive operation only prepares approval-gated work.
+      const autoActionsAllowed = enableAutoActions === true && process.env.PROACTIVE_AUTO_ACTIONS === 'true';
+      proactiveEngine.initProactiveEngine({
+        checkIntervalMinutes: checkIntervalMinutes || 30,
+        enableAutoActions: autoActionsAllowed
+      });
     } else {
       proactiveEngine.stopProactiveEngine();
     }
