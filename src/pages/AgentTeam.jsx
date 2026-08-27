@@ -22,7 +22,9 @@ import {
   Code,
   Sparkles,
   Users,
-  AlertCircle
+  AlertCircle,
+  Activity,
+  Play
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { API_URL } from '../config';
@@ -58,6 +60,8 @@ function AgentTeam() {
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [backendConnected, setBackendConnected] = useState(false);
+  const [teamStatus, setTeamStatus] = useState(null);
+  const [runningTeam, setRunningTeam] = useState(false);
 
   // Knowledge modal state
   const [showKnowledgeModal, setShowKnowledgeModal] = useState(false);
@@ -74,6 +78,9 @@ function AgentTeam() {
   // Load agents on mount
   useEffect(() => {
     fetchAgents();
+    fetchTeamStatus();
+    const statusInterval = setInterval(fetchTeamStatus, 15000);
+    return () => clearInterval(statusInterval);
   }, []);
 
   // Scroll to bottom on new messages
@@ -106,6 +113,26 @@ function AgentTeam() {
         a.category === 'marketing' ? '#EC4899' : '#6366F1',
     }));
     setAgents(localAgents);
+  };
+
+  const fetchTeamStatus = async () => {
+    try {
+      const response = await fetch(`${AI_SERVER_URL}/api/team/status`);
+      if (response.ok) setTeamStatus(await response.json());
+    } catch { /* status banner remains unavailable */ }
+  };
+
+  const runAgentTeam = async () => {
+    setRunningTeam(true);
+    try {
+      const response = await fetch(`${AI_SERVER_URL}/api/team/run`, { method: 'POST' });
+      if (!response.ok) throw new Error('Agent team cycle failed');
+      await fetchTeamStatus();
+    } catch (error) {
+      window.alert(error.message);
+    } finally {
+      setRunningTeam(false);
+    }
   };
 
   const fetchConversations = async () => {
@@ -376,7 +403,17 @@ function AgentTeam() {
   };
 
   return (
-    <div className="h-[calc(100vh-4rem)] flex gap-4">
+    <div className="h-[calc(100vh-4rem)] flex gap-4 relative pt-16">
+      <div className="absolute inset-x-0 top-0 h-12 rounded-xl border border-white/10 bg-white/5 px-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Activity className={`w-4 h-4 ${teamStatus?.proactive?.isRunning ? 'text-green-400' : 'text-yellow-400'}`} />
+          <div className="text-sm text-white">Agent operating system</div>
+          <div className="text-xs text-gray-500">{teamStatus?.proactive?.isRunning ? 'Proactive monitoring active' : 'Proactive monitoring stopped'} · {teamStatus?.counts?.working || 0} working · {teamStatus?.counts?.awaiting_approval || 0} awaiting approval</div>
+        </div>
+        <button onClick={runAgentTeam} disabled={runningTeam} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 hover:bg-cyan-500/25 disabled:opacity-50 text-xs">
+          {runningTeam ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />} Run team cycle
+        </button>
+      </div>
       {/* Left Sidebar - Agents */}
       <div className={`w-64 flex-shrink-0 rounded-xl border ${
         isDark ? 'border-purple-900/30 bg-white/5' : 'border-gray-200 bg-white'

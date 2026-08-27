@@ -48,6 +48,7 @@ import * as taskSync from './lib/task-sync-service.js';
 import * as briefing from './lib/proactive-briefing.js';
 import * as unifiedInbox from './lib/unified-inbox.js';
 import * as proactiveEngine from './lib/proactive-ai-engine.js';
+import * as teamWorkspace from './lib/team-workspace.js';
 import * as eventBus from './lib/cross-platform-event-bus.js';
 import * as workflowOrchestrator from './lib/unified-workflow-orchestrator.js';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
@@ -90,6 +91,7 @@ try {
   taskSync.initSyncTables();
   briefing.initBriefingTables();
   unifiedInbox.initUnifiedInboxTables();
+  teamWorkspace.initTeamWorkspace();
   telegram.initTelegram();
   highestSelf.initHighestSelfTables();
   console.log('Database: Initialized');
@@ -97,6 +99,7 @@ try {
   console.log('Task Sync: Initialized');
   console.log('Proactive Briefing: Initialized');
   console.log('Unified Inbox: Initialized');
+  console.log('Agent Team Workspace: Initialized');
 } catch (e) {
   console.error('Database initialization failed:', e.message);
 }
@@ -169,6 +172,16 @@ if (proactiveEnabled) {
 } else {
   console.log('Proactive AI Engine: Disabled (set PROACTIVE_AI_ENABLED=true to enable)');
 }
+
+// Turn proactive findings into persistent, owned agent work. External actions
+// remain approval-gated unless explicitly enabled separately.
+proactiveEngine.onProactiveEvent(async event => {
+  if (event.type !== 'check_complete') return;
+  await teamWorkspace.processProactiveFindings({
+    issues: event.data.issues || [],
+    suggestions: event.data.suggestions || []
+  });
+});
 
 // Initialize Cross-Platform Event Bus
 eventBus.initializeDefaultChains();
@@ -4430,6 +4443,78 @@ app.get('/api/calendar/free-time', (req, res) => {
   try {
     const freeBlocks = calendarService.getFreeTimeBlocks();
     res.json({ freeBlocks });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// AGENT TEAM WORKSPACE ROUTES
+// ============================================
+
+app.get('/api/team/channels', (req, res) => {
+  try {
+    res.json({ channels: teamWorkspace.getChannels() });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/team/messages', (req, res) => {
+  try {
+    res.json({ messages: teamWorkspace.getMessages(req.query.channel || 'general', req.query.limit) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/team/messages', async (req, res) => {
+  try {
+    const { content, channelId = 'general', userId = 'jamaur' } = req.body;
+    if (!content?.trim()) return res.status(400).json({ error: 'Message content is required' });
+    res.json(await teamWorkspace.handleUserMessage({ content: content.trim(), channelId, userId }));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/team/tasks', (req, res) => {
+  try {
+    res.json({ tasks: teamWorkspace.getWorkItems({ status: req.query.status || null, limit: req.query.limit }) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/team/status', (req, res) => {
+  try {
+    res.json({ ...teamWorkspace.getTeamStatus(), proactive: proactiveEngine.getProactiveState() });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/team/run', async (req, res) => {
+  try {
+    const check = await proactiveEngine.triggerProactiveCheck();
+    res.json({ check, team: teamWorkspace.getTeamStatus() });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/team/tasks/:id/approve', (req, res) => {
+  try {
+    const result = teamWorkspace.approveWorkItem(parseInt(req.params.id));
+    res.status(result.success ? 200 : 409).json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/team/tasks/:id/retry', async (req, res) => {
+  try {
+    res.json({ task: await teamWorkspace.executeWorkItem(parseInt(req.params.id)) });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

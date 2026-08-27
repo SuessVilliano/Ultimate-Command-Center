@@ -232,6 +232,8 @@ async function runProactiveCheck() {
       issueCount: detectedIssues.length,
       suggestionCount: suggestions.length,
       autoDraftCount,
+      issues: detectedIssues,
+      suggestions,
       timestamp: proactiveState.lastCheck
     });
 
@@ -654,8 +656,11 @@ export function onProactiveEvent(callback) {
 function emitProactiveEvent(type, data) {
   for (const listener of proactiveState.listeners) {
     try {
-      listener({ type, data, timestamp: new Date().toISOString() });
-    } catch (e) {}
+      Promise.resolve(listener({ type, data, timestamp: new Date().toISOString() }))
+        .catch(error => console.error('Proactive event listener failed:', error.message));
+    } catch (error) {
+      console.error('Proactive event listener failed:', error.message);
+    }
   }
 }
 

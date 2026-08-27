@@ -7,11 +7,19 @@ services:
     startCommand: node server.js
     healthCheckPath: /health
     autoDeploy: true
+    disk:
+      name: liv8-command-center-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NODE_VERSION
+        value: "22.16.0"
       - key: PORT
         value: "3005"
+      - key: DB_DATA_DIR
+        value: /var/data
       - key: AI_PROVIDER
         value: gemini
       # AI Provider API Keys - can be set in Render dashboard OR through the app's AI Settings page
@@ -128,6 +136,14 @@ services:
         value: "true"
       - key: SCHEDULE_TIMEZONE
         value: America/New_York
+      # Proactive planning is safe by default: agents prepare work and request
+      # approval, but do not execute external actions automatically.
+      - key: PROACTIVE_AI_ENABLED
+        value: "true"
+      - key: PROACTIVE_CHECK_INTERVAL
+        value: "30"
+      - key: PROACTIVE_AUTO_ACTIONS
+        value: "false"
 
   - type: web
     name: liv8-command-center
