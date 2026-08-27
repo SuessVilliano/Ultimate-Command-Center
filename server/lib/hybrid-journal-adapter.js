@@ -24,7 +24,7 @@ import * as hs from './highest-self-db.js';
 
 function cfg() {
   return {
-    token: process.env.HYBRID_JOURNAL_TOKEN || null,
+    token: process.env.HYBRID_JOURNAL_TOKEN || process.env.HYBRID_JOURNAL_API_KEY || null,
     base: process.env.HYBRID_JOURNAL_URL || 'https://hybridjournal.base44.app/api/functions/apiData',
     entity: process.env.HYBRID_JOURNAL_ENTITY || 'Trade',
     signalEntity: process.env.HYBRID_JOURNAL_SIGNAL_ENTITY || 'Signal',
