@@ -15,7 +15,7 @@ import * as hs from './highest-self-db.js';
 
 const BASE = 'https://api.ouraring.com/v2/usercollection';
 
-function token() { return process.env.OURA_ACCESS_TOKEN || process.env.OURA_TOKEN || null; }
+function token() { return process.env.OURA_ACCESS_TOKEN || process.env.OURA_TOKEN || process.env.OURA_RING_TOKEN || null; }
 export function isConfigured() { return !!token(); }
 
 async function get(path, params = {}) {
