@@ -94,6 +94,40 @@ npm run preview    # serves the built UI
 
 ---
 
+## 3b. Run it in the background with PM2 (no open Terminal needed)
+
+`npm run start:all` only runs while its Terminal window stays open. To keep the
+Command Center running after you close Terminal — and auto-start on reboot — use
+PM2:
+
+```bash
+npm install -g pm2                 # one time
+npm run build                      # build the UI
+pm2 start ecosystem.config.cjs     # start API + UI in the background
+pm2 save                           # remember them
+pm2 startup                        # prints one command — copy/paste & run it to enable boot-start
+```
+
+Open **http://localhost:3001**. Now you can close Terminal and it keeps running.
+
+Everyday PM2 commands:
+
+```bash
+pm2 status         # see both services (liv8-api, liv8-ui)
+pm2 logs           # live logs
+pm2 restart all    # restart after changes
+pm2 stop all       # stop
+```
+
+After pulling code updates:
+
+```bash
+git pull origin master
+npm install && (cd server && npm install)   # only if deps changed
+npm run build
+pm2 restart all
+```
+
 ## 4. Turn the integrations on (in the app)
 
 - **Health OS → "Sync Oura"** — pulls readiness/sleep/activity (needs `OURA_ACCESS_TOKEN`).
