@@ -95,6 +95,39 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
   // Auto-expand when you're on one of its pages so you never lose your place.
   const showHsItems = hsOpen || hsActive;
 
+  // --- Drag-to-reorder (persisted per list) ---
+  const orderList = (items, key) => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(key) || '[]');
+      const byId = Object.fromEntries(items.map((i) => [i.id, i]));
+      const ordered = saved.map((id) => byId[id]).filter(Boolean);
+      const rest = items.filter((i) => !saved.includes(i.id));
+      return [...ordered, ...rest];
+    } catch { return items; }
+  };
+  const [mainOrder, setMainOrder] = React.useState(() => orderList(menuItems, 'menu_order_v1'));
+  const [hsOrder, setHsOrder] = React.useState(() => orderList(highestSelfItems, 'hs_menu_order_v1'));
+  const dragRef = React.useRef(null);
+  const reorder = (list, setter, key, from, to) => {
+    if (from === to || from == null) return;
+    const next = [...list];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setter(next);
+    try { localStorage.setItem(key, JSON.stringify(next.map((i) => i.id))); } catch {}
+  };
+  const dragProps = (listKey, index, list, setter, storageKey) => ({
+    draggable: true,
+    onDragStart: () => { dragRef.current = { listKey, index }; },
+    onDragOver: (e) => e.preventDefault(),
+    onDrop: (e) => {
+      e.preventDefault();
+      const d = dragRef.current;
+      if (d && d.listKey === listKey) reorder(list, setter, storageKey, d.index, index);
+      dragRef.current = null;
+    },
+  });
+
   const handleNavClick = (pageId) => {
     setActivePage(pageId);
     // Close sidebar on mobile after navigation
@@ -177,14 +210,14 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
               </button>
               {showHsItems && (
               <ul className="space-y-2">
-                {highestSelfItems.map((item) => {
+                {hsOrder.map((item, index) => {
                   const Icon = item.icon;
                   const isActive = activePage === item.id;
                   return (
-                    <li key={item.id}>
+                    <li key={item.id} {...dragProps('hs', index, hsOrder, setHsOrder, 'hs_menu_order_v1')}>
                       <button
                         onClick={() => handleNavClick(item.id)}
-                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${
+                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 cursor-grab active:cursor-grabbing ${
                           isActive
                             ? 'bg-teal-600/20 text-teal-400 border border-teal-500/30'
                             : isDark
@@ -204,14 +237,14 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
           )}
 
           <ul className="space-y-2">
-            {menuItems.map((item) => {
+            {mainOrder.map((item, index) => {
               const Icon = item.icon;
               const isActive = activePage === item.id;
               return (
-                <li key={item.id}>
+                <li key={item.id} {...dragProps('main', index, mainOrder, setMainOrder, 'menu_order_v1')}>
                   <button
                     onClick={() => handleNavClick(item.id)}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 cursor-grab active:cursor-grabbing ${
                       isActive
                         ? 'bg-purple-600/20 text-purple-500 border border-purple-500/30'
                         : isDark

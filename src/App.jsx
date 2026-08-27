@@ -35,7 +35,9 @@ import Today from './pages/Today';
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
   const { theme } = useTheme();
-  const [activePage, setActivePage] = useState('dashboard');
+  const [activePage, setActivePage] = useState(() => {
+    try { return localStorage.getItem('last_page') || 'hs-today'; } catch { return 'hs-today'; }
+  });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [dictationOpen, setDictationOpen] = useState(false);
   const isDark = theme === 'dark';
@@ -51,6 +53,10 @@ function AppContent() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem('last_page', activePage); } catch {}
+  }, [activePage]);
 
   const handleNavigate = (page) => {
     setActivePage(page);
