@@ -162,7 +162,9 @@ if (scheduleEnabled) {
 
 // Initialize Proactive AI Engine — DISABLED by default to save API quota
 // Set PROACTIVE_AI_ENABLED=true in .env to enable (runs AI calls every 5 min)
-const proactiveEnabled = process.env.PROACTIVE_AI_ENABLED === 'true';
+// Proactive planning is a core feature and defaults on. Set the flag to
+// "false" to disable it; external actions are still disabled independently.
+const proactiveEnabled = process.env.PROACTIVE_AI_ENABLED !== 'false';
 if (proactiveEnabled) {
   proactiveEngine.initProactiveEngine({
     checkIntervalMinutes: parseInt(process.env.PROACTIVE_CHECK_INTERVAL) || 15,
