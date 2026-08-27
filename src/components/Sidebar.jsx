@@ -31,7 +31,9 @@ import {
   Target,
   Sparkles,
   Briefcase,
-  Sunrise
+  Sunrise,
+  ChevronDown,
+  ChevronRight
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -79,6 +81,19 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
   const { theme, toggleTheme } = useTheme();
   const { currentUser, logout, isAdmin } = useAuth();
   const isDark = theme === 'dark';
+
+  const hsIds = highestSelfItems.map((i) => i.id);
+  const hsActive = hsIds.includes(activePage);
+  const [hsOpen, setHsOpen] = React.useState(() => {
+    try { return localStorage.getItem('hs_group_open') === '1'; } catch { return false; }
+  });
+  const toggleHs = () => {
+    const next = !hsOpen;
+    setHsOpen(next);
+    try { localStorage.setItem('hs_group_open', next ? '1' : '0'); } catch {}
+  };
+  // Auto-expand when you're on one of its pages so you never lose your place.
+  const showHsItems = hsOpen || hsActive;
 
   const handleNavClick = (pageId) => {
     setActivePage(pageId);
@@ -148,11 +163,19 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
           {/* Highest Self OS group */}
           {highestSelfItems.length > 0 && (
             <div className="mb-6">
-              <h3 className={`px-4 text-xs font-semibold uppercase tracking-wider mb-3 ${
-                isDark ? 'text-teal-500/70' : 'text-teal-600/80'
-              }`}>
-                Highest Self OS
-              </h3>
+              <button
+                onClick={toggleHs}
+                className={`w-full flex items-center justify-between px-4 mb-2 text-xs font-semibold uppercase tracking-wider transition-colors ${
+                  isDark ? 'text-teal-500/70 hover:text-teal-400' : 'text-teal-600/80 hover:text-teal-600'
+                }`}
+              >
+                <span className="flex items-center gap-1.5">
+                  {showHsItems ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                  Highest Self OS
+                </span>
+                {!showHsItems && <span className="text-[10px] opacity-60 normal-case tracking-normal">{highestSelfItems.length} tabs</span>}
+              </button>
+              {showHsItems && (
               <ul className="space-y-2">
                 {highestSelfItems.map((item) => {
                   const Icon = item.icon;
@@ -176,6 +199,7 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
                   );
                 })}
               </ul>
+              )}
             </div>
           )}
 
