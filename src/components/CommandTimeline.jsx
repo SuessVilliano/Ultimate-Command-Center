@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { API_URL } from '../config';
-import { CalendarDays, ChevronRight, RefreshCw, Sparkles, Target, Trophy, TriangleAlert, Zap } from 'lucide-react';
+import { CalendarDays, ChevronRight, RefreshCw, Sparkles, Target, Trophy, AlertTriangle, Zap } from 'lucide-react';
 
 const GROUPS = [
   ['Past', [
@@ -90,7 +90,6 @@ export default function CommandTimeline() {
 
   useEffect(() => { fetchPeriod(period); }, [period]);
 
-  // Keep the selected command window fresh without requiring manual refresh.
   useEffect(() => {
     const interval = setInterval(() => fetchPeriod(period, true), 5 * 60 * 1000);
     const onFocus = () => fetchPeriod(period, true);
@@ -151,7 +150,7 @@ export default function CommandTimeline() {
           <p key={taglineIndex} className="text-sm text-gray-400 mt-2 text-center animate-pulse">{LOADING_LINES[taglineIndex]}</p>
         </div>
       ) : error ? (
-        <div className="p-8 text-center"><TriangleAlert className="w-7 h-7 text-amber-400 mx-auto mb-2" /><p className="text-white">Timeline unavailable</p><p className="text-sm text-gray-500 mt-1">{error}</p></div>
+        <div className="p-8 text-center"><AlertTriangle className="w-7 h-7 text-amber-400 mx-auto mb-2" /><p className="text-white">Timeline unavailable</p><p className="text-sm text-gray-500 mt-1">{error}</p></div>
       ) : (
         <div className="p-5 sm:p-6 space-y-5">
           <div className="grid lg:grid-cols-[1fr_180px] gap-4">
@@ -188,7 +187,7 @@ export default function CommandTimeline() {
 
           <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
             <MiniList title="Wins" icon={Trophy} items={intelligence.wins} empty="No confirmed wins surfaced for this window." />
-            <MiniList title="Needs attention" icon={TriangleAlert} items={intelligence.attention?.length ? intelligence.attention : intelligence.misses} />
+            <MiniList title="Needs attention" icon={AlertTriangle} items={intelligence.attention?.length ? intelligence.attention : intelligence.misses} />
             <MiniList title="Opportunity" icon={Zap} items={intelligence.opportunities} />
             <MiniList title="Next moves" icon={CalendarDays} items={intelligence.nextActions} />
           </div>
