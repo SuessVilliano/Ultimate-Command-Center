@@ -2,10 +2,10 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, Bell, BellRing, Brain, CalendarDays, Heart, RefreshCw, ShieldAlert, Sparkles, Target, TrendingUp, Zap } from 'lucide-react';
 import { API_URL } from '../config';
 import * as hs from '../services/highestSelfService';
+import digitalTwinJamaur from '../assets/digitalTwinJamaur';
 
 const POLL_MS = 5 * 60_000;
 const LS_SEEN = 'liv8_signal_seen_v1';
-const TWIN_IMAGE = '/digital-twin.svg';
 
 const num = v => Number.isFinite(Number(v)) ? Number(v) : null;
 const signalKey = s => `${s.type}:${s.text}`;
@@ -74,8 +74,10 @@ export default function GodViewRail({ activePage, onNavigate }) {
     refresh();
     const timer = setInterval(() => refresh(true), POLL_MS);
     const onFocus = () => refresh(true);
+    const onExternalSync = () => refresh(true);
     window.addEventListener('focus', onFocus);
-    return () => { clearInterval(timer); window.removeEventListener('focus', onFocus); };
+    window.addEventListener('liv8:sync-complete', onExternalSync);
+    return () => { clearInterval(timer); window.removeEventListener('focus', onFocus); window.removeEventListener('liv8:sync-complete', onExternalSync); };
   }, [refresh]);
 
   const allowNotifications = async () => {
@@ -102,7 +104,7 @@ export default function GodViewRail({ activePage, onNavigate }) {
         <button onClick={() => refresh()} className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400" title="Refresh live data"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button>
       </div>
       <div className="relative h-[300px] bg-gradient-to-b from-purple-950/20 via-cyan-950/5 to-black overflow-hidden">
-        <img src={TWIN_IMAGE} alt="LIV8 digital twin" className="absolute inset-0 w-full h-full object-cover object-top opacity-90" />
+        <img src={digitalTwinJamaur} alt="Jamaur LIV8 digital twin" className="absolute inset-0 w-full h-full object-cover object-top opacity-95" />
         <div className="absolute inset-0 bg-gradient-to-t from-[#0b0c13] via-transparent to-transparent" />
         <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-black/60 border border-cyan-400/20 text-[10px] text-cyan-300">LIVE • {(activePage || 'command').replaceAll('-', ' ')}</div>
         {momentum != null && <div className="absolute bottom-4 right-4 w-16 h-16 rounded-full border-2 border-cyan-400/40 bg-black/70 grid place-items-center shadow-[0_0_24px_rgba(34,211,238,.18)]"><div className="text-center"><div className="text-xl font-bold text-white">{momentum}</div><div className="text-[8px] uppercase text-cyan-300">momentum</div></div></div>}
