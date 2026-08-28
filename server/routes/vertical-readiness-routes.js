@@ -38,7 +38,7 @@ export function registerVerticalReadinessRoutes(app) {
       probe('/api/ai/local/status'),
       probe('/api/calendar/upcoming?hours=24'),
       probe('/api/integrations/status'),
-      probe('/api/memory-vault/stats'),
+      probe('/api/memory/vault/stats'),
       probe('/api/shortcut/voice'),
     ]);
 
