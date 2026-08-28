@@ -16,7 +16,6 @@ import {
   LogOut,
   Shield,
   MessageSquare,
-  Newspaper,
   TrendingUp,
   Plug,
   Inbox,
@@ -39,7 +38,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { FEATURES } from '../config';
 
-// Highest Self OS — additive life-operating-system surfaces (feature-flagged).
+// Highest Self OS - stable life-operating-system anchors.
 const highestSelfItems = [
   { id: 'hs-today', label: 'Today', icon: Sunrise, flag: 'GLANCE' },
   { id: 'highest-self', label: 'Highest Self', icon: Sparkles, flag: 'TODAY' },
@@ -71,11 +70,14 @@ const menuItems = [
 ];
 
 const quickLinks = [
-  { label: 'Hybrid Funding', url: 'https://hybridfunding.co' },
-  { label: 'LIV8 Health', url: 'https://liv8health.com' },
+  { label: 'Command Center', url: 'https://command.liv8.co' },
+  { label: 'Hybrid Journal', url: 'https://hybridjournal.co' },
+  { label: 'OBS Remote', url: 'https://obsremote.liv8.co' },
   { label: 'Trade Hybrid', url: 'https://tradehybrid.co' },
   { label: 'GitHub', url: 'https://github.com/SuessVilliano' },
 ];
+
+const allNavItems = [...highestSelfItems, ...menuItems];
 
 function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
   const { theme, toggleTheme } = useTheme();
@@ -92,10 +94,43 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
     setHsOpen(next);
     try { localStorage.setItem('hs_group_open', next ? '1' : '0'); } catch {}
   };
-  // Auto-expand when you're on one of its pages so you never lose your place.
   const showHsItems = hsOpen || hsActive;
 
-  // --- Drag-to-reorder (persisted per list) ---
+  // Adaptive shortcuts: stable navigation remains intact, while this small block
+  // learns the pages used most often and most recently.
+  const [navUsage, setNavUsage] = React.useState(() => {
+    try { return JSON.parse(localStorage.getItem('nav_usage_v1') || '{}'); } catch { return {}; }
+  });
+
+  React.useEffect(() => {
+    if (!activePage || !allNavItems.some((item) => item.id === activePage)) return;
+    setNavUsage((previous) => {
+      const prior = previous[activePage] || { count: 0, last: 0 };
+      const next = {
+        ...previous,
+        [activePage]: { count: prior.count + 1, last: Date.now() }
+      };
+      try { localStorage.setItem('nav_usage_v1', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, [activePage]);
+
+  const smartItems = React.useMemo(() => {
+    const now = Date.now();
+    return allNavItems
+      .map((item, baseIndex) => {
+        const usage = navUsage[item.id] || { count: 0, last: 0 };
+        const hoursAgo = usage.last ? Math.max(0, (now - usage.last) / 3600000) : 9999;
+        const recencyBoost = usage.last ? Math.max(0, 14 - Math.min(14, hoursAgo / 6)) : 0;
+        const score = usage.count * 3 + recencyBoost - baseIndex * 0.001;
+        return { ...item, usage, score };
+      })
+      .filter((item) => item.usage.count > 0 || item.id === 'hs-today' || item.id === 'dashboard')
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 4);
+  }, [navUsage]);
+
+  // Drag-to-reorder persists the stable menus separately from Smart Shortcuts.
   const orderList = (items, key) => {
     try {
       const saved = JSON.parse(localStorage.getItem(key) || '[]');
@@ -130,29 +165,20 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
 
   const handleNavClick = (pageId) => {
     setActivePage(pageId);
-    // Close sidebar on mobile after navigation
-    if (window.innerWidth < 1024) {
-      onToggle?.();
-    }
+    if (window.innerWidth < 1024) onToggle?.();
   };
 
   return (
     <>
-      {/* Mobile overlay */}
       {isOpen && (
-        <div
-          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
-          onClick={onToggle}
-        />
+        <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={onToggle} />
       )}
 
-      {/* Sidebar */}
       <aside className={`
         fixed left-0 top-0 h-screen w-64 flex flex-col border-r transition-all duration-300 z-50
         ${isDark ? 'bg-[#050508] border-purple-900/30' : 'bg-white border-gray-200'}
         ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
       `}>
-        {/* Logo */}
         <div className={`p-6 border-b ${isDark ? 'border-purple-900/30' : 'border-gray-200'}`}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -161,29 +187,20 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
               </div>
               <div>
                 <h1 className={`text-lg font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>LIV8</h1>
-                <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>Command Center</p>
+                <p className="text-xs text-gray-500">Command Center</p>
               </div>
             </div>
             <div className="flex items-center gap-1">
               <button
                 onClick={toggleTheme}
-                className={`p-2 rounded-lg transition-colors ${
-                  isDark
-                    ? 'hover:bg-white/10 text-gray-400'
-                    : 'hover:bg-gray-100 text-gray-600'
-                }`}
+                className={`p-2 rounded-lg transition-colors ${isDark ? 'hover:bg-white/10 text-gray-400' : 'hover:bg-gray-100 text-gray-600'}`}
                 title={`Switch to ${isDark ? 'light' : 'dark'} mode`}
               >
                 {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
               </button>
-              {/* Mobile close button */}
               <button
                 onClick={onToggle}
-                className={`p-2 rounded-lg transition-colors lg:hidden ${
-                  isDark
-                    ? 'hover:bg-white/10 text-gray-400'
-                    : 'hover:bg-gray-100 text-gray-600'
-                }`}
+                className={`p-2 rounded-lg transition-colors lg:hidden ${isDark ? 'hover:bg-white/10 text-gray-400' : 'hover:bg-gray-100 text-gray-600'}`}
               >
                 <X className="w-5 h-5" />
               </button>
@@ -191,16 +208,40 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
           </div>
         </div>
 
-        {/* Navigation */}
         <nav className="flex-1 p-4 overflow-y-auto">
-          {/* Highest Self OS group */}
+          <div className="mb-5">
+            <div className="flex items-center justify-between px-4 mb-2">
+              <span className={`text-xs font-semibold uppercase tracking-wider ${isDark ? 'text-cyan-400/80' : 'text-cyan-700'}`}>Smart Shortcuts</span>
+              <span className="text-[10px] text-gray-500">learns your flow</span>
+            </div>
+            <div className={`rounded-xl p-2 border ${isDark ? 'bg-cyan-950/10 border-cyan-500/15' : 'bg-cyan-50 border-cyan-200'}`}>
+              {smartItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = activePage === item.id;
+                return (
+                  <button
+                    key={`smart-${item.id}`}
+                    onClick={() => handleNavClick(item.id)}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                      isActive
+                        ? 'bg-cyan-500/15 text-cyan-300'
+                        : isDark ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:bg-white'
+                    }`}
+                    title={`${item.usage.count || 0} visits - adapts based on frequency and recency`}
+                  >
+                    <Icon className="w-4 h-4 flex-shrink-0" />
+                    <span className="font-medium truncate">{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {highestSelfItems.length > 0 && (
             <div className="mb-6">
               <button
                 onClick={toggleHs}
-                className={`w-full flex items-center justify-between px-4 mb-2 text-xs font-semibold uppercase tracking-wider transition-colors ${
-                  isDark ? 'text-teal-500/70 hover:text-teal-400' : 'text-teal-600/80 hover:text-teal-600'
-                }`}
+                className={`w-full flex items-center justify-between px-4 mb-2 text-xs font-semibold uppercase tracking-wider transition-colors ${isDark ? 'text-teal-500/70 hover:text-teal-400' : 'text-teal-600/80 hover:text-teal-600'}`}
               >
                 <span className="flex items-center gap-1.5">
                   {showHsItems ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
@@ -209,29 +250,27 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
                 {!showHsItems && <span className="text-[10px] opacity-60 normal-case tracking-normal">{highestSelfItems.length} tabs</span>}
               </button>
               {showHsItems && (
-              <ul className="space-y-2">
-                {hsOrder.map((item, index) => {
-                  const Icon = item.icon;
-                  const isActive = activePage === item.id;
-                  return (
-                    <li key={item.id} {...dragProps('hs', index, hsOrder, setHsOrder, 'hs_menu_order_v1')}>
-                      <button
-                        onClick={() => handleNavClick(item.id)}
-                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 cursor-grab active:cursor-grabbing ${
-                          isActive
-                            ? 'bg-teal-600/20 text-teal-400 border border-teal-500/30'
-                            : isDark
-                              ? 'text-gray-400 hover:text-white hover:bg-white/5'
-                              : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                        }`}
-                      >
-                        <Icon className="w-5 h-5" />
-                        <span className="font-medium">{item.label}</span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
+                <ul className="space-y-2">
+                  {hsOrder.map((item, index) => {
+                    const Icon = item.icon;
+                    const isActive = activePage === item.id;
+                    return (
+                      <li key={item.id} {...dragProps('hs', index, hsOrder, setHsOrder, 'hs_menu_order_v1')}>
+                        <button
+                          onClick={() => handleNavClick(item.id)}
+                          className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 cursor-grab active:cursor-grabbing ${
+                            isActive
+                              ? 'bg-teal-600/20 text-teal-400 border border-teal-500/30'
+                              : isDark ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                          }`}
+                        >
+                          <Icon className="w-5 h-5" />
+                          <span className="font-medium">{item.label}</span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
               )}
             </div>
           )}
@@ -247,9 +286,7 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
                     className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 cursor-grab active:cursor-grabbing ${
                       isActive
                         ? 'bg-purple-600/20 text-purple-500 border border-purple-500/30'
-                        : isDark
-                          ? 'text-gray-400 hover:text-white hover:bg-white/5'
-                          : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                        : isDark ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
                     }`}
                   >
                     <Icon className="w-5 h-5" />
@@ -260,22 +297,15 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
             })}
           </ul>
 
-          {/* Admin Section */}
           {isAdmin && (
             <div className="mt-6">
-              <h3 className={`px-4 text-xs font-semibold uppercase tracking-wider mb-3 ${
-                isDark ? 'text-gray-500' : 'text-gray-400'
-              }`}>
-                Admin
-              </h3>
+              <h3 className={`px-4 text-xs font-semibold uppercase tracking-wider mb-3 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>Admin</h3>
               <button
                 onClick={() => handleNavClick('admin')}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${
                   activePage === 'admin'
                     ? 'bg-purple-600/20 text-purple-500 border border-purple-500/30'
-                    : isDark
-                      ? 'text-gray-400 hover:text-white hover:bg-white/5'
-                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    : isDark ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
                 }`}
               >
                 <Users className="w-5 h-5" />
@@ -284,13 +314,8 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
             </div>
           )}
 
-          {/* Quick Links */}
           <div className="mt-6">
-            <h3 className={`px-4 text-xs font-semibold uppercase tracking-wider mb-3 ${
-              isDark ? 'text-gray-500' : 'text-gray-400'
-            }`}>
-              Quick Links
-            </h3>
+            <h3 className={`px-4 text-xs font-semibold uppercase tracking-wider mb-3 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>Quick Links</h3>
             <ul className="space-y-1">
               {quickLinks.map((link) => (
                 <li key={link.label}>
@@ -298,11 +323,7 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
                     href={link.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className={`flex items-center gap-2 px-4 py-2 text-sm transition-colors ${
-                      isDark
-                        ? 'text-gray-500 hover:text-cyan-400'
-                        : 'text-gray-500 hover:text-purple-600'
-                    }`}
+                    className={`flex items-center gap-2 px-4 py-2 text-sm transition-colors ${isDark ? 'text-gray-500 hover:text-cyan-400' : 'text-gray-500 hover:text-purple-600'}`}
                   >
                     <ExternalLink className="w-3 h-3" />
                     {link.label}
@@ -313,38 +334,23 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
           </div>
         </nav>
 
-        {/* User Footer */}
         <div className={`p-4 border-t ${isDark ? 'border-purple-900/30' : 'border-gray-200'}`}>
-          <div className={`rounded-lg ${
-            isDark
-              ? 'bg-gradient-to-r from-purple-900/20 to-cyan-900/20 border border-purple-500/20'
-              : 'bg-gradient-to-r from-purple-50 to-cyan-50 border border-purple-200'
-          }`}>
+          <div className={`rounded-lg ${isDark ? 'bg-gradient-to-r from-purple-900/20 to-cyan-900/20 border border-purple-500/20' : 'bg-gradient-to-r from-purple-50 to-cyan-50 border border-purple-200'}`}>
             <div className="flex items-center gap-3 px-4 py-3">
               <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-cyan-500 flex items-center justify-center text-white font-bold text-sm">
                 {currentUser?.name?.charAt(0).toUpperCase() || 'U'}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <p className={`text-sm font-medium truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                    {currentUser?.name || 'User'}
-                  </p>
-                  {isAdmin && (
-                    <Shield className="w-3 h-3 text-purple-400 flex-shrink-0" />
-                  )}
+                  <p className={`text-sm font-medium truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>{currentUser?.name || 'User'}</p>
+                  {isAdmin && <Shield className="w-3 h-3 text-purple-400 flex-shrink-0" />}
                 </div>
-                <p className={`text-xs truncate ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>
-                  {currentUser?.agentName || 'Team Member'}
-                </p>
+                <p className="text-xs truncate text-gray-500">{currentUser?.agentName || 'Team Member'}</p>
               </div>
             </div>
             <button
               onClick={logout}
-              className={`w-full flex items-center justify-center gap-2 px-4 py-2 text-sm border-t transition-colors ${
-                isDark
-                  ? 'border-purple-500/20 text-gray-400 hover:text-red-400 hover:bg-red-500/10'
-                  : 'border-purple-200 text-gray-500 hover:text-red-500 hover:bg-red-50'
-              }`}
+              className={`w-full flex items-center justify-center gap-2 px-4 py-2 text-sm border-t transition-colors ${isDark ? 'border-purple-500/20 text-gray-400 hover:text-red-400 hover:bg-red-500/10' : 'border-purple-200 text-gray-500 hover:text-red-500 hover:bg-red-50'}`}
             >
               <LogOut className="w-4 h-4" />
               Sign Out
@@ -356,16 +362,11 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
   );
 }
 
-// Mobile menu toggle button component
 export function MobileMenuButton({ onClick, isDark }) {
   return (
     <button
       onClick={onClick}
-      className={`fixed top-4 left-4 z-30 p-3 rounded-lg shadow-lg lg:hidden transition-colors ${
-        isDark
-          ? 'bg-[#0a0a0f] border border-purple-900/30 text-white hover:bg-purple-900/20'
-          : 'bg-white border border-gray-200 text-gray-900 hover:bg-gray-50'
-      }`}
+      className={`fixed top-4 left-4 z-30 p-3 rounded-lg shadow-lg lg:hidden transition-colors ${isDark ? 'bg-[#0a0a0f] border border-purple-900/30 text-white hover:bg-purple-900/20' : 'bg-white border border-gray-200 text-gray-900 hover:bg-gray-50'}`}
     >
       <Menu className="w-6 h-6" />
     </button>
