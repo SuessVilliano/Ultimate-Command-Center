@@ -5,6 +5,7 @@ import Sidebar, { MobileMenuButton } from './components/Sidebar';
 import ChatWidget from './components/ChatWidget';
 import VoiceDictation from './components/VoiceDictation';
 import VaultLogin from './components/VaultLogin';
+import GodViewRail from './components/GodViewRail';
 import Dashboard from './pages/Dashboard';
 import CommandDashboard from './pages/CommandDashboard';
 import Projects from './pages/Projects';
@@ -107,9 +108,10 @@ function AppContent() {
     <div className="flex min-h-screen bg-theme transition-colors duration-300">
       <MobileMenuButton onClick={toggleSidebar} isDark={isDark} />
       <Sidebar activePage={activePage} setActivePage={setActivePage} isOpen={sidebarOpen} onToggle={toggleSidebar} />
-      <main className="flex-1 lg:ml-64 p-4 sm:p-6 lg:p-8 pt-20 lg:pt-8 min-h-screen">
+      <main className="flex-1 lg:ml-64 p-4 sm:p-6 lg:p-8 pt-20 lg:pt-8 min-h-screen 2xl:pr-[405px]">
         {renderPage()}
       </main>
+      <GodViewRail activePage={activePage} onNavigate={handleNavigate} />
       <ChatWidget onNavigate={handleNavigate} />
       <button
         onClick={() => setDictationOpen(true)}
