@@ -30,6 +30,7 @@ import ContentEngine from './pages/ContentEngine';
 import LifeMap from './pages/LifeMap';
 import HighestSelf from './pages/HighestSelf';
 import HealthCommandCenter from './pages/HealthCommandCenter';
+import MemoryVault from './pages/MemoryVault';
 import TradingProcess from './pages/TradingProcess';
 import FamilyOS from './pages/FamilyOS';
 import BusinessOS from './pages/BusinessOS';
@@ -93,6 +94,7 @@ function AppContent() {
       case 'highest-self': return <HighestSelf />;
       case 'life-map': return <LifeMap />;
       case 'health-os': return <HealthCommandCenter />;
+      case 'memory-vault': return <MemoryVault />;
       case 'trading-process': return <TradingProcess />;
       case 'family-os': return <FamilyOS />;
       case 'business-os': return <BusinessOS />;
