@@ -35,15 +35,9 @@ function wantsJournal(mode, text) {
 }
 
 async function askJuno(text) {
-  // Safe connected tools are always attempted first. Many useful Shortcut
-  // requests (calendar, health, projects, trading reads) can complete without
-  // needing a generative model at all.
   const operated = await operate(text);
   if (operated) return operated;
 
-  // Local Ollama lives on the user's Mac. A Render-hosted Shortcut request
-  // cannot reach 127.0.0.1 on that Mac until the authenticated local-AI tunnel
-  // is configured. Do not turn that expected network boundary into a 500.
   try {
     const ai = await ollama.chat([{ role: 'user', content: text }], {
       systemPrompt: getCommanderPrompt(),
@@ -74,6 +68,18 @@ export function registerShortcutRoutes(app) {
       healthFields: ['date','steps','active_calories','exercise_min','stand_hours','resting_hr','walking_hr','hrv','respiratory_rate','oxygen_saturation','sleep_hours','weight','body_fat'],
       returns: ['response', 'spokenText', 'lifeLogged', 'healthSynced', 'toolsUsed'],
       note: 'Remote generic AI requires the secure Mac local-AI tunnel; journal, health ingest, and connected tool routing remain available without it.',
+    });
+  });
+
+  // Browser-safe diagnostic so opening the URL directly no longer looks broken.
+  // The actual iPhone Shortcut still uses POST below.
+  app.get('/api/shortcut/voice', (req, res) => {
+    res.json({
+      ok: true,
+      endpoint: '/api/shortcut/voice',
+      methodRequired: 'POST',
+      configured: !!expectedToken(),
+      message: 'LIV8 Shortcut endpoint is live. Use POST from iOS Shortcuts with Authorization: Bearer <token> and a JSON body containing text, mode, and source.',
     });
   });
 
