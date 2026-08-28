@@ -6,6 +6,7 @@ import ChatWidget from './components/ChatWidget';
 import VoiceDictation from './components/VoiceDictation';
 import VaultLogin from './components/VaultLogin';
 import Dashboard from './pages/Dashboard';
+import CommandDashboard from './pages/CommandDashboard';
 import Projects from './pages/Projects';
 import Agents from './pages/Agents';
 import Actions from './pages/Actions';
@@ -70,7 +71,7 @@ function AppContent() {
 
   const renderPage = () => {
     switch (activePage) {
-      case 'dashboard': return <Dashboard />;
+      case 'dashboard': return <CommandDashboard />;
       case 'projects': return <Projects />;
       case 'agents': return <Agents />;
       case 'actions': return <Actions />;
@@ -96,7 +97,7 @@ function AppContent() {
       case 'business-os': return <BusinessOS />;
       case 'hs-today': return <Today onNavigate={setActivePage} />;
       case 'glasses': return <Glasses onExit={() => setActivePage('dashboard')} />;
-      default: return <Dashboard />;
+      default: return <CommandDashboard />;
     }
   };
 
