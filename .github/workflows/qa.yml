@@ -14,7 +14,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.16.0
           cache: npm
       - name: Install frontend dependencies
         run: npm ci
@@ -25,4 +25,37 @@ jobs:
         run: npm ci
       - name: Backend module import smoke test
         working-directory: server
-        run: node -e "import('./routes/time-intelligence-routes.js').then(()=>import('./routes/local-ai-routes.js')).then(()=>import('./routes/highest-self-routes.js')).then(()=>console.log('backend route imports ok'))"
+        run: node -e "import('./routes/time-intelligence-routes.js').then(()=>import('./routes/local-ai-routes.js')).then(()=>import('./routes/highest-self-routes.js')).then(()=>import('./routes/shortcut-routes.js')).then(()=>console.log('backend route imports ok'))"
+      - name: Boot backend and verify health endpoint
+        working-directory: server
+        env:
+          PORT: '3005'
+          NODE_ENV: test
+          SCHEDULE_ENABLED: 'false'
+          PROACTIVE_AI_ENABLED: 'false'
+          LOCAL_AI_FIRST: 'false'
+          ALLOW_PAID_AI_FALLBACK: 'false'
+          AI_PROVIDER: gemini
+        run: |
+          node server.js > /tmp/ucc-server.log 2>&1 &
+          PID=$!
+          ok=0
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:3005/health >/tmp/ucc-health.json; then
+              ok=1
+              break
+            fi
+            if ! kill -0 "$PID" 2>/dev/null; then
+              echo 'Backend process exited during startup:'
+              cat /tmp/ucc-server.log
+              exit 1
+            fi
+            sleep 1
+          done
+          if [ "$ok" != '1' ]; then
+            echo 'Backend failed to become healthy:'
+            cat /tmp/ucc-server.log
+            exit 1
+          fi
+          cat /tmp/ucc-health.json
+          kill "$PID" || true
