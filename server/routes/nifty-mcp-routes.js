@@ -1,6 +1,8 @@
 import { niftyMcp } from '../lib/nifty-mcp-client.js';
 import * as unifiedInbox from '../lib/unified-inbox.js';
 
+const ACTIVE_PORTFOLIO_ID = process.env.NIFTY_ACTIVE_PORTFOLIO_ID || 'u45ydW04vO';
+
 function unwrapToolResult(result) {
   if (!result) return null;
   if (result.structuredContent) return result.structuredContent;
@@ -19,6 +21,17 @@ function rowsFrom(payload) {
     if (Array.isArray(payload[key])) return payload[key];
   }
   return [];
+}
+
+function activeProject(project) {
+  if (!project) return true; // direct messages / non-project contexts remain valid
+  if (project.archived === true) return false;
+  const portfolioId = project.portfolioId || project.portfolio?.id || null;
+  return !ACTIVE_PORTFOLIO_ID || portfolioId === ACTIVE_PORTFOLIO_ID;
+}
+
+function messageProject(message) {
+  return message?.task?.project || message?.chat?.project || message?.project || null;
 }
 
 async function getCommunicationTool(mode = 'query') {
@@ -48,25 +61,29 @@ export function registerNiftyMcpRoutes(app) {
   });
 
   // Nifty chats become first-class Command Center inbox channels.
+  // Project chats are deliberately scoped to the active 2026 portfolio so old
+  // work cannot pollute Juno's current operating view.
   app.get('/api/nifty/mcp/chats', async (req, res) => {
     try {
       const tool = await getCommunicationTool('query');
       if (!tool) return res.status(501).json({ error: 'Nifty MCP communication reads are unavailable.' });
       const result = await niftyMcp.callTool(tool.name, {
         resource: 'chat', operation: 'list', limit: Math.min(Number(req.query.limit) || 50, 100),
-        sort: '-lastMessageAt', expand: 'chatMembers.member,project'
+        sort: '-lastMessageAt', expand: 'chatMembers.member,project,project.portfolio'
       });
-      const chats = rowsFrom(unwrapToolResult(result)).map(chat => ({
-        id: chat.id,
-        name: chat.name || chat.project?.name || 'Direct message',
-        description: chat.description || (chat.project?.name ? `Nifty · ${chat.project.name}` : 'Nifty conversation'),
-        lastMessageAt: chat.lastMessageAt || chat.updatedAt || chat.createdAt,
-        type: chat.type || 'chat',
-        members: chat.chatMembers || [],
-        projectId: chat.projectId || chat.project?.id || null,
-        source: 'nifty'
-      }));
-      res.json({ chats });
+      const chats = rowsFrom(unwrapToolResult(result))
+        .filter(chat => activeProject(chat.project))
+        .map(chat => ({
+          id: chat.id,
+          name: chat.name || chat.project?.name || 'Direct message',
+          description: chat.description || (chat.project?.name ? `Nifty · ${chat.project.name}` : 'Nifty conversation'),
+          lastMessageAt: chat.lastMessageAt || chat.updatedAt || chat.createdAt,
+          type: chat.type || 'chat',
+          members: chat.chatMembers || [],
+          projectId: chat.projectId || chat.project?.id || null,
+          source: 'nifty'
+        }));
+      res.json({ chats, scope: '2026-active' });
     } catch (error) { res.status(500).json({ error: error.message }); }
   });
 
@@ -76,10 +93,10 @@ export function registerNiftyMcpRoutes(app) {
       if (!tool) return res.status(501).json({ error: 'Nifty MCP communication reads are unavailable.' });
       const result = await niftyMcp.callTool(tool.name, {
         resource: 'message', operation: 'list', chatId: req.params.chatId,
-        limit: Math.min(Number(req.query.limit) || 100, 200), sort: 'createdAt', expand: 'author,chat,parentMessage'
+        limit: Math.min(Number(req.query.limit) || 100, 200), sort: 'createdAt', expand: 'author,chat,chat.project,chat.project.portfolio,parentMessage'
       });
       const messages = rowsFrom(unwrapToolResult(result))
-        .filter(message => !message.subtype)
+        .filter(message => !message.subtype && activeProject(message.chat?.project))
         .map(message => ({
           id: message.id,
           content: message.text || message.content || '',
@@ -99,12 +116,15 @@ export function registerNiftyMcpRoutes(app) {
       if (!commTool) return res.status(501).json({ error: 'This Nifty MCP server does not expose communication/message reads.' });
       const limit = Math.min(Number(req.body?.limit) || 100, 250);
       const toolResult = await niftyMcp.callTool(commTool.name, {
-        resource: 'message', operation: 'list', limit, sort: '-createdAt', expand: 'author,chat,task,document,file,parentMessage'
+        resource: 'message', operation: 'list', limit, sort: '-createdAt',
+        expand: 'author,chat,chat.project,chat.project.portfolio,task,task.project,task.project.portfolio,document,file,parentMessage'
       });
       const messages = rowsFrom(unwrapToolResult(toolResult));
       let synced = 0;
+      let skippedArchived = 0;
       for (const message of messages) {
         if (!message?.id || message.subtype) continue;
+        if (!activeProject(messageProject(message))) { skippedArchived++; continue; }
         const text = message.text || message.content || '';
         if (!text && !message.sharedDocumentId) continue;
         const author = message.author?.name || message.author?.email || 'Nifty teammate';
@@ -122,7 +142,7 @@ export function registerNiftyMcpRoutes(app) {
         });
         synced++;
       }
-      res.json({ success: true, synced, fetched: messages.length, source: 'nifty-mcp' });
+      res.json({ success: true, synced, skippedArchived, fetched: messages.length, source: 'nifty-mcp', scope: '2026-active' });
     } catch (error) { res.status(500).json({ error: error.message }); }
   });
 
