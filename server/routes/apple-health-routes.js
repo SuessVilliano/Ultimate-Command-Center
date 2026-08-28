@@ -1,4 +1,5 @@
 import * as appleHealth from '../lib/apple-health-adapter.js';
+import { registerHealthMetricsRoutes } from './health-metrics-routes.js';
 
 function bearer(req) {
   const auth = req.headers.authorization || '';
@@ -6,6 +7,8 @@ function bearer(req) {
 }
 
 export function registerAppleHealthRoutes(app) {
+  registerHealthMetricsRoutes(app);
+
   app.get('/api/hs/health/apple/status', (req, res) => {
     try { res.json(appleHealth.snapshot()); }
     catch (error) { res.status(500).json({ error: error.message }); }
