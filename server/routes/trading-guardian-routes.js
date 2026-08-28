@@ -1,4 +1,4 @@
-import { evaluateGuardian, parseHybridAiAlert, SESSION_WINDOWS_ET, QQE_FACTORS, HYBRID_AI_ALERT_TYPES } from '../lib/trading-guardian-rules.js';
+import { evaluateGuardian, parseHybridAiAlert, SESSION_WINDOWS_ET, QQE_FACTORS, HYBRID_AI_ALERT_TYPES, AUTO_HYBRID_AI } from '../lib/trading-guardian-rules.js';
 
 const PORT = () => process.env.PORT || 3005;
 async function internal(path, { method = 'GET', body } = {}) {
@@ -47,33 +47,42 @@ async function enrichGuardianInput(input, symbol, tools) {
   } catch (e) { tools.push({ name: 'hybrid_journal.snapshot', ok: false, error: e.message }); }
 }
 
+function alertInput(body = {}) {
+  if (body.alert && typeof body.alert === 'object') return body.alert;
+  if (body.type || body.event || body.side) return body;
+  return body.message || body.text || '';
+}
+
 export function registerTradingGuardianRoutes(app) {
   app.get('/api/trading/guardian/status', (req, res) => res.json({
     ok: true,
     advisoryOnly: true,
     executionAllowed: false,
-    sources: ['MNQ Trading Bible', 'QQE Framework', 'Hybrid AI Alert System', 'Hybrid Journal MCP when configured'],
+    sources: ['Auto Hybrid AI', 'MNQ Trading Bible', 'QQE Framework', 'Hybrid Journal MCP when configured'],
+    autoHybridAi: AUTO_HYBRID_AI,
     sessionWindows: SESSION_WINDOWS_ET,
     qqeFactors: QQE_FACTORS,
     hybridAiAlertTypes: HYBRID_AI_ALERT_TYPES,
+    preferredWebhook: {
+      format: 'JSON',
+      fields: ['type','side','symbol','timeframe','price','adx','tenkan','kijun','sma','atr'],
+      note: 'A technical candidate is never automatic trade approval.'
+    }
   }));
 
   app.post('/api/trading/guardian/parse-alert', (req, res) => {
-    const alert = parseHybridAiAlert(req.body?.message || req.body?.text || '');
+    const alert = parseHybridAiAlert(alertInput(req.body));
     res.status(alert.type === 'UNKNOWN' ? 422 : 200).json({ ok: alert.type !== 'UNKNOWN', alert });
   });
 
-  // Accepts the exact text emitted by the TradingView Hybrid AI alert script.
-  // Entry alerts are deliberately treated as candidates, never automatic trade approvals.
   app.post('/api/trading/guardian/alert', async (req, res) => {
     try {
-      const raw = req.body?.message || req.body?.text || '';
-      const alert = parseHybridAiAlert(raw);
+      const alert = parseHybridAiAlert(alertInput(req.body));
       if (alert.type === 'UNKNOWN') return res.status(422).json({ ok: false, error: 'Unrecognized Hybrid AI alert', alert });
       const symbol = String(req.body?.symbol || alert.symbol || 'MNQ').toUpperCase();
       const input = { ...(req.body || {}), symbol, alert };
       const tools = [];
-      if (req.body?.enrich !== false && alert.type.startsWith('ENTRY_')) await enrichGuardianInput(input, symbol, tools);
+      if (req.body?.enrich !== false && ['AUTO_BUY_CANDIDATE','AUTO_SELL_CANDIDATE'].includes(alert.type)) await enrichGuardianInput(input, symbol, tools);
       const guardian = evaluateGuardian(input);
       res.json({ ok: true, symbol, alert, guardian, inputs: input, tools });
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
@@ -83,7 +92,7 @@ export function registerTradingGuardianRoutes(app) {
     try {
       const input = { ...(req.body || {}) };
       const enrich = req.body?.enrich !== false;
-      const parsed = typeof input.alert === 'string' ? parseHybridAiAlert(input.alert) : null;
+      const parsed = input.alert ? parseHybridAiAlert(input.alert) : null;
       if (parsed && parsed.type !== 'UNKNOWN') input.alert = parsed;
       const symbol = String(req.body?.symbol || parsed?.symbol || 'MNQ').toUpperCase();
       const tools = [];
