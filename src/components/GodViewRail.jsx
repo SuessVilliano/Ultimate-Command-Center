@@ -3,7 +3,7 @@ import { Activity, Bell, BellRing, Brain, CalendarDays, Heart, RefreshCw, Shield
 import { API_URL } from '../config';
 import * as hs from '../services/highestSelfService';
 
-const POLL_MS = 60_000;
+const POLL_MS = 5 * 60_000;
 const LS_SEEN = 'liv8_signal_seen_v1';
 const TWIN_IMAGE = '/digital-twin.svg';
 
