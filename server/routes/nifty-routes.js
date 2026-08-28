@@ -10,6 +10,16 @@ import { registerLocalWorkspaceMcpRoutes } from './local-workspace-mcp-routes.js
 import { registerTradingGuardianRoutes } from './trading-guardian-routes.js';
 import { registerVerticalReadinessRoutes } from './vertical-readiness-routes.js';
 
+const ACTIVE_PORTFOLIO_ID = process.env.NIFTY_ACTIVE_PORTFOLIO_ID || 'u45ydW04vO';
+
+function activeProjectsOnly(payload) {
+  const keep = project => project && project.archived !== true && (!ACTIVE_PORTFOLIO_ID || project.portfolioId === ACTIVE_PORTFOLIO_ID || project.portfolio?.id === ACTIVE_PORTFOLIO_ID);
+  if (Array.isArray(payload)) return payload.filter(keep);
+  if (Array.isArray(payload?.projects)) return { ...payload, projects: payload.projects.filter(keep) };
+  if (Array.isArray(payload?.data)) return { ...payload, data: payload.data.filter(keep) };
+  return payload;
+}
+
 export function registerNiftyRoutes(app) {
   // Headless operating bridges. Legacy Nifty REST/OAuth routes below remain
   // available as a compatibility fallback while Command Center uses MCP first.
@@ -64,7 +74,7 @@ export function registerNiftyRoutes(app) {
   });
 
   app.get('/api/nifty/projects', async (req, res) => {
-    try { res.json(await nifty.getProjects()); }
+    try { res.json(activeProjectsOnly(await nifty.getProjects())); }
     catch (error) { res.status(500).json({ error: error.message }); }
   });
   app.get('/api/nifty/projects/:projectId', async (req, res) => {
