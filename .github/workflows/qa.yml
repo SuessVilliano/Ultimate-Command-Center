@@ -1,8 +1,6 @@
 name: Command Center QA
 
 on:
-  push:
-    branches: [feat/live-god-view-signal-center]
   pull_request:
     branches: [master]
 
@@ -25,8 +23,8 @@ jobs:
         run: npm ci
       - name: Backend module import smoke test
         working-directory: server
-        run: node -e "import('./routes/time-intelligence-routes.js').then(()=>import('./routes/local-ai-routes.js')).then(()=>import('./routes/highest-self-routes.js')).then(()=>import('./routes/shortcut-routes.js')).then(()=>console.log('backend route imports ok'))"
-      - name: Boot backend and verify health endpoint
+        run: node -e "import('./routes/time-intelligence-routes.js').then(()=>import('./routes/local-ai-routes.js')).then(()=>import('./routes/highest-self-routes.js')).then(()=>import('./routes/shortcut-routes.js')).then(()=>import('./routes/local-workspace-mcp-routes.js')).then(()=>import('./routes/trading-guardian-routes.js')).then(()=>import('./routes/vertical-readiness-routes.js')).then(()=>console.log('backend route imports ok'))"
+      - name: Boot backend and test operator verticals
         working-directory: server
         env:
           PORT: '3005'
@@ -36,15 +34,17 @@ jobs:
           LOCAL_AI_FIRST: 'false'
           ALLOW_PAID_AI_FALLBACK: 'false'
           AI_PROVIDER: gemini
+          LOCAL_WORKSPACE_ROOTS: '..'
+          LOCAL_WORKSPACE_WRITE_ENABLED: 'false'
         run: |
+          set -e
           node server.js > /tmp/ucc-server.log 2>&1 &
           PID=$!
+          cleanup() { kill "$PID" 2>/dev/null || true; }
+          trap cleanup EXIT
           ok=0
           for i in {1..30}; do
-            if curl -fsS http://127.0.0.1:3005/health >/tmp/ucc-health.json; then
-              ok=1
-              break
-            fi
+            if curl -fsS http://127.0.0.1:3005/health >/tmp/ucc-health.json; then ok=1; break; fi
             if ! kill -0 "$PID" 2>/dev/null; then
               echo 'Backend process exited during startup:'
               cat /tmp/ucc-server.log
@@ -58,4 +58,33 @@ jobs:
             exit 1
           fi
           cat /tmp/ucc-health.json
-          kill "$PID" || true
+
+          echo '--- MCP status ---'
+          curl -fsS http://127.0.0.1:3005/api/mcp/status | tee /tmp/mcp.json
+          grep -q 'workspace_search' /tmp/mcp.json
+
+          echo '--- MCP tools/list ---'
+          curl -fsS -X POST http://127.0.0.1:3005/mcp -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | tee /tmp/mcp-tools.json
+          grep -q 'workspace_read' /tmp/mcp-tools.json
+          grep -q 'workspace_write' /tmp/mcp-tools.json
+
+          echo '--- Trading Guardian ---'
+          curl -fsS http://127.0.0.1:3005/api/trading/guardian/status | tee /tmp/guardian-status.json
+          grep -q '"executionAllowed":false' /tmp/guardian-status.json
+          curl -fsS -X POST http://127.0.0.1:3005/api/trading/guardian/evaluate -H 'Content-Type: application/json' -d '{"symbol":"MNQ","signalGrade":"A+","confidence":90,"qqeScore":12,"bias":"BUY","riskPct":0.4,"tradesToday":1,"consecutiveLosses":0,"enrich":false}' | tee /tmp/guardian-eval.json
+          grep -q '"executionAllowed":false' /tmp/guardian-eval.json
+
+          echo '--- Voice/Shortcut ---'
+          curl -fsS http://127.0.0.1:3005/api/shortcut/voice | tee /tmp/shortcut.json
+          grep -q 'POST' /tmp/shortcut.json
+
+          echo '--- Memory Vault ---'
+          curl -fsS http://127.0.0.1:3005/api/memory/vault/stats | tee /tmp/memory.json
+          grep -q '"ok":true' /tmp/memory.json
+
+          echo '--- Vertical readiness matrix ---'
+          curl -fsS http://127.0.0.1:3005/api/system/verticals | tee /tmp/verticals.json
+          grep -q 'Trading Guardian' /tmp/verticals.json
+          grep -q 'Mac Workspace MCP' /tmp/verticals.json
+          grep -q 'Creator Control Room' /tmp/verticals.json
+          grep -q 'Agent Hierarchy' /tmp/verticals.json
