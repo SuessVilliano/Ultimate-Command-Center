@@ -52,6 +52,21 @@ function daysBetween(start, end) {
   return Math.max(1, Math.round((new Date(end) - new Date(start)) / 86400000) + 1);
 }
 
+function rowDate(row) {
+  return String(row?.date || row?.day || row?.start_date || row?.created_at || row?.timestamp || '').slice(0, 10);
+}
+
+function filterRowsToWindow(payload, window) {
+  if (!payload) return payload;
+  const rows = Array.isArray(payload) ? payload : (Array.isArray(payload.rows) ? payload.rows : null);
+  if (!rows) return payload;
+  const filtered = rows.filter(r => {
+    const d = rowDate(r);
+    return d && d >= window.start && d <= window.end;
+  });
+  return Array.isArray(payload) ? filtered : { ...payload, rows: filtered };
+}
+
 async function internal(path, { method = 'GET', body } = {}) {
   const res = await fetch(`http://127.0.0.1:${PORT()}${path}`, {
     method,
@@ -67,8 +82,12 @@ async function internal(path, { method = 'GET', body } = {}) {
 
 async function source(name, fn) {
   const started = Date.now();
-  try { return { name, ok: true, ms: Date.now() - started, data: await fn() }; }
-  catch (e) { return { name, ok: false, ms: Date.now() - started, error: e?.message || 'Unavailable' }; }
+  try {
+    const data = await fn();
+    return { name, ok: true, ms: Date.now() - started, data };
+  } catch (e) {
+    return { name, ok: false, ms: Date.now() - started, error: e?.message || 'Unavailable' };
+  }
 }
 
 function clip(v, max = 7000) {
@@ -78,14 +97,18 @@ function clip(v, max = 7000) {
 }
 
 async function collect(window) {
+  const now = ymd(new Date());
   const span = Math.min(daysBetween(window.start, window.end), 365);
+  const historyLookback = window.direction === 'past'
+    ? Math.min(daysBetween(window.start, now), 365)
+    : Math.max(Math.min(span, 365), 7);
   const daily = window.start === window.end;
-  const past = window.direction === 'past';
   const future = window.direction === 'future';
+
   const jobs = [
     source('nifty.projects', () => internal('/api/nifty/projects')),
     source('nifty.chats', () => internal('/api/nifty/mcp/chats?limit=12')),
-    source('apple_health.history', () => internal(`/api/hs/health/apple/history?days=${Math.max(span, 7)}`)),
+    source('apple_health.history', async () => filterRowsToWindow(await internal(`/api/hs/health/apple/history?days=${historyLookback}`), window)),
     source('oura.snapshot', () => internal('/api/hs/health/oura/snapshot')),
     source('ghl.opportunities', () => internal('/api/ghl/opportunities')),
     source('integrations.status', () => internal('/api/integrations/status')),
@@ -96,6 +119,10 @@ async function collect(window) {
     jobs.push(source('highest_self.reflection', () => internal(`/api/hs/reflection?date=${window.start}`)));
     jobs.push(source('highest_self.hour_of_me', () => internal(`/api/hs/hour-of-me?date=${window.start}`)));
     jobs.push(source('health_os.day', () => internal(`/api/hs/health/daily?date=${window.start}`)));
+  }
+
+  if (window.unit === 'week') {
+    jobs.push(source('highest_self.weekly_review', () => internal(`/api/hs/weekly-review?week_start=${window.start}`)));
   }
 
   jobs.push(source('hybrid_journal.performance', () => internal('/api/trading/hybrid-journal/analyze', {
@@ -109,9 +136,7 @@ async function collect(window) {
   } else if (future) {
     const hours = Math.min(span * 24, 24 * 60);
     jobs.push(source('calendar.upcoming', () => internal(`/api/calendar/upcoming?hours=${hours}`)));
-  } else if (past) {
-    jobs.push(source('activity.recent', () => internal('/api/activity/what-was-i-doing')));
-  } else {
+  } else if (window.direction === 'present') {
     jobs.push(source('calendar.upcoming', () => internal('/api/calendar/upcoming?hours=336')));
   }
 
@@ -135,7 +160,7 @@ function localGoalContext(body = {}) {
 
 async function synthesize(window, results, body) {
   const mode = window.direction === 'past' ? 'RECAP' : window.direction === 'future' ? 'LOOK AHEAD' : 'TRACKING';
-  const prompt = `${getCommanderPrompt()}\n\nTIME INTELLIGENCE MODE: ${mode}\nWINDOW: ${window.label} (${window.start} through ${window.end})\n\nLOCAL GOALS / FOCUS CONTEXT:\n${localGoalContext(body)}\n\nCONNECTED SOURCE DATA:\n${sourceContext(results)}\n\nReturn STRICT JSON only with this shape:\n{\n  \"headline\": \"one sharp sentence\",\n  \"summary\": \"2-4 sentence executive summary\",\n  \"score\": 0-100,\n  \"status\": \"on_track|watch|off_track|insufficient_data\",\n  \"wins\": [\"...\"],\n  \"misses\": [\"...\"],\n  \"goalAlignment\": [ { \"goal\": \"...\", \"status\": \"on_track|watch|off_track|unknown\", \"evidence\": \"...\" } ],\n  \"attention\": [\"...\"],\n  \"opportunities\": [\"...\"],\n  \"nextActions\": [\"...\"],\n  \"questions\": [\"...\"]\n}\n\nRules: use only confirmed data. Distinguish missing data from poor performance. Never invent completed work, trading results, health metrics, appointments, messages, or revenue. Keep arrays concise (max 5 each). For future windows, misses should be empty and nextActions should emphasize preparation. For past windows, emphasize what happened vs goals. For present windows, emphasize pace and what must happen next.`;
+  const prompt = `${getCommanderPrompt()}\n\nTIME INTELLIGENCE MODE: ${mode}\nWINDOW: ${window.label} (${window.start} through ${window.end})\n\nLOCAL GOALS / FOCUS CONTEXT:\n${localGoalContext(body)}\n\nCONNECTED SOURCE DATA:\n${sourceContext(results)}\n\nReturn STRICT JSON only with this shape:\n{\n  \"headline\": \"one sharp sentence\",\n  \"summary\": \"2-4 sentence executive summary\",\n  \"score\": 0-100,\n  \"status\": \"on_track|watch|off_track|insufficient_data\",\n  \"wins\": [\"...\"],\n  \"misses\": [\"...\"],\n  \"goalAlignment\": [ { \"goal\": \"...\", \"status\": \"on_track|watch|off_track|unknown\", \"evidence\": \"...\" } ],\n  \"attention\": [\"...\"],\n  \"opportunities\": [\"...\"],\n  \"nextActions\": [\"...\"],\n  \"questions\": [\"...\"]\n}\n\nRules: use only confirmed data. Distinguish missing data from poor performance. Never invent completed work, trading results, health metrics, appointments, messages, or revenue. A current-state source such as Nifty projects or GHL opportunities may inform what is open now, but must not be treated as proof that something happened inside a historical window unless timestamps confirm it. Keep arrays concise (max 5 each). For future windows, misses should be empty and nextActions should emphasize preparation. For past windows, emphasize what happened vs goals. For present windows, emphasize pace and what must happen next.`;
 
   const ai = await ollama.chat([{ role: 'user', content: `Build my ${window.label.toLowerCase()} command summary.` }], {
     systemPrompt: prompt,
