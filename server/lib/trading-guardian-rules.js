@@ -1,5 +1,6 @@
-// Machine-readable guardrails distilled from the user's MNQ Trading Bible and QQE framework.
-// These rules advise/score only. They never place or modify a live order.
+// Machine-readable guardrails distilled from the user's MNQ Trading Bible, QQE framework,
+// and Hybrid AI TradingView alert script. These rules advise/score only. They never
+// place or modify a live order.
 
 export const SESSION_WINDOWS_ET = [
   { id: 'evening', start: 18, end: 22, label: 'Evening', posture: 'WATCH', note: 'Mark the range; do not force entries.' },
@@ -18,6 +19,26 @@ export const QQE_FACTORS = [
   'consecutive direction days', 'gap alignment', 'range vs average', 'volume confirmation',
   'time of sweep', 'DXY', 'yields', 'event proximity', 'prior session outcome'
 ];
+
+export const HYBRID_AI_ALERT_TYPES = ['ENTRY_BUY', 'ENTRY_SELL', 'TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'STOP_LOSS_HIT'];
+
+/**
+ * Parse the exact alert strings emitted by Hybrid AI – Signals + TP/SL Alerts.
+ * Important: ENTRY_* is a raw 9/21 SMA crossover event from TradingView, not a
+ * qualified trade by itself. Qualification happens later through Bible + QQE + risk.
+ */
+export function parseHybridAiAlert(message = '') {
+  const text = String(message || '').trim();
+  let m = text.match(/^BUY ENTRY\s+([^\s]+)\s+@\s+(-?\d+(?:\.\d+)?)$/i);
+  if (m) return { type: 'ENTRY_BUY', side: 'BUY', symbol: m[1].toUpperCase(), price: Number(m[2]), raw: text };
+  m = text.match(/^SELL ENTRY\s+([^\s]+)\s+@\s+(-?\d+(?:\.\d+)?)$/i);
+  if (m) return { type: 'ENTRY_SELL', side: 'SELL', symbol: m[1].toUpperCase(), price: Number(m[2]), raw: text };
+  m = text.match(/^TP([123]) HIT\s+([^\s]+)$/i);
+  if (m) return { type: `TP${m[1]}_HIT`, symbol: m[2].toUpperCase(), raw: text };
+  m = text.match(/^STOP LOSS HIT\s+([^\s]+)$/i);
+  if (m) return { type: 'STOP_LOSS_HIT', symbol: m[1].toUpperCase(), raw: text };
+  return { type: 'UNKNOWN', raw: text };
+}
 
 export function qqeGrade(score) {
   const s = Number(score);
@@ -59,6 +80,18 @@ export function evaluateGuardian(input = {}) {
   lower(session.posture === 'PRIMARY' || session.posture === 'SETUP' ? 'GREEN' : session.posture === 'RED' ? 'RED' : 'YELLOW');
   reasons.push(`${session.label}: ${session.note}`);
 
+  const alert = typeof input.alert === 'string' ? parseHybridAiAlert(input.alert) : input.alert;
+  if (alert?.type && alert.type !== 'UNKNOWN') {
+    if (alert.type.startsWith('ENTRY_')) {
+      lower('YELLOW');
+      reasons.push(`Hybrid AI ${alert.type.replace('_', ' ')} is a raw 9/21 SMA crossover alert, not trade approval. Bible/QQE/risk confirmation is still required.`);
+    } else if (alert.type.startsWith('TP')) {
+      reasons.push(`${alert.type.replaceAll('_', ' ')} is a lifecycle/management alert, not a new-entry signal.`);
+    } else if (alert.type === 'STOP_LOSS_HIT') {
+      reasons.push('Stop-loss lifecycle alert recorded; do not reinterpret it as a reversal entry without a fresh qualified setup.');
+    }
+  }
+
   const day = session.weekday;
   if (day === 'Sun' && session.id === 'evening') { lower('RED'); reasons.push('Sunday evening is a Bible no-trade condition.'); }
 
@@ -77,6 +110,10 @@ export function evaluateGuardian(input = {}) {
   const bias = String(input.bias || '').toUpperCase();
   if (bias === 'NEUTRAL') { lower('RED'); reasons.push('QQE directional bias is NEUTRAL: sit out.'); }
   if (!bias) { lower('YELLOW'); reasons.push('Directional bias is unavailable.'); }
+  if (alert?.side && ['LONG','SHORT','BUY','SELL'].includes(bias)) {
+    const normalizedBias = bias === 'LONG' ? 'BUY' : bias === 'SHORT' ? 'SELL' : bias;
+    if (normalizedBias !== alert.side) { lower('RED'); reasons.push(`Raw Hybrid AI side ${alert.side} conflicts with QQE bias ${bias}.`); }
+  }
 
   const riskPct = Number(input.riskPct);
   if (Number.isFinite(riskPct) && riskPct > 0.4) { lower('RED'); reasons.push(`Planned risk ${riskPct}% exceeds the 0.4% survival rule.`); }
@@ -92,10 +129,11 @@ export function evaluateGuardian(input = {}) {
     posture,
     label: posture === 'GREEN' ? 'TRADE WINDOW QUALIFIED' : posture === 'YELLOW' ? 'WAIT / SELECTIVE' : 'DO NOT TRADE',
     session,
+    alert: alert?.type ? alert : undefined,
     qqe,
     vix,
     reasons,
-    sourceRules: 'MNQ Trading Bible + QQE Framework',
+    sourceRules: 'MNQ Trading Bible + QQE Framework + Hybrid AI Alert System',
     executionAllowed: false,
     note: 'Guardian is advisory. Live execution remains separately confirmation-gated.'
   };
