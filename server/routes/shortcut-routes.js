@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import * as journal from '../lib/life-journal-db.js';
+import * as appleHealth from '../lib/apple-health-adapter.js';
 import { classifyLifeObservation } from './life-journal-routes.js';
 import { operate } from './operator-routes.js';
 import * as ollama from '../lib/ollama-provider.js';
@@ -49,9 +50,10 @@ export function registerShortcutRoutes(app) {
     res.json({
       ok: true,
       configured: !!expectedToken(),
-      modes: ['auto', 'journal', 'assistant'],
-      accepts: ['text', 'transcript', 'mode', 'source', 'metadata'],
-      returns: ['response', 'spokenText', 'lifeLogged', 'toolsUsed'],
+      modes: ['auto', 'journal', 'assistant', 'sync'],
+      accepts: ['text', 'transcript', 'mode', 'source', 'metadata', 'health'],
+      healthFields: ['date','steps','active_calories','exercise_min','stand_hours','resting_hr','walking_hr','hrv','respiratory_rate','oxygen_saturation','sleep_hours','weight','body_fat'],
+      returns: ['response', 'spokenText', 'lifeLogged', 'healthSynced', 'toolsUsed'],
     });
   });
 
@@ -61,8 +63,27 @@ export function registerShortcutRoutes(app) {
 
       const text = String(req.body?.text || req.body?.transcript || '').trim();
       const mode = String(req.body?.mode || 'auto').toLowerCase();
-      if (!text) return res.status(400).json({ ok: false, error: 'text or transcript is required' });
-      if (!['auto', 'journal', 'assistant'].includes(mode)) return res.status(400).json({ ok: false, error: 'mode must be auto, journal, or assistant' });
+      if (!['auto', 'journal', 'assistant', 'sync'].includes(mode)) return res.status(400).json({ ok: false, error: 'mode must be auto, journal, assistant, or sync' });
+
+      let healthSynced = null;
+      const healthPayload = req.body?.health || req.body?.healthData || null;
+      if (healthPayload && typeof healthPayload === 'object') {
+        healthSynced = appleHealth.ingest({ ...healthPayload, source: req.body?.source || 'ios_shortcut' });
+      }
+
+      if (mode === 'sync') {
+        if (!healthSynced) return res.status(400).json({ ok: false, error: 'sync mode requires a health object' });
+        const spokenText = 'Your Apple Health data is synced to LIV8.';
+        return res.json({ ok: true, mode, response: spokenText, spokenText, healthSynced });
+      }
+
+      if (!text) {
+        if (healthSynced) {
+          const spokenText = 'Your health data is synced.';
+          return res.json({ ok: true, mode, response: spokenText, spokenText, healthSynced });
+        }
+        return res.status(400).json({ ok: false, error: 'text or transcript is required' });
+      }
 
       let lifeLogged = null;
       if (wantsJournal(mode, text)) {
@@ -77,13 +98,14 @@ export function registerShortcutRoutes(app) {
 
       // journal mode is intentionally fast: save and acknowledge without invoking AI.
       if (mode === 'journal') {
-        const spokenText = `Logged to your Life Journal as ${lifeLogged?.category || 'note'}.`;
-        return res.json({ ok: true, mode, response: spokenText, spokenText, lifeLogged });
+        const spokenText = `Logged to your Life Journal as ${lifeLogged?.category || 'note'}${healthSynced ? ', and your health data is synced' : ''}.`;
+        return res.json({ ok: true, mode, response: spokenText, spokenText, lifeLogged, healthSynced });
       }
 
       const ai = await askJuno(text);
       let spokenText = ai.response || 'Done.';
       if (lifeLogged && mode === 'auto') spokenText = `${spokenText}\n\nLogged to Life Journal: ${lifeLogged.category}.`;
+      if (healthSynced) spokenText = `${spokenText}\n\nApple Health synced.`;
 
       res.json({
         ok: true,
@@ -91,6 +113,7 @@ export function registerShortcutRoutes(app) {
         response: ai.response,
         spokenText,
         lifeLogged: lifeLogged ? { id: lifeLogged.id, category: lifeLogged.category, ts: lifeLogged.ts } : null,
+        healthSynced,
         toolsUsed: ai.toolsUsed || [],
         operated: !!ai.operated,
         provider: ai.provider || null,
