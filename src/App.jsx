@@ -3,7 +3,7 @@ import { ThemeProvider, useTheme } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Sidebar, { MobileMenuButton } from './components/Sidebar';
 import ChatWidget from './components/ChatWidget';
-import VoiceDictation from './components/VoiceDictation';
+import VoiceRouter from './components/VoiceRouter';
 import VaultLogin from './components/VaultLogin';
 import GodViewRail from './components/GodViewRail';
 import Dashboard from './pages/Dashboard';
@@ -118,11 +118,11 @@ function AppContent() {
       <button
         onClick={() => setDictationOpen(true)}
         className="fixed bottom-6 left-6 z-40 p-3 rounded-full shadow-lg transition-all hover:scale-110 bg-gradient-to-br from-green-500 to-cyan-500 text-white hover:shadow-green-500/30"
-        title="Voice Dictation - Speak & paste anywhere"
+        title="LIV8 Voice Router — speak once, send anywhere"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
       </button>
-      <VoiceDictation isOpen={dictationOpen} onClose={() => setDictationOpen(false)} />
+      <VoiceRouter isOpen={dictationOpen} onClose={() => setDictationOpen(false)} onNavigate={handleNavigate} />
     </div>
   );
 }
