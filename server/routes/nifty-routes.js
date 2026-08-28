@@ -2,6 +2,7 @@ import { nifty } from '../lib/nifty-integration.js';
 import { registerNiftyMcpRoutes } from './nifty-mcp-routes.js';
 import { registerHybridJournalMcpRoutes } from './hybrid-journal-mcp-routes.js';
 import { registerAppleHealthRoutes } from './apple-health-routes.js';
+import { registerLocalAiRoutes } from './local-ai-routes.js';
 
 export function registerNiftyRoutes(app) {
   // Headless operating bridges. Legacy Nifty REST/OAuth routes below remain
@@ -9,6 +10,7 @@ export function registerNiftyRoutes(app) {
   registerNiftyMcpRoutes(app);
   registerHybridJournalMcpRoutes(app);
   registerAppleHealthRoutes(app);
+  registerLocalAiRoutes(app);
 
   app.get('/api/nifty/auth/url', (req, res) => {
     try { res.json({ url: nifty.getAuthorizationUrl() }); }
@@ -152,7 +154,7 @@ export function registerNiftyRoutes(app) {
     } catch (error) { res.status(500).json({ error: error.message }); }
   });
 
-  console.log('Nifty + Hybrid Journal MCP + Apple Health bridge routes registered (REST fallbacks preserved)');
+  console.log('Nifty + Hybrid Journal MCP + Apple Health + Local Ollama AI routes registered (REST fallbacks preserved)');
 }
 
 export default registerNiftyRoutes;
