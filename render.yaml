@@ -20,8 +20,11 @@ services:
         value: "3005"
       - key: DB_DATA_DIR
         value: /var/data
-      # Production cannot reach Mac localhost until the authenticated tunnel is added.
-      # Local Mac development uses Ollama by default from server/.env.
+      # Production Juno can reach the Mac Mini through an authenticated HTTPS tunnel.
+      - key: MAC_AI_BRIDGE_URL
+        sync: false
+      - key: LIV8_MAC_BRIDGE_TOKEN
+        sync: false
       - key: LOCAL_AI_FIRST
         value: "false"
       - key: ALLOW_PAID_AI_FALLBACK
@@ -140,7 +143,6 @@ services:
         value: "true"
       - key: SCHEDULE_TIMEZONE
         value: America/New_York
-      # Stop background cloud AI consumption while the Mac local-AI tunnel is pending.
       - key: PROACTIVE_AI_ENABLED
         value: "false"
       - key: PROACTIVE_CHECK_INTERVAL
