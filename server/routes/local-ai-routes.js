@@ -1,9 +1,25 @@
 import * as ollama from '../lib/ollama-provider.js';
+import { CAPABILITIES, SOURCE_OF_TRUTH, AGENT_JOBS } from '../lib/capability-registry.js';
 
 export function registerLocalAiRoutes(app) {
   app.get('/api/ai/local/status', async (req, res) => {
     try { res.json(await ollama.status()); }
     catch { res.status(500).json({ ok: false, error: 'Local AI status failed' }); }
+  });
+
+  app.get('/api/ai/capabilities', (req, res) => {
+    res.json({
+      ok: true,
+      sourceOfTruth: SOURCE_OF_TRUTH,
+      capabilities: CAPABILITIES,
+      agentJobs: AGENT_JOBS,
+      executionPolicy: {
+        safeReadsAndAnalysis: 'proactive_allowed',
+        externalWrites: 'explicit_user_intent_required',
+        destructiveWrites: 'explicit_user_intent_required',
+        liveTrading: 'dedicated_confirmation_gate_required'
+      }
+    });
   });
 
   app.post('/api/ai/local/chat', async (req, res) => {
