@@ -1,0 +1,177 @@
+//@version=5
+strategy("Auto Hybrid AI v2 — LIV8 Telemetry", overlay=true, pyramiding=0, calc_on_order_fills=true)
+
+// This reference preserves the supplied Auto Hybrid AI concept while fixing state-management
+// problems and emitting structured telemetry for LIV8 Trading Guardian / Hybrid Journal.
+// Validate in TradingView before replacing the user's production indicator/strategy.
+
+// ── Inputs ─────────────────────────────────────────────────────────────────────
+show_ichimoku = input.bool(true, "Show Ichimoku")
+show_adx = input.bool(true, "Show ADX")
+use_fib_tps = input.bool(true, "Use Fibonacci Levels for TPs")
+min_adx = input.int(25, "Min ADX for Trend Strength")
+use_sma_filter = input.bool(true, "Use SMA Filter")
+sma_length = input.int(50, "SMA Length")
+use_trailing_stop = input.bool(true, "Use Trailing Stop")
+trailing_stop_atr = input.float(1.0, "Trailing Stop ATR Multiplier", minval=0.1)
+break_even_atr = input.float(1.5, "Break-Even Threshold ATR Multiplier", minval=0.1)
+conversion = input.int(9, "Conversion", group="Ichimoku")
+base = input.int(26, "Base", group="Ichimoku")
+leading_span = input.int(52, "Leading Span", group="Ichimoku")
+adx_len = input.int(14, "ADX Length", group="ADX")
+atr_len = input.int(14, "ATR Length")
+time_limit = input.int(50, "Time Limit (Bars) for Trades")
+fib_lookback = input.int(100, "Fibonacci Lookback Bars", minval=10)
+
+// ── Ichimoku ───────────────────────────────────────────────────────────────────
+donchianBase(len) => math.avg(ta.lowest(low, len), ta.highest(high, len))
+tenkanSen = donchianBase(conversion)
+kijunSen = donchianBase(base)
+senkouSpanA = math.avg(tenkanSen, kijunSen)
+senkouSpanB = donchianBase(leading_span)
+
+p_tenkanSen = plot(show_ichimoku ? tenkanSen : na, "Tenkan Sen", color=color.new(color.green, 0), linewidth=2)
+p_kijunSen = plot(show_ichimoku ? kijunSen : na, "Kijun Sen", color=color.new(color.red, 0), linewidth=2)
+p_senkouSpanA = plot(show_ichimoku ? senkouSpanA : na, "Senkou Span A", color=color.new(color.green, 0), offset=base)
+p_senkouSpanB = plot(show_ichimoku ? senkouSpanB : na, "Senkou Span B", color=color.new(color.red, 0), offset=base)
+fill(p_senkouSpanA, p_senkouSpanB, color=senkouSpanA > senkouSpanB ? color.new(color.green, 80) : color.new(color.red, 80))
+
+// ── Trend / volatility ─────────────────────────────────────────────────────────
+atr = ta.atr(atr_len)
+[diPlus, diMinus, adx] = ta.dmi(adx_len, adx_len)
+adx_trending = adx > min_adx
+sma = ta.sma(close, sma_length)
+plot(use_sma_filter ? sma : na, "SMA Filter", color=color.new(color.blue, 25))
+
+entryBuy = ta.crossover(tenkanSen, kijunSen) and adx_trending and (not use_sma_filter or close > sma)
+entrySell = ta.crossunder(tenkanSen, kijunSen) and adx_trending and (not use_sma_filter or close < sma)
+
+// ── Fibonacci levels ────────────────────────────────────────────────────────────
+fibonacciPercents = array.from(0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0)
+fibHigh = ta.highest(high, fib_lookback)
+fibLow = ta.lowest(low, fib_lookback)
+fibRange = fibHigh - fibLow
+var float[] fibLevels = array.new_float(7)
+for i = 0 to 6
+    array.set(fibLevels, i, fibLow + fibRange * array.get(fibonacciPercents, i))
+
+fib100 = array.get(fibLevels, 6)
+// A rolling 100% level equals the rolling highest high. Treat a new/retested 100-bar high as "reached"
+// rather than requiring close to equal the level exactly.
+fib100Reached = high >= fib100 and high[1] < fib100[1]
+alertcondition(fib100Reached, title="Fib Level 100% Reached", message="FIB100_REACHED|{{ticker}}|{{interval}}|{{close}}")
+
+// ── Trade state ─────────────────────────────────────────────────────────────────
+var float entryPrice = na
+var float initialStop = na
+var float takeProfit1 = na
+var float takeProfit2 = na
+var float takeProfit3 = na
+var float highSinceEntry = na
+var float lowSinceEntry = na
+var int entryBar = na
+
+resetTargets() =>
+    takeProfit1 := na
+    takeProfit2 := na
+    takeProfit3 := na
+
+buildLongFibTargets() =>
+    resetTargets()
+    for i = 0 to 6
+        if array.get(fibLevels, i) > close
+            takeProfit1 := array.get(fibLevels, i)
+            takeProfit2 := i + 1 < 7 ? array.get(fibLevels, i + 1) : na
+            takeProfit3 := i + 2 < 7 ? array.get(fibLevels, i + 2) : na
+            break
+
+buildShortFibTargets() =>
+    resetTargets()
+    for i = 6 to 0
+        if array.get(fibLevels, i) < close
+            takeProfit1 := array.get(fibLevels, i)
+            takeProfit2 := i - 1 >= 0 ? array.get(fibLevels, i - 1) : na
+            takeProfit3 := i - 2 >= 0 ? array.get(fibLevels, i - 2) : na
+            break
+
+// Structured message Juno/Hybrid Journal can parse.
+telemetry(event, side) =>
+    '{"type":"' + event + '","side":"' + side + '","symbol":"' + syminfo.ticker + '","timeframe":"' + timeframe.period + '","price":' + str.tostring(close) + ',"adx":' + str.tostring(adx) + ',"tenkan":' + str.tostring(tenkanSen) + ',"kijun":' + str.tostring(kijunSen) + ',"sma":' + str.tostring(sma) + ',"atr":' + str.tostring(atr) + '}'
+
+// ── Entries ─────────────────────────────────────────────────────────────────────
+if entryBuy and strategy.position_size <= 0
+    entryPrice := close
+    initialStop := low - atr * 1.5
+    highSinceEntry := high
+    lowSinceEntry := low
+    entryBar := bar_index
+    if use_fib_tps
+        buildLongFibTargets()
+    else
+        risk = entryPrice - initialStop
+        takeProfit1 := entryPrice + 2 * risk
+        takeProfit2 := entryPrice + 3 * risk
+        takeProfit3 := entryPrice + 4 * risk
+    strategy.entry("Buy", strategy.long, alert_message=telemetry("AUTO_BUY_CANDIDATE", "BUY"))
+
+if entrySell and strategy.position_size >= 0
+    entryPrice := close
+    initialStop := high + atr * 1.5
+    highSinceEntry := high
+    lowSinceEntry := low
+    entryBar := bar_index
+    if use_fib_tps
+        buildShortFibTargets()
+    else
+        risk = initialStop - entryPrice
+        takeProfit1 := entryPrice - 2 * risk
+        takeProfit2 := entryPrice - 3 * risk
+        takeProfit3 := entryPrice - 4 * risk
+    strategy.entry("Sell", strategy.short, alert_message=telemetry("AUTO_SELL_CANDIDATE", "SELL"))
+
+// ── Position management — evaluated on every bar, not only entry bars ──────────
+if strategy.position_size > 0
+    highSinceEntry := na(highSinceEntry) ? high : math.max(highSinceEntry, high)
+    lowSinceEntry := na(lowSinceEntry) ? low : math.min(lowSinceEntry, low)
+    breakEvenActive = close >= entryPrice + atr * break_even_atr
+    trailingStop = highSinceEntry - atr * trailing_stop_atr
+    managedStop = initialStop
+    if breakEvenActive
+        managedStop := math.max(managedStop, entryPrice)
+    if use_trailing_stop
+        managedStop := math.max(managedStop, trailingStop)
+    if not na(takeProfit1)
+        strategy.exit("TP1", "Buy", limit=takeProfit1, stop=managedStop, qty_percent=50, alert_message='{"type":"TP1_HIT","side":"BUY","symbol":"' + syminfo.ticker + '"}')
+    if not na(takeProfit3)
+        strategy.exit("TP3", "Buy", limit=takeProfit3, stop=managedStop, qty_percent=50, alert_message='{"type":"TP3_HIT","side":"BUY","symbol":"' + syminfo.ticker + '"}')
+    if bar_index - entryBar >= time_limit
+        strategy.close("Buy", comment="Time Limit")
+
+if strategy.position_size < 0
+    highSinceEntry := na(highSinceEntry) ? high : math.max(highSinceEntry, high)
+    lowSinceEntry := na(lowSinceEntry) ? low : math.min(lowSinceEntry, low)
+    breakEvenActive = close <= entryPrice - atr * break_even_atr
+    trailingStop = lowSinceEntry + atr * trailing_stop_atr
+    managedStop = initialStop
+    if breakEvenActive
+        managedStop := math.min(managedStop, entryPrice)
+    if use_trailing_stop
+        managedStop := math.min(managedStop, trailingStop)
+    if not na(takeProfit1)
+        strategy.exit("TP1", "Sell", limit=takeProfit1, stop=managedStop, qty_percent=50, alert_message='{"type":"TP1_HIT","side":"SELL","symbol":"' + syminfo.ticker + '"}')
+    if not na(takeProfit3)
+        strategy.exit("TP3", "Sell", limit=takeProfit3, stop=managedStop, qty_percent=50, alert_message='{"type":"TP3_HIT","side":"SELL","symbol":"' + syminfo.ticker + '"}')
+    if bar_index - entryBar >= time_limit
+        strategy.close("Sell", comment="Time Limit")
+
+// Clear state only after a position has fully closed.
+justClosed = strategy.position_size == 0 and strategy.position_size[1] != 0
+if justClosed
+    entryPrice := na
+    initialStop := na
+    takeProfit1 := na
+    takeProfit2 := na
+    takeProfit3 := na
+    highSinceEntry := na
+    lowSinceEntry := na
+    entryBar := na
