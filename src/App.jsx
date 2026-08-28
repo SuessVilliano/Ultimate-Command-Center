@@ -29,7 +29,7 @@ import Glasses from './pages/Glasses';
 import ContentEngine from './pages/ContentEngine';
 import LifeMap from './pages/LifeMap';
 import HighestSelf from './pages/HighestSelf';
-import HealthOS from './pages/HealthOS';
+import HealthCommandCenter from './pages/HealthCommandCenter';
 import TradingProcess from './pages/TradingProcess';
 import FamilyOS from './pages/FamilyOS';
 import BusinessOS from './pages/BusinessOS';
@@ -92,7 +92,7 @@ function AppContent() {
       case 'content-engine': return <ContentEngine />;
       case 'highest-self': return <HighestSelf />;
       case 'life-map': return <LifeMap />;
-      case 'health-os': return <HealthOS />;
+      case 'health-os': return <HealthCommandCenter />;
       case 'trading-process': return <TradingProcess />;
       case 'family-os': return <FamilyOS />;
       case 'business-os': return <BusinessOS />;
