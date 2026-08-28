@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 900">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="40%" r="65%"><stop offset="0" stop-color="#25154b"/><stop offset=".55" stop-color="#07141e"/><stop offset="1" stop-color="#04050a"/></radialGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#a855f7"/><stop offset=".48" stop-color="#22d3ee"/><stop offset="1" stop-color="#2563eb"/></linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="10" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="720" height="900" fill="url(#bg)"/>
+  <ellipse cx="360" cy="824" rx="210" ry="38" fill="none" stroke="#22d3ee" stroke-opacity=".45" stroke-width="3" filter="url(#glow)"/>
+  <g fill="none" stroke="url(#body)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)" opacity=".92">
+    <circle cx="360" cy="157" r="73"/>
+    <path d="M337 225 C300 255 282 310 285 386 L292 500 C295 545 312 578 331 604"/>
+    <path d="M383 225 C420 255 438 310 435 386 L428 500 C425 545 408 578 389 604"/>
+    <path d="M292 295 C250 335 230 395 215 474 L195 593"/>
+    <path d="M428 295 C470 335 490 395 505 474 L525 593"/>
+    <path d="M331 604 L300 790"/><path d="M389 604 L420 790"/>
+    <path d="M299 790 L260 826"/><path d="M421 790 L460 826"/>
+    <path d="M311 350 C340 375 380 375 409 350" opacity=".65"/>
+    <path d="M360 230 L360 555" stroke-width="4" opacity=".7"/>
+  </g>
+  <g fill="#22d3ee" filter="url(#glow)"><circle cx="360" cy="330" r="14"/><circle cx="360" cy="390" r="8"/><circle cx="360" cy="450" r="8"/></g>
+  <g fill="#fff" opacity=".8" font-family="Inter,Arial,sans-serif" text-anchor="middle"><text x="360" y="66" font-size="18" letter-spacing="5">LIV8 DIGITAL TWIN</text><text x="360" y="862" font-size="13" opacity=".6">LIVE BODY SIGNAL MAP</text></g>
+</svg>
