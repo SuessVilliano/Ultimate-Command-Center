@@ -1,12 +1,14 @@
 import { nifty } from '../lib/nifty-integration.js';
 import { registerNiftyMcpRoutes } from './nifty-mcp-routes.js';
 import { registerHybridJournalMcpRoutes } from './hybrid-journal-mcp-routes.js';
+import { registerAppleHealthRoutes } from './apple-health-routes.js';
 
 export function registerNiftyRoutes(app) {
-  // Headless MCP operating bridges. Legacy Nifty REST/OAuth routes below remain
+  // Headless operating bridges. Legacy Nifty REST/OAuth routes below remain
   // available as a compatibility fallback while Command Center uses MCP first.
   registerNiftyMcpRoutes(app);
   registerHybridJournalMcpRoutes(app);
+  registerAppleHealthRoutes(app);
 
   app.get('/api/nifty/auth/url', (req, res) => {
     try { res.json({ url: nifty.getAuthorizationUrl() }); }
@@ -150,7 +152,7 @@ export function registerNiftyRoutes(app) {
     } catch (error) { res.status(500).json({ error: error.message }); }
   });
 
-  console.log('Nifty + Hybrid Journal MCP routes registered (REST fallbacks preserved)');
+  console.log('Nifty + Hybrid Journal MCP + Apple Health bridge routes registered (REST fallbacks preserved)');
 }
 
 export default registerNiftyRoutes;
