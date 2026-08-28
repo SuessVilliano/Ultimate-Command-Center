@@ -1,6 +1,6 @@
-// Machine-readable guardrails distilled from the user's MNQ Trading Bible, QQE framework,
-// and Hybrid AI TradingView alert script. These rules advise/score only. They never
-// place or modify a live order.
+// Machine-readable guardrails distilled from the user's MNQ Trading Bible,
+// QQE framework, and the actual Auto Hybrid AI Pine strategy supplied by the user.
+// These rules advise/score only. They never place or modify a live order.
 
 export const SESSION_WINDOWS_ET = [
   { id: 'evening', start: 18, end: 22, label: 'Evening', posture: 'WATCH', note: 'Mark the range; do not force entries.' },
@@ -20,19 +20,66 @@ export const QQE_FACTORS = [
   'time of sweep', 'DXY', 'yields', 'event proximity', 'prior session outcome'
 ];
 
-export const HYBRID_AI_ALERT_TYPES = ['ENTRY_BUY', 'ENTRY_SELL', 'TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'STOP_LOSS_HIT'];
+export const AUTO_HYBRID_AI = {
+  version: 'Pine v5',
+  name: 'Auto Hybrid AI',
+  entryEngine: {
+    ichimoku: { conversion: 9, base: 26, leadingSpan: 52 },
+    adx: { length: 14, min: 25 },
+    smaFilter: { enabledByDefault: true, length: 50 },
+    buy: 'Tenkan crosses above Kijun + ADX > min ADX + close above SMA when SMA filter is enabled',
+    sell: 'Tenkan crosses below Kijun + ADX > min ADX + close below SMA when SMA filter is enabled',
+  },
+  riskEngine: {
+    atrLength: 14,
+    initialStopAtr: 1.5,
+    trailingStopAtrDefault: 1.0,
+    breakEvenAtrDefault: 1.5,
+    timeLimitBarsDefault: 50,
+  },
+  fib: {
+    lookbackBars: 100,
+    percents: [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0],
+  },
+};
+
+export const HYBRID_AI_ALERT_TYPES = [
+  'AUTO_BUY_CANDIDATE', 'AUTO_SELL_CANDIDATE', 'FIB_100_REACHED',
+  'TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'STOP_LOSS_HIT', 'UNKNOWN'
+];
 
 /**
- * Parse the exact alert strings emitted by Hybrid AI – Signals + TP/SL Alerts.
- * Important: ENTRY_* is a raw 9/21 SMA crossover event from TradingView, not a
- * qualified trade by itself. Qualification happens later through Bible + QQE + risk.
+ * Parse both structured webhook payloads and legacy/free-text TradingView alerts.
+ * The user's supplied Auto Hybrid AI strategy itself has no explicit BUY/SELL
+ * alertcondition() calls, so ENTRY events should preferably be sent as JSON from
+ * TradingView using strategy order-fill alert_message values or added alert() calls.
  */
 export function parseHybridAiAlert(message = '') {
+  if (message && typeof message === 'object') {
+    const type = String(message.type || message.event || '').toUpperCase();
+    const side = String(message.side || '').toUpperCase();
+    if (type || side) return {
+      type: type || (side === 'BUY' || side === 'LONG' ? 'AUTO_BUY_CANDIDATE' : side === 'SELL' || side === 'SHORT' ? 'AUTO_SELL_CANDIDATE' : 'UNKNOWN'),
+      side: side === 'LONG' ? 'BUY' : side === 'SHORT' ? 'SELL' : side || undefined,
+      symbol: String(message.symbol || message.ticker || '').toUpperCase() || undefined,
+      timeframe: message.timeframe || message.tf,
+      price: Number.isFinite(Number(message.price ?? message.close)) ? Number(message.price ?? message.close) : undefined,
+      adx: Number.isFinite(Number(message.adx)) ? Number(message.adx) : undefined,
+      tenkan: Number.isFinite(Number(message.tenkan)) ? Number(message.tenkan) : undefined,
+      kijun: Number.isFinite(Number(message.kijun)) ? Number(message.kijun) : undefined,
+      sma: Number.isFinite(Number(message.sma)) ? Number(message.sma) : undefined,
+      atr: Number.isFinite(Number(message.atr)) ? Number(message.atr) : undefined,
+      raw: message,
+    };
+  }
+
   const text = String(message || '').trim();
   let m = text.match(/^BUY ENTRY\s+([^\s]+)\s+@\s+(-?\d+(?:\.\d+)?)$/i);
-  if (m) return { type: 'ENTRY_BUY', side: 'BUY', symbol: m[1].toUpperCase(), price: Number(m[2]), raw: text };
+  if (m) return { type: 'AUTO_BUY_CANDIDATE', side: 'BUY', symbol: m[1].toUpperCase(), price: Number(m[2]), raw: text };
   m = text.match(/^SELL ENTRY\s+([^\s]+)\s+@\s+(-?\d+(?:\.\d+)?)$/i);
-  if (m) return { type: 'ENTRY_SELL', side: 'SELL', symbol: m[1].toUpperCase(), price: Number(m[2]), raw: text };
+  if (m) return { type: 'AUTO_SELL_CANDIDATE', side: 'SELL', symbol: m[1].toUpperCase(), price: Number(m[2]), raw: text };
+  m = text.match(/^(?:Symbol:\s*)?([^\s]+).*?(?:timeframe\s+)?([^\s]+)?\s*.*?Fibonacci level 100%/i);
+  if (m) return { type: 'FIB_100_REACHED', symbol: m[1]?.toUpperCase(), timeframe: m[2], raw: text };
   m = text.match(/^TP([123]) HIT\s+([^\s]+)$/i);
   if (m) return { type: `TP${m[1]}_HIT`, symbol: m[2].toUpperCase(), raw: text };
   m = text.match(/^STOP LOSS HIT\s+([^\s]+)$/i);
@@ -72,6 +119,31 @@ export function sessionForEt(date = new Date()) {
   return { ...session, hour: h, weekday };
 }
 
+function checkAutoHybridCandidate(alert, input, reasons, lower) {
+  if (!alert?.type?.startsWith('AUTO_')) return;
+  const adx = Number(alert.adx ?? input.adx);
+  const price = Number(alert.price ?? input.price);
+  const sma = Number(alert.sma ?? input.sma);
+  const tenkan = Number(alert.tenkan ?? input.tenkan);
+  const kijun = Number(alert.kijun ?? input.kijun);
+
+  reasons.push(`Auto Hybrid AI ${alert.side || ''} candidate: Ichimoku Tenkan/Kijun crossover + ADX trend filter + optional SMA-50 direction filter.`);
+  if (Number.isFinite(adx)) {
+    if (adx <= 25) { lower('RED'); reasons.push(`ADX ${adx.toFixed(1)} does not clear the strategy's default >25 trend threshold.`); }
+    else reasons.push(`ADX ${adx.toFixed(1)} clears the default >25 trend threshold.`);
+  } else { lower('YELLOW'); reasons.push('ADX value was not included in the alert payload; candidate cannot be independently validated.'); }
+
+  if (Number.isFinite(price) && Number.isFinite(sma)) {
+    if (alert.side === 'BUY' && price <= sma) { lower('RED'); reasons.push('BUY candidate is not above SMA-50; it conflicts with the default SMA filter.'); }
+    if (alert.side === 'SELL' && price >= sma) { lower('RED'); reasons.push('SELL candidate is not below SMA-50; it conflicts with the default SMA filter.'); }
+  } else { lower('YELLOW'); reasons.push('Price/SMA-50 were not both supplied; SMA-filter conformance is unverified.'); }
+
+  if (Number.isFinite(tenkan) && Number.isFinite(kijun)) {
+    if (alert.side === 'BUY' && tenkan <= kijun) { lower('RED'); reasons.push('BUY candidate no longer has Tenkan above Kijun at evaluation time.'); }
+    if (alert.side === 'SELL' && tenkan >= kijun) { lower('RED'); reasons.push('SELL candidate no longer has Tenkan below Kijun at evaluation time.'); }
+  } else { lower('YELLOW'); reasons.push('Tenkan/Kijun values were not supplied; crossover state is trusted from TradingView but not independently verified.'); }
+}
+
 export function evaluateGuardian(input = {}) {
   const reasons = [];
   let posture = 'GREEN';
@@ -82,9 +154,12 @@ export function evaluateGuardian(input = {}) {
 
   const alert = typeof input.alert === 'string' ? parseHybridAiAlert(input.alert) : input.alert;
   if (alert?.type && alert.type !== 'UNKNOWN') {
-    if (alert.type.startsWith('ENTRY_')) {
+    if (alert.type === 'AUTO_BUY_CANDIDATE' || alert.type === 'AUTO_SELL_CANDIDATE') {
       lower('YELLOW');
-      reasons.push(`Hybrid AI ${alert.type.replace('_', ' ')} is a raw 9/21 SMA crossover alert, not trade approval. Bible/QQE/risk confirmation is still required.`);
+      checkAutoHybridCandidate(alert, input, reasons, lower);
+      reasons.push('Auto Hybrid AI is the technical candidate generator; Bible + QQE + risk still determine whether conditions are worth trading.');
+    } else if (alert.type === 'FIB_100_REACHED') {
+      reasons.push('100% Fibonacci level reached is a target/context event, not a fresh entry approval.');
     } else if (alert.type.startsWith('TP')) {
       reasons.push(`${alert.type.replaceAll('_', ' ')} is a lifecycle/management alert, not a new-entry signal.`);
     } else if (alert.type === 'STOP_LOSS_HIT') {
@@ -112,7 +187,7 @@ export function evaluateGuardian(input = {}) {
   if (!bias) { lower('YELLOW'); reasons.push('Directional bias is unavailable.'); }
   if (alert?.side && ['LONG','SHORT','BUY','SELL'].includes(bias)) {
     const normalizedBias = bias === 'LONG' ? 'BUY' : bias === 'SHORT' ? 'SELL' : bias;
-    if (normalizedBias !== alert.side) { lower('RED'); reasons.push(`Raw Hybrid AI side ${alert.side} conflicts with QQE bias ${bias}.`); }
+    if (normalizedBias !== alert.side) { lower('RED'); reasons.push(`Auto Hybrid AI side ${alert.side} conflicts with QQE bias ${bias}.`); }
   }
 
   const riskPct = Number(input.riskPct);
@@ -130,10 +205,11 @@ export function evaluateGuardian(input = {}) {
     label: posture === 'GREEN' ? 'TRADE WINDOW QUALIFIED' : posture === 'YELLOW' ? 'WAIT / SELECTIVE' : 'DO NOT TRADE',
     session,
     alert: alert?.type ? alert : undefined,
+    autoHybridAi: AUTO_HYBRID_AI,
     qqe,
     vix,
     reasons,
-    sourceRules: 'MNQ Trading Bible + QQE Framework + Hybrid AI Alert System',
+    sourceRules: 'Auto Hybrid AI + MNQ Trading Bible + QQE Framework + Hybrid Journal',
     executionAllowed: false,
     note: 'Guardian is advisory. Live execution remains separately confirmation-gated.'
   };
