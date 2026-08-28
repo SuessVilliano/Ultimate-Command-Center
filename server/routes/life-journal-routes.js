@@ -28,11 +28,18 @@ function scoreNear(text, word) {
 export function classifyLifeObservation(text = '') {
   const clean = String(text).trim();
   if (!clean || clean.length < 4) return null;
+
+  const explicitJournalCommand = /^(?:please\s+)?(?:log|journal|remember|note|save|record)\b/i.test(clean);
   const hits = RULES.filter(([, re]) => re.test(clean)).map(([category]) => category);
+
+  // Explicit private-memory commands must never fall through just because the
+  // sentence lacks a domain keyword. This is especially important for iOS
+  // voice shortcuts where "Log that..." should acknowledge immediately.
+  if (!hits.length && explicitJournalCommand) hits.push('note');
   if (!hits.length) return null;
 
   // Prefer concrete event types over emotional adjectives when multiple rules hit.
-  const priority = ['food','movement','sleep','trading','family','work','stress','energy','mood','win','friction'];
+  const priority = ['food','movement','sleep','trading','family','work','stress','energy','mood','win','friction','note'];
   const category = priority.find(x => hits.includes(x)) || hits[0];
   const calories = numberNear(clean, /(\d+(?:\.\d+)?)\s*(?:cal|cals|calories|kcal)\b/i);
   const protein_g = numberNear(clean, /(\d+(?:\.\d+)?)\s*(?:g|grams?)\s*(?:of\s*)?protein\b/i) ?? numberNear(clean, /protein\s*(?:was|is|:|=)?\s*(\d+(?:\.\d+)?)\s*g?/i);
@@ -50,7 +57,7 @@ export function classifyLifeObservation(text = '') {
     hydration_oz,
     duration_min,
     source: 'juno_chat',
-    tags: hits,
+    tags: explicitJournalCommand ? [...new Set([...hits, 'explicit_journal_command'])] : hits,
   };
 }
 
