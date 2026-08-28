@@ -40,12 +40,20 @@ services:
         sync: false
       - key: TASKMAGIC_MCP_TOKEN
         sync: false
+      # Nifty legacy OAuth fallback
       - key: NIFTY_CLIENT_ID
         sync: false
       - key: NIFTY_CLIENT_SECRET
         sync: false
       - key: NIFTY_REDIRECT_URI
         sync: false
+      # Nifty MCP — preferred headless project/team operating layer
+      - key: NIFTY_MCP_URL
+        sync: false
+      - key: NIFTY_MCP_TOKEN
+        sync: false
+      - key: NIFTY_MCP_PROTOCOL_VERSION
+        value: "2025-06-18"
       - key: RAPIDAPI_KEY
         sync: false
       - key: BENZINGA_API_KEY
@@ -102,9 +110,16 @@ services:
       # Slack Integration
       - key: SLACK_WEBHOOK_URL
         sync: false
-      # Hybrid Journal API
+      # Hybrid Journal REST fallback
       - key: HYBRID_JOURNAL_API_KEY
         sync: false
+      # Hybrid Journal MCP — canonical trading intelligence bridge
+      - key: HYBRID_JOURNAL_MCP_URL
+        sync: false
+      - key: HYBRID_JOURNAL_MCP_TOKEN
+        sync: false
+      - key: HYBRID_JOURNAL_MCP_PROTOCOL_VERSION
+        value: "2025-06-18"
       # Telegram Bridge
       - key: TELEGRAM_BOT_TOKEN
         sync: false
