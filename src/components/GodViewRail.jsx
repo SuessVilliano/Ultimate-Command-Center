@@ -3,6 +3,7 @@ import { Activity, Bell, BellRing, Brain, CalendarDays, Heart, RefreshCw, Shield
 import { API_URL } from '../config';
 import * as hs from '../services/highestSelfService';
 import digitalTwinJamaur from '../assets/digitalTwinJamaur';
+import SyncAllButton from './SyncAllButton';
 
 const POLL_MS = 5 * 60_000;
 const LS_SEEN = 'liv8_signal_seen_v1';
@@ -99,9 +100,9 @@ export default function GodViewRail({ activePage, onNavigate }) {
 
   return <aside className="hidden 2xl:flex fixed top-6 right-6 bottom-6 w-[360px] z-30 flex-col gap-3 overflow-y-auto pr-1">
     <section className="rounded-2xl border border-purple-500/25 bg-[#0b0c13]/95 shadow-2xl shadow-purple-950/20 overflow-hidden backdrop-blur-xl">
-      <div className="p-4 flex items-center justify-between border-b border-white/10">
+      <div className="p-4 flex items-center justify-between gap-2 border-b border-white/10">
         <div><div className="text-[10px] uppercase tracking-[.18em] text-purple-300">Live Digital Twin</div><div className="font-semibold text-white">LIV8 Overview</div></div>
-        <button onClick={() => refresh()} className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400" title="Refresh live data"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button>
+        <div className="flex items-center gap-2"><SyncAllButton compact /><button onClick={() => refresh()} className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400" title="Refresh live view"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button></div>
       </div>
       <div className="relative h-[300px] bg-gradient-to-b from-purple-950/20 via-cyan-950/5 to-black overflow-hidden">
         <img src={digitalTwinJamaur} alt="Jamaur LIV8 digital twin" className="absolute inset-0 w-full h-full object-cover object-top opacity-95" />
