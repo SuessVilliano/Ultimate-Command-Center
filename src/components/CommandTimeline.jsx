@@ -69,8 +69,9 @@ export default function CommandTimeline() {
     wellness: loadJson('liv8_wellness_data', null)
   }), [period]);
 
-  const fetchPeriod = async (nextPeriod = period) => {
-    setLoading(true); setError('');
+  const fetchPeriod = async (nextPeriod = period, quiet = false) => {
+    if (!quiet) setLoading(true);
+    setError('');
     try {
       const res = await fetch(`${API_URL}/api/intelligence/period`, {
         method: 'POST',
@@ -82,10 +83,24 @@ export default function CommandTimeline() {
       setData(json);
     } catch (e) {
       setError(e.message || 'Could not build this summary.');
-    } finally { setLoading(false); }
+    } finally {
+      if (!quiet) setLoading(false);
+    }
   };
 
   useEffect(() => { fetchPeriod(period); }, [period]);
+
+  // Keep the selected command window fresh without requiring manual refresh.
+  useEffect(() => {
+    const interval = setInterval(() => fetchPeriod(period, true), 5 * 60 * 1000);
+    const onFocus = () => fetchPeriod(period, true);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [period]);
+
   useEffect(() => {
     if (!loading) return;
     const t = setInterval(() => setTaglineIndex(i => (i + 1) % LOADING_LINES.length), 2200);
