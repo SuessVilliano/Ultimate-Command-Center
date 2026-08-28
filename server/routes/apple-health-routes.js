@@ -1,4 +1,9 @@
 import * as appleHealth from '../lib/apple-health-adapter.js';
+import { registerHealthMetricsRoutes } from './health-metrics-routes.js';
+import { registerLifeJournalRoutes } from './life-journal-routes.js';
+import { registerShortcutRoutes } from './shortcut-routes.js';
+import { registerMemoryVaultRoutes } from './memory-vault-routes.js';
+import { registerSyncAllRoutes } from './sync-all-routes.js';
 
 function bearer(req) {
   const auth = req.headers.authorization || '';
@@ -6,6 +11,12 @@ function bearer(req) {
 }
 
 export function registerAppleHealthRoutes(app) {
+  registerHealthMetricsRoutes(app);
+  registerLifeJournalRoutes(app);
+  registerShortcutRoutes(app);
+  registerMemoryVaultRoutes(app);
+  registerSyncAllRoutes(app);
+
   app.get('/api/hs/health/apple/status', (req, res) => {
     try { res.json(appleHealth.snapshot()); }
     catch (error) { res.status(500).json({ error: error.message }); }
