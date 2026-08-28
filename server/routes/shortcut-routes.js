@@ -12,8 +12,8 @@ function expectedToken() {
 
 function tokenFrom(req) {
   const auth = req.headers.authorization || '';
-  if (auth.startsWith('Bearer ')) return auth.slice(7);
-  return req.headers['x-liv8-token'] || req.body?.token || '';
+  if (auth.startsWith('Bearer ')) return auth.slice(7).trim();
+  return String(req.headers['x-liv8-token'] || req.body?.token || '').trim();
 }
 
 function safeEqual(a, b) {
@@ -25,7 +25,7 @@ function safeEqual(a, b) {
 
 function authorized(req) {
   const expected = expectedToken();
-  return !!expected && safeEqual(tokenFrom(req), expected);
+  return !!expected && safeEqual(tokenFrom(req), String(expected).trim());
 }
 
 function wantsJournal(mode, text) {
@@ -37,12 +37,25 @@ function wantsJournal(mode, text) {
 async function askJuno(text) {
   const operated = await operate(text);
   if (operated) return operated;
-  const ai = await ollama.chat([{ role: 'user', content: text }], {
-    systemPrompt: getCommanderPrompt(),
-    maxTokens: 900,
-    temperature: 0.35,
-  });
-  return { response: ai.text, provider: ai.provider, model: ai.model, operated: false, toolsUsed: [] };
+
+  try {
+    const ai = await ollama.chat([{ role: 'user', content: text }], {
+      systemPrompt: getCommanderPrompt(),
+      maxTokens: 900,
+      temperature: 0.35,
+    });
+    return { response: ai.text, provider: ai.provider, model: ai.model, operated: false, toolsUsed: [] };
+  } catch (error) {
+    return {
+      response: 'I received you. Your remote LIV8 bridge is working, but the local Juno brain on your Mac is not reachable from the cloud yet. Health syncing, Life Journal logging, and connected tool requests can still work. Full open-ended Qwen conversation will come online remotely when the secure Mac AI tunnel is connected.',
+      provider: 'local-ai-unreachable',
+      model: null,
+      operated: false,
+      toolsUsed: [],
+      degraded: true,
+      localAiError: error?.message || 'Local Ollama unavailable from cloud host',
+    };
+  }
 }
 
 export function registerShortcutRoutes(app) {
@@ -54,12 +67,26 @@ export function registerShortcutRoutes(app) {
       accepts: ['text', 'transcript', 'mode', 'source', 'metadata', 'health'],
       healthFields: ['date','steps','active_calories','exercise_min','stand_hours','resting_hr','walking_hr','hrv','respiratory_rate','oxygen_saturation','sleep_hours','weight','body_fat'],
       returns: ['response', 'spokenText', 'lifeLogged', 'healthSynced', 'toolsUsed'],
+      note: 'Remote generic AI requires the secure Mac local-AI tunnel; journal, health ingest, and connected tool routing remain available without it.',
+    });
+  });
+
+  // Browser-safe diagnostic so opening the URL directly no longer looks broken.
+  // The actual iPhone Shortcut still uses POST below.
+  app.get('/api/shortcut/voice', (req, res) => {
+    res.json({
+      ok: true,
+      endpoint: '/api/shortcut/voice',
+      methodRequired: 'POST',
+      configured: !!expectedToken(),
+      message: 'LIV8 Shortcut endpoint is live. Use POST from iOS Shortcuts with Authorization: Bearer <token> and a JSON body containing text, mode, and source.',
     });
   });
 
   app.post('/api/shortcut/voice', async (req, res) => {
     try {
-      if (!authorized(req)) return res.status(401).json({ ok: false, error: 'Unauthorized Shortcut request' });
+      if (!expectedToken()) return res.status(503).json({ ok: false, error: 'Shortcut token is not configured on the server' });
+      if (!authorized(req)) return res.status(401).json({ ok: false, error: 'Unauthorized Shortcut request. Check that the Authorization header is exactly: Bearer <your token>' });
 
       const text = String(req.body?.text || req.body?.transcript || '').trim();
       const mode = String(req.body?.mode || 'auto').toLowerCase();
@@ -96,7 +123,6 @@ export function registerShortcutRoutes(app) {
         });
       }
 
-      // journal mode is intentionally fast: save and acknowledge without invoking AI.
       if (mode === 'journal') {
         const spokenText = `Logged to your Life Journal as ${lifeLogged?.category || 'note'}${healthSynced ? ', and your health data is synced' : ''}.`;
         return res.json({ ok: true, mode, response: spokenText, spokenText, lifeLogged, healthSynced });
@@ -116,6 +142,7 @@ export function registerShortcutRoutes(app) {
         healthSynced,
         toolsUsed: ai.toolsUsed || [],
         operated: !!ai.operated,
+        degraded: !!ai.degraded,
         provider: ai.provider || null,
         model: ai.model || null,
       });
