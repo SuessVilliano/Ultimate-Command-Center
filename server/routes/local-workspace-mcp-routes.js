@@ -1,4 +1,5 @@
 import { workspaceTools, status as workspaceStatus, list, read, search, stat, write, mkdir } from '../lib/local-workspace.js';
+import { registerVerticalReadinessRoutes } from './vertical-readiness-routes.js';
 
 const MCP_PROTOCOL = process.env.LOCAL_MCP_PROTOCOL_VERSION || '2025-06-18';
 
@@ -43,8 +44,6 @@ export function registerLocalWorkspaceMcpRoutes(app) {
   app.post('/api/workspace/write', async (req, res) => { try { res.json(await write(req.body?.path, req.body?.content, { overwrite: req.body?.overwrite !== false })); } catch (e) { res.status(400).json({ error: e.message }); } });
   app.post('/api/workspace/mkdir', async (req, res) => { try { res.json(await mkdir(req.body?.path)); } catch (e) { res.status(400).json({ error: e.message }); } });
 
-  // Streamable HTTP-compatible JSON-RPC entry point for local MCP clients.
-  // Keep this endpoint private/local unless placed behind an authenticated tunnel.
   app.post('/mcp', async (req, res) => {
     const { id, method, params = {} } = req.body || {};
     try {
@@ -66,6 +65,7 @@ export function registerLocalWorkspaceMcpRoutes(app) {
     res.json({ ok: true, role: 'mcp-server-and-client', endpoint: '/mcp', protocolVersion: MCP_PROTOCOL, tools: TOOL_DEFS.map(t => t.name), workspace, note: 'Nifty and Hybrid Journal are MCP clients; /mcp exposes the allow-listed local workspace to trusted MCP clients.' });
   });
 
+  registerVerticalReadinessRoutes(app);
   console.log('Local Mac Workspace + LIV8 MCP server routes registered');
 }
 
