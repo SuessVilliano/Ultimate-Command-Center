@@ -20,6 +20,12 @@ services:
         value: "3005"
       - key: DB_DATA_DIR
         value: /var/data
+      # Production cannot reach Mac localhost until the authenticated tunnel is added.
+      # Local Mac development uses Ollama by default from server/.env.
+      - key: LOCAL_AI_FIRST
+        value: "false"
+      - key: ALLOW_PAID_AI_FALLBACK
+        value: "false"
       - key: AI_PROVIDER
         value: gemini
       - key: GEMINI_API_KEY
@@ -104,6 +110,8 @@ services:
         value: "2025-06-18"
       - key: APPLE_HEALTH_INGEST_TOKEN
         sync: false
+      - key: OURA_ACCESS_TOKEN
+        sync: false
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_JUNO_CHAT_ID
@@ -132,8 +140,9 @@ services:
         value: "true"
       - key: SCHEDULE_TIMEZONE
         value: America/New_York
+      # Stop background cloud AI consumption while the Mac local-AI tunnel is pending.
       - key: PROACTIVE_AI_ENABLED
-        value: "true"
+        value: "false"
       - key: PROACTIVE_CHECK_INTERVAL
         value: "30"
       - key: PROACTIVE_AUTO_ACTIONS
