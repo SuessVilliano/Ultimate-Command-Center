@@ -3,6 +3,7 @@ import { registerNiftyMcpRoutes } from './nifty-mcp-routes.js';
 import { registerHybridJournalMcpRoutes } from './hybrid-journal-mcp-routes.js';
 import { registerAppleHealthRoutes } from './apple-health-routes.js';
 import { registerLocalAiRoutes } from './local-ai-routes.js';
+import { registerMacAiBridgeRoutes } from './mac-ai-bridge-routes.js';
 import { registerOperatorRoutes } from './operator-routes.js';
 import { registerTimeIntelligenceRoutes } from './time-intelligence-routes.js';
 import { registerLocalWorkspaceMcpRoutes } from './local-workspace-mcp-routes.js';
@@ -16,6 +17,7 @@ export function registerNiftyRoutes(app) {
   registerHybridJournalMcpRoutes(app);
   registerAppleHealthRoutes(app);
   registerLocalAiRoutes(app);
+  registerMacAiBridgeRoutes(app);
   registerOperatorRoutes(app);
   registerTimeIntelligenceRoutes(app);
   registerLocalWorkspaceMcpRoutes(app);
@@ -164,7 +166,7 @@ export function registerNiftyRoutes(app) {
     } catch (error) { res.status(500).json({ error: error.message }); }
   });
 
-  console.log('Nifty + Hybrid Journal MCP + Apple Health + Local Ollama AI + Juno Operator + Time Intelligence + Mac Workspace MCP + Trading Guardian + Vertical Readiness routes registered');
+  console.log('Nifty + Hybrid Journal MCP + Apple Health + Local/Bridged Ollama AI + Juno Operator + Time Intelligence + Mac Workspace MCP + Trading Guardian + Vertical Readiness routes registered');
 }
 
 export default registerNiftyRoutes;
