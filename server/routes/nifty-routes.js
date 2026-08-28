@@ -7,6 +7,7 @@ import { registerOperatorRoutes } from './operator-routes.js';
 import { registerTimeIntelligenceRoutes } from './time-intelligence-routes.js';
 import { registerLocalWorkspaceMcpRoutes } from './local-workspace-mcp-routes.js';
 import { registerTradingGuardianRoutes } from './trading-guardian-routes.js';
+import { registerVerticalReadinessRoutes } from './vertical-readiness-routes.js';
 
 export function registerNiftyRoutes(app) {
   // Headless operating bridges. Legacy Nifty REST/OAuth routes below remain
@@ -19,6 +20,7 @@ export function registerNiftyRoutes(app) {
   registerTimeIntelligenceRoutes(app);
   registerLocalWorkspaceMcpRoutes(app);
   registerTradingGuardianRoutes(app);
+  registerVerticalReadinessRoutes(app);
 
   app.get('/api/nifty/auth/url', (req, res) => {
     try { res.json({ url: nifty.getAuthorizationUrl() }); }
@@ -162,7 +164,7 @@ export function registerNiftyRoutes(app) {
     } catch (error) { res.status(500).json({ error: error.message }); }
   });
 
-  console.log('Nifty + Hybrid Journal MCP + Apple Health + Local Ollama AI + Juno Operator + Time Intelligence + Mac Workspace MCP + Trading Guardian routes registered');
+  console.log('Nifty + Hybrid Journal MCP + Apple Health + Local Ollama AI + Juno Operator + Time Intelligence + Mac Workspace MCP + Trading Guardian + Vertical Readiness routes registered');
 }
 
 export default registerNiftyRoutes;
