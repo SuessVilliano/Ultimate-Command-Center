@@ -23,7 +23,7 @@ jobs:
         run: npm ci
       - name: Backend module import smoke test
         working-directory: server
-        run: node -e "import('./routes/time-intelligence-routes.js').then(()=>import('./routes/local-ai-routes.js')).then(()=>import('./routes/highest-self-routes.js')).then(()=>import('./routes/shortcut-routes.js')).then(()=>import('./routes/local-workspace-mcp-routes.js')).then(()=>import('./routes/trading-guardian-routes.js')).then(()=>import('./routes/vertical-readiness-routes.js')).then(()=>console.log('backend route imports ok'))"
+        run: node -e "import('./routes/time-intelligence-routes.js').then(()=>import('./routes/local-ai-routes.js')).then(()=>import('./routes/mac-ai-bridge-routes.js')).then(()=>import('./routes/highest-self-routes.js')).then(()=>import('./routes/shortcut-routes.js')).then(()=>import('./routes/local-workspace-mcp-routes.js')).then(()=>import('./routes/trading-guardian-routes.js')).then(()=>import('./routes/vertical-readiness-routes.js')).then(()=>console.log('backend route imports ok'))"
       - name: Boot backend and test operator verticals
         working-directory: server
         env:
@@ -36,6 +36,7 @@ jobs:
           AI_PROVIDER: gemini
           LOCAL_WORKSPACE_ROOTS: '..'
           LOCAL_WORKSPACE_WRITE_ENABLED: 'false'
+          LIV8_MAC_BRIDGE_TOKEN: 'ci-bridge-token'
         run: |
           set -e
           node server.js > /tmp/ucc-server.log 2>&1 &
@@ -58,6 +59,11 @@ jobs:
             exit 1
           fi
           cat /tmp/ucc-health.json
+
+          echo '--- Mac AI bridge auth guard ---'
+          code=$(curl -s -o /tmp/mac-bridge-unauth.json -w '%{http_code}' http://127.0.0.1:3005/api/ai/bridge/status)
+          test "$code" = '401'
+          grep -q 'Unauthorized' /tmp/mac-bridge-unauth.json
 
           echo '--- MCP status ---'
           curl -fsS http://127.0.0.1:3005/api/mcp/status | tee /tmp/mcp.json
