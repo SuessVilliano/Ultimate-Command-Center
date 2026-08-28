@@ -1,0 +1,28 @@
+name: Command Center QA
+
+on:
+  push:
+    branches: [feat/live-god-view-signal-center]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Production frontend build
+        run: npm run build
+      - name: Install backend dependencies
+        working-directory: server
+        run: npm ci
+      - name: Backend module import smoke test
+        working-directory: server
+        run: node -e "import('./routes/time-intelligence-routes.js').then(()=>import('./routes/local-ai-routes.js')).then(()=>import('./routes/highest-self-routes.js')).then(()=>console.log('backend route imports ok'))"
