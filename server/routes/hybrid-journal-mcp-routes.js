@@ -10,6 +10,7 @@ const READ_TOOLS = new Set([
 const EXECUTION_TOOLS = new Set(['place_trade', 'ctrader_mcp']);
 const CTRADER_WRITE_RE = /create_order|place|modify|cancel|close|delete|execute/i;
 const EXECUTION_URL = String(process.env.HYBRID_EXECUTION_URL || 'https://hybridzone-api.onrender.com').replace(/\/$/, '');
+const executionKey = () => process.env.HYBRID_EXECUTION_API_KEY || process.env.THZ_API_KEY || '';
 
 function unwrap(result) {
   if (!result) return null;
@@ -28,14 +29,11 @@ async function call(name, args = {}) {
 }
 
 async function execution(path, { method = 'GET', body } = {}) {
-  const key = process.env.HYBRID_EXECUTION_API_KEY;
-  if (!key) throw new Error('HYBRID_EXECUTION_API_KEY is not configured on Command Center');
+  const key = executionKey();
+  if (!key) throw new Error('HYBRID_EXECUTION_API_KEY or THZ_API_KEY is not configured on Command Center');
   const response = await fetch(`${EXECUTION_URL}${path}`, {
     method,
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': key,
-    },
+    headers: { 'Content-Type': 'application/json', 'x-api-key': key },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(20000),
   });
@@ -51,65 +49,37 @@ function wantsKraken(body = {}) {
 }
 
 async function krakenIntentFromBody(body = {}, mode = 'paper') {
-  if (body.intent && typeof body.intent === 'object') {
-    return { ...body.intent, broker: 'kraken', mode, source: body.intent.source || 'command-center' };
-  }
+  if (body.intent && typeof body.intent === 'object') return { ...body.intent, broker: 'kraken', mode, source: body.intent.source || 'command-center' };
   if (!body.text) throw new Error('text or intent is required for Kraken execution');
-  const parsed = await execution('/api/execution/parse', {
-    method: 'POST',
-    body: { text: body.text, broker: 'kraken', mode, source: 'command-center' },
-  });
+  const parsed = await execution('/api/execution/parse', { method: 'POST', body: { text: body.text, broker: 'kraken', mode, source: 'command-center' } });
   return parsed.intent;
 }
 
 export function registerHybridJournalMcpRoutes(app) {
-  app.get('/api/trading/hybrid-journal/status', async (req, res) => {
+  app.get('/api/trading/hybrid-journal/status', async (_req, res) => {
     const mcp = hybridJournalMcp.status();
     const fallback = hybridJournal.status();
     let tools = [];
-    let executionGateway = { configured: Boolean(process.env.HYBRID_EXECUTION_API_KEY), reachable: false };
+    let executionGateway = { configured: Boolean(executionKey()), reachable: false };
     if (mcp.configured) {
       try { tools = (await hybridJournalMcp.listTools()).map(({ name, title, description }) => ({ name, title, description })); } catch {}
     }
     if (executionGateway.configured) {
-      try {
-        const gateway = await execution('/api/execution/status');
-        executionGateway = { ...executionGateway, reachable: true, ...gateway };
-      } catch (error) { executionGateway.error = error.message; }
+      try { executionGateway = { ...executionGateway, reachable: true, ...(await execution('/api/execution/status')) }; }
+      catch (error) { executionGateway.error = error.message; }
     }
     res.json({ mcp, fallback, tools, executionGateway, executionRequiresConfirmation: true });
   });
 
   app.get('/api/trading/hybrid-journal/snapshot', async (req, res) => {
-    try {
-      const limit = Math.min(Number(req.query.limit) || 100, 250);
-      const synced = await hybridJournal.sync({ limit });
-      res.json({ source: 'hybrid-journal', synced });
-    } catch (error) { res.status(500).json({ error: error.message }); }
-  });
-
-  app.post('/api/trading/hybrid-journal/briefing', async (req, res) => {
-    try { res.json({ result: await call('generate_qqe_briefing', req.body || {}) }); }
+    try { res.json({ source: 'hybrid-journal', synced: await hybridJournal.sync({ limit: Math.min(Number(req.query.limit) || 100, 250) }) }); }
     catch (error) { res.status(500).json({ error: error.message }); }
   });
+  app.post('/api/trading/hybrid-journal/briefing', async (req, res) => { try { res.json({ result: await call('generate_qqe_briefing', req.body || {}) }); } catch (e) { res.status(500).json({ error: e.message }); } });
+  app.post('/api/trading/hybrid-journal/regime', async (req, res) => { try { res.json({ result: await call('run_market_cause_engine', req.body || {}) }); } catch (e) { res.status(500).json({ error: e.message }); } });
+  app.post('/api/trading/hybrid-journal/analyze', async (req, res) => { try { res.json({ result: await call('analyze_my_trades', req.body || {}) }); } catch (e) { res.status(500).json({ error: e.message }); } });
+  app.post('/api/trading/hybrid-journal/broker-sync', async (req, res) => { try { res.json({ result: await call('trigger_broker_sync', req.body || {}) }); } catch (e) { res.status(500).json({ error: e.message }); } });
 
-  app.post('/api/trading/hybrid-journal/regime', async (req, res) => {
-    try { res.json({ result: await call('run_market_cause_engine', req.body || {}) }); }
-    catch (error) { res.status(500).json({ error: error.message }); }
-  });
-
-  app.post('/api/trading/hybrid-journal/analyze', async (req, res) => {
-    try { res.json({ result: await call('analyze_my_trades', req.body || {}) }); }
-    catch (error) { res.status(500).json({ error: error.message }); }
-  });
-
-  app.post('/api/trading/hybrid-journal/broker-sync', async (req, res) => {
-    try { res.json({ result: await call('trigger_broker_sync', req.body || {}) }); }
-    catch (error) { res.status(500).json({ error: error.message }); }
-  });
-
-  // Dry-run / preview. Kraken commands are normalized by the shared execution
-  // gateway; futures/cTrader continue through Hybrid Journal MCP.
   app.post('/api/trading/hybrid-journal/order-preview', async (req, res) => {
     try {
       if (wantsKraken(req.body || {})) {
@@ -121,71 +91,40 @@ export function registerHybridJournalMcpRoutes(app) {
     } catch (error) { res.status(500).json({ error: error.message }); }
   });
 
-  // Paper execution is a first-class action for Kraken. It deliberately does
-  // not accept live mode and does not require the live confirmation token.
   app.post('/api/trading/hybrid-journal/order-paper', async (req, res) => {
     try {
       const intent = await krakenIntentFromBody(req.body || {}, 'paper');
-      const data = await execution('/api/execution/intents/execute', {
-        method: 'POST',
-        body: { ...intent, mode: 'paper', confirmation: 'preview' },
-      });
+      const data = await execution('/api/execution/intents/execute', { method: 'POST', body: { ...intent, mode: 'paper', confirmation: 'preview' } });
       res.json({ result: data, broker: 'kraken', live: false });
     } catch (error) { res.status(500).json({ error: error.message }); }
   });
 
-  // Live execution remains separately confirmation-gated. For Kraken, the exact
-  // previewed TradeIntent may be sent back to avoid re-interpreting user speech.
   app.post('/api/trading/hybrid-journal/order-execute', async (req, res) => {
     try {
       const { confirmation, ...order } = req.body || {};
-      if (confirmation !== 'CONFIRM_LIVE_TRADE') {
-        return res.status(409).json({ error: 'Explicit live-trade confirmation required.', requiredConfirmation: 'CONFIRM_LIVE_TRADE' });
-      }
+      if (confirmation !== 'CONFIRM_LIVE_TRADE') return res.status(409).json({ error: 'Explicit live-trade confirmation required.', requiredConfirmation: 'CONFIRM_LIVE_TRADE' });
       if (wantsKraken(order)) {
         const intent = await krakenIntentFromBody(order, 'live');
-        const data = await execution('/api/execution/intents/execute', {
-          method: 'POST',
-          body: { ...intent, mode: 'live', confirmation: 'CONFIRM_LIVE_TRADE' },
-        });
+        const data = await execution('/api/execution/intents/execute', { method: 'POST', body: { ...intent, mode: 'live', confirmation: 'CONFIRM_LIVE_TRADE' } });
         return res.json({ result: data, broker: 'kraken', live: true });
       }
       res.json({ result: await call('place_trade', { ...order, dry_run: false }), broker: order.broker || 'hybrid-journal', live: true });
     } catch (error) { res.status(500).json({ error: error.message }); }
   });
 
-  app.get('/api/trading/execution/positions', async (req, res) => {
-    try {
-      const broker = req.query.broker || 'kraken';
-      const mode = req.query.mode || 'paper';
-      res.json(await execution(`/api/execution/positions?broker=${encodeURIComponent(broker)}&mode=${encodeURIComponent(mode)}`));
-    } catch (error) { res.status(500).json({ error: error.message }); }
-  });
+  app.get('/api/trading/execution/positions', async (req, res) => { try { const broker=req.query.broker||'kraken', mode=req.query.mode||'paper'; res.json(await execution(`/api/execution/positions?broker=${encodeURIComponent(broker)}&mode=${encodeURIComponent(mode)}`)); } catch(e){res.status(500).json({error:e.message});} });
+  app.get('/api/trading/execution/orders', async (req, res) => { try { const broker=req.query.broker||'kraken', mode=req.query.mode||'paper'; res.json(await execution(`/api/execution/orders?broker=${encodeURIComponent(broker)}&mode=${encodeURIComponent(mode)}`)); } catch(e){res.status(500).json({error:e.message});} });
 
-  app.get('/api/trading/execution/orders', async (req, res) => {
-    try {
-      const broker = req.query.broker || 'kraken';
-      const mode = req.query.mode || 'paper';
-      res.json(await execution(`/api/execution/orders?broker=${encodeURIComponent(broker)}&mode=${encodeURIComponent(mode)}`));
-    } catch (error) { res.status(500).json({ error: error.message }); }
-  });
-
-  // Generic MCP gateway for agents. Read/analysis tools are allowed. Trading
-  // execution tools are blocked here so they cannot bypass the dedicated gate.
   app.post('/api/trading/hybrid-journal/mcp/call', async (req, res) => {
     try {
       const { tool, arguments: args = {} } = req.body || {};
       if (!tool) return res.status(400).json({ error: 'tool is required' });
-      if (EXECUTION_TOOLS.has(tool)) {
-        return res.status(403).json({ error: 'Execution-capable tools must use the gated trading endpoints.' });
-      }
+      if (EXECUTION_TOOLS.has(tool)) return res.status(403).json({ error: 'Execution-capable tools must use the gated trading endpoints.' });
       if (!READ_TOOLS.has(tool)) return res.status(403).json({ error: `Tool not allowlisted for generic use: ${tool}` });
       res.json({ result: await call(tool, args) });
     } catch (error) { res.status(500).json({ error: error.message }); }
   });
 
-  // cTrader read bridge. Write-like cTrader tools are refused here; future live
-  // cTrader actions should get their own confirmation-gated endpoint.
   app.post('/api/trading/hybrid-journal/ctrader/read', async (req, res) => {
     try {
       const { connection_id, tool, arguments: args = {}, list_tools = false } = req.body || {};
