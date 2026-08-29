@@ -1,1 +1,46 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 768 1024"><rect width="100%" height="100%" fill="#070812"/><text x="50%" y="50%" fill="#22d3ee" text-anchor="middle" font-size="36">LIV8 Digital Twin</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 768 1024" role="img" aria-labelledby="title desc">
+  <title id="title">LIV8 Digital Twin</title>
+  <desc id="desc">A stylized human digital twin surrounded by live system telemetry.</desc>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="34%" r="75%">
+      <stop offset="0" stop-color="#172554"/>
+      <stop offset="0.45" stop-color="#0f172a"/>
+      <stop offset="1" stop-color="#05060b"/>
+    </radialGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#67e8f9" stop-opacity=".9"/>
+      <stop offset=".5" stop-color="#8b5cf6" stop-opacity=".75"/>
+      <stop offset="1" stop-color="#22d3ee" stop-opacity=".55"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0H0V48" fill="none" stroke="#22d3ee" stroke-opacity=".07" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="768" height="1024" fill="url(#bg)"/>
+  <rect width="768" height="1024" fill="url(#grid)"/>
+  <ellipse cx="384" cy="940" rx="215" ry="38" fill="#22d3ee" opacity=".08" filter="url(#glow)"/>
+  <g filter="url(#glow)">
+    <circle cx="384" cy="250" r="92" fill="url(#body)" opacity=".9"/>
+    <path d="M247 514c20-112 76-172 137-172s117 60 137 172l34 222c9 59-34 112-94 112H307c-60 0-103-53-94-112z" fill="url(#body)" opacity=".82"/>
+    <path d="M294 472c-68 34-110 110-120 207l-10 103c-4 37 21 70 58 76l33 5 46-368z" fill="#22d3ee" opacity=".48"/>
+    <path d="M474 472c68 34 110 110 120 207l10 103c4 37-21 70-58 76l-33 5-46-368z" fill="#8b5cf6" opacity=".45"/>
+  </g>
+  <g fill="none" stroke="#67e8f9" stroke-width="2" opacity=".65">
+    <path d="M384 158V82M292 250H160M476 250h132M384 848v88"/>
+    <circle cx="384" cy="250" r="116" stroke-dasharray="8 12" opacity=".35"/>
+    <ellipse cx="384" cy="592" rx="196" ry="302" stroke-dasharray="7 16" opacity=".25"/>
+  </g>
+  <g font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+    <text x="46" y="80" fill="#67e8f9" font-size="22" font-weight="700" letter-spacing="5">LIV8 DIGITAL TWIN</text>
+    <text x="48" y="112" fill="#94a3b8" font-size="15" letter-spacing="2">OPERATOR TELEMETRY ONLINE</text>
+    <g fill="#c4b5fd" font-size="14" letter-spacing="1.5">
+      <text x="48" y="204">RECOVERY</text><text x="568" y="204">ALIGNMENT</text>
+      <text x="48" y="892">HEALTH</text><text x="588" y="892">SIGNALS</text>
+    </g>
+    <text x="384" y="980" fill="#22d3ee" font-size="13" text-anchor="middle" letter-spacing="4">LIVE • SYNCHRONIZED • ADAPTIVE</text>
+  </g>
+</svg>
