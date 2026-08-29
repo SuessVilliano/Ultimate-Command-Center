@@ -180,7 +180,7 @@ export function registerHybridJournalMcpRoutes(app) {
         return res.status(403).json({ error: 'Execution-capable tools must use the gated trading endpoints.' });
       }
       if (!READ_TOOLS.has(tool)) return res.status(403).json({ error: `Tool not allowlisted for generic use: ${tool}` });
-      res.json({ result: await call(tool, args));
+      res.json({ result: await call(tool, args) });
     } catch (error) { res.status(500).json({ error: error.message }); }
   });
 
