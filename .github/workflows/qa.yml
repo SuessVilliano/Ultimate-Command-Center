@@ -50,7 +50,7 @@ jobs:
           const dims = await img.evaluate(el => ({ naturalWidth: el.naturalWidth, naturalHeight: el.naturalHeight, src: el.currentSrc || el.src }));
           if (!dims.naturalWidth || !dims.naturalHeight) throw new Error(`Digital Twin failed to load: ${JSON.stringify(dims)}`);
           console.log('Digital Twin loaded:', dims);
-          const rail = page.locator('aside').first();
+          const rail = page.locator('aside').last();
           await rail.screenshot({ path: '/tmp/digital-twin-proof.png' });
           await page.screenshot({ path: '/tmp/command-center-proof.png', fullPage: true });
           await browser.close();
