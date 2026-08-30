@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, Bell, BellRing, Brain, CalendarDays, Heart, RefreshCw, ShieldAlert, Sparkles, Target, TrendingUp, Zap } from 'lucide-react';
+import { Activity, Bell, BellRing, Brain, CalendarDays, Eye, EyeOff, Heart, RefreshCw, ShieldAlert, Sparkles, Target, TrendingUp, Zap } from 'lucide-react';
 import { API_URL } from '../config';
 import * as hs from '../services/highestSelfService';
 import digitalTwinJamaur from '../assets/digitalTwinJamaurFull';
 import SyncAllButton from './SyncAllButton';
+import { useAuth } from '../context/AuthContext';
 
 const POLL_MS = 5 * 60_000;
 const LS_SEEN = 'liv8_signal_seen_v1';
+const LS_TWIN_VISIBLE = 'liv8_twin_visible_v1';
 
 const num = v => Number.isFinite(Number(v)) ? Number(v) : null;
 const signalKey = s => `${s.type}:${s.text}`;
@@ -30,12 +32,24 @@ function Metric({ label, value, suffix = '', icon: Icon, score, source = 'Live d
 }
 
 export default function GodViewRail({ activePage, onNavigate }) {
+  const { currentUser } = useAuth();
   const [oura, setOura] = useState(null);
   const [health, setHealth] = useState(null);
   const [intel, setIntel] = useState(null);
   const [signals, setSignals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [permission, setPermission] = useState(() => typeof Notification === 'undefined' ? 'unsupported' : Notification.permission);
+  const [twinVisible, setTwinVisible] = useState(() => {
+    try { return localStorage.getItem(LS_TWIN_VISIBLE) !== '0'; } catch { return true; }
+  });
+  const profileName = currentUser?.name || currentUser?.username || 'Profile';
+  const toggleTwin = () => {
+    setTwinVisible(v => {
+      const next = !v;
+      try { localStorage.setItem(LS_TWIN_VISIBLE, next ? '1' : '0'); } catch {}
+      return next;
+    });
+  };
 
   const refresh = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -108,16 +122,22 @@ export default function GodViewRail({ activePage, onNavigate }) {
   return <aside data-testid="god-view-rail" className="hidden 2xl:flex fixed top-6 right-6 bottom-6 w-[360px] z-30 flex-col gap-3 overflow-y-auto pr-1">
     <section className="rounded-2xl border border-purple-500/25 bg-[#0b0c13]/95 shadow-2xl shadow-purple-950/20 overflow-hidden backdrop-blur-xl">
       <div className="p-4 flex items-center justify-between gap-2 border-b border-white/10">
-        <div><div className="text-[10px] uppercase tracking-[.18em] text-purple-300">Live Digital Twin</div><div className="font-semibold text-white">LIV8 Overview</div></div>
-        <div className="flex items-center gap-2"><SyncAllButton compact /><button onClick={() => refresh()} className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400" title="Refresh live view"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button></div>
+        <div><div className="text-[10px] uppercase tracking-[.18em] text-purple-300">Live Digital Twin</div><div className="font-semibold text-white">{profileName} Overview</div></div>
+        <div className="flex items-center gap-2">
+          <button onClick={toggleTwin} className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400" title={twinVisible ? 'Hide Digital Twin' : 'Show Digital Twin'} aria-label={twinVisible ? 'Hide Digital Twin' : 'Show Digital Twin'}>{twinVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}</button>
+          <SyncAllButton compact />
+          <button onClick={() => refresh()} className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400" title="Refresh live view"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button>
+        </div>
       </div>
-      <div className="relative h-[430px] bg-gradient-to-b from-cyan-950/10 via-[#070b14] to-black overflow-hidden">
-        <img src={digitalTwinJamaur} alt="LIV8 digital twin" className="absolute inset-0 w-full h-full object-contain object-center opacity-100 p-1" />
-        <div className="absolute inset-0 bg-gradient-to-t from-[#0b0c13]/70 via-transparent to-transparent pointer-events-none" />
-        <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-black/60 border border-cyan-400/20 text-[10px] text-cyan-300">LIVE • {(activePage || 'command').replaceAll('-', ' ')}</div>
-        {momentum != null && <div className="absolute bottom-4 right-4 w-16 h-16 rounded-full border-2 border-cyan-400/40 bg-black/70 grid place-items-center shadow-[0_0_24px_rgba(34,211,238,.18)]"><div className="text-center"><div className="text-xl font-bold text-white">{momentum}</div><div className="text-[8px] uppercase text-cyan-300">momentum</div></div></div>}
-      </div>
-      <div className="px-3 pt-3 text-[9px] leading-4 text-gray-500">Twin artwork is visual only. Every number below is rendered from the labeled live source; unavailable data stays blank instead of being estimated.</div>
+      {twinVisible && <>
+        <div className="relative h-[430px] bg-gradient-to-b from-cyan-950/10 via-[#070b14] to-black overflow-hidden">
+          <img src={digitalTwinJamaur} alt={`${profileName} digital twin`} className="absolute inset-0 w-full h-full object-contain object-center opacity-100 p-1" />
+          <div className="absolute inset-0 bg-gradient-to-t from-[#0b0c13]/70 via-transparent to-transparent pointer-events-none" />
+          <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-black/60 border border-cyan-400/20 text-[10px] text-cyan-300">LIVE • {(activePage || 'command').replaceAll('-', ' ')}</div>
+          {momentum != null && <div className="absolute bottom-4 right-4 w-16 h-16 rounded-full border-2 border-cyan-400/40 bg-black/70 grid place-items-center shadow-[0_0_24px_rgba(34,211,238,.18)]"><div className="text-center"><div className="text-xl font-bold text-white">{momentum}</div><div className="text-[8px] uppercase text-cyan-300">momentum</div></div></div>}
+        </div>
+        <div className="px-3 pt-3 text-[9px] leading-4 text-gray-500">Twin artwork is visual only. Every number below is rendered from the labeled live source; unavailable data stays blank instead of being estimated.</div>
+      </>}
       <div className="grid grid-cols-2 gap-2 p-3">
         <Metric label="Readiness" value={readiness} suffix="/100" score={readiness} icon={Activity} source={ouraSource} />
         <Metric label="Sleep" value={sleep} suffix="/100" score={sleep} icon={Brain} source={ouraSource} />
