@@ -9,6 +9,7 @@ LOGROOT="$HOME/.liv8/logs"
 OPEN_TABS=1
 UPDATE=0
 OPEN_OBS=1
+OBSREMOTE_PUBLIC_URL="${OBSREMOTE_PUBLIC_URL:-https://obsremote.liv8.co}"
 
 for arg in "$@"; do
   case "$arg" in
@@ -25,6 +26,7 @@ warn(){ printf '⚠️  %s\n' "$*"; }
 info(){ printf '→ %s\n' "$*"; }
 port_up(){ lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
 wait_port(){ local p="$1"; local n="${2:-20}"; for _ in $(seq 1 "$n"); do port_up "$p" && return 0; sleep .5; done; return 1; }
+url_up(){ curl -fsS --max-time "${2:-8}" "$1" >/dev/null 2>&1; }
 
 ensure_repo(){
   local dir="$1" repo="$2" branch="$3"
@@ -89,6 +91,26 @@ elif [[ -f "$HOME/.cloudflared/config.yml" || -f "$HOME/.cloudflared/config.yaml
 fi
 wait_port 3000 20 && ok "OBS Remote ready on 3000" || warn "OBS Remote not listening on 3000"
 
+# Public tunnel self-heal: a loaded LaunchAgent is not enough; verify Cloudflare can reach it.
+sleep 2
+if url_up "$OBSREMOTE_PUBLIC_URL" 10; then
+  ok "OBS Remote public tunnel reachable"
+else
+  warn "OBS Remote public tunnel is offline; attempting self-heal"
+  launchctl kickstart -k "gui/$(id -u)/com.obsremote.cloudflared" >/dev/null 2>&1 || true
+  sleep 5
+  if ! url_up "$OBSREMOTE_PUBLIC_URL" 10 && [[ -x "$OBSREMOTE/scripts/repair-public-access.sh" ]]; then
+    info "Running OBS Remote public-access repair"
+    bash "$OBSREMOTE/scripts/repair-public-access.sh" >/dev/null 2>&1 || true
+    sleep 5
+  fi
+  if url_up "$OBSREMOTE_PUBLIC_URL" 10; then
+    ok "OBS Remote public tunnel recovered"
+  else
+    warn "OBS Remote public tunnel is still unavailable; inspect $OBSREMOTE/logs/cloudflared-error.log"
+  fi
+fi
+
 # Clippedit local dev server
 if port_up 3001; then
   ok "Clippedit already running on 3001"
@@ -126,7 +148,7 @@ printf '  Ollama          http://localhost:11434\n'
 if [[ "$OPEN_TABS" == "1" ]]; then
   open "https://command.liv8.co" >/dev/null 2>&1 || true
   open "https://clipped.liv8.co" >/dev/null 2>&1 || true
-  open "https://obsremote.liv8.co" >/dev/null 2>&1 || true
+  open "$OBSREMOTE_PUBLIC_URL" >/dev/null 2>&1 || true
 fi
 
 printf '\n🚀 LIV8 is up. Run liv8-status anytime.\n'
