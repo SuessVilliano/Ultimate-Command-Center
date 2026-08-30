@@ -1,0 +1,43 @@
+#!/bin/bash
+set -u
+
+port_line(){
+  local name="$1" port="$2" url="$3"
+  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    printf '✅ %-16s port %-5s %s\n' "$name" "$port" "$url"
+  else
+    printf '⚪ %-16s port %-5s %s\n' "$name" "$port" "$url"
+  fi
+}
+
+printf '\n⚡ LIV8 STATUS\n\n'
+port_line "OBS Remote" 3000 "https://obsremote.liv8.co"
+port_line "Clippedit" 3001 "https://clipped.liv8.co"
+port_line "Command Center" 3002 "https://command.liv8.co"
+port_line "LIV8 API" 3005 "local backend"
+port_line "Ollama" 11434 "local AI"
+
+if pgrep -x OBS >/dev/null 2>&1; then
+  printf '✅ %-16s open\n' "OBS Studio"
+else
+  printf '⚪ %-16s closed (Remote can remain ready)\n' "OBS Studio"
+fi
+
+for label in com.obsremote.commandcenter com.obsremote.cloudflared; do
+  if launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
+    printf '✅ %-32s loaded\n' "$label"
+  else
+    printf '⚪ %-32s not loaded\n' "$label"
+  fi
+done
+
+printf '\nPublic checks:\n'
+for url in https://command.liv8.co https://clipped.liv8.co https://obsremote.liv8.co; do
+  if curl -fsSI --max-time 6 "$url" >/dev/null 2>&1; then
+    printf '✅ %s\n' "$url"
+  else
+    printf '⚠️  %s unavailable from this Mac\n' "$url"
+  fi
+done
+
+printf '\nLogs: %s/.liv8/logs\n' "$HOME"

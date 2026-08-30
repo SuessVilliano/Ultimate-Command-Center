@@ -1,0 +1,33 @@
+#!/bin/bash
+set -u
+
+stop_pidfile(){
+  local file="$1" name="$2"
+  if [[ -f "$file" ]]; then
+    local pid
+    pid="$(cat "$file" 2>/dev/null || true)"
+    if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+      kill "$pid" >/dev/null 2>&1 || true
+      printf '✅ Stopped %s (pid %s)\n' "$name" "$pid"
+    fi
+    rm -f "$file"
+  fi
+}
+
+printf '\n⚡ LIV8 STOP\n\n'
+stop_pidfile "$HOME/.liv8/clippedit.pid" "Clippedit"
+stop_pidfile "$HOME/.liv8/ucc-api.pid" "LIV8 API"
+stop_pidfile "$HOME/.liv8/ucc-web.pid" "Command Center"
+
+# Fallback: stop only the known local dev listeners if pidfiles are stale.
+for port in 3001 3002 3005; do
+  pids="$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+  if [[ -n "$pids" ]]; then
+    kill $pids >/dev/null 2>&1 || true
+    printf '✅ Cleared listener on port %s\n' "$port"
+  fi
+done
+
+printf '\nOBS Remote + Cloudflare remain running intentionally.\n'
+printf 'OBS Studio and Ollama are left open intentionally.\n'
+printf 'Use liv8-start to bring the dev stack back.\n'

@@ -1,0 +1,17 @@
+name: LIV8 CLI QA
+
+on:
+  pull_request:
+    branches: [master]
+
+jobs:
+  shell-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate LIV8 CLI scripts
+        run: |
+          bash -n scripts/liv8-start
+          bash -n scripts/liv8-status
+          bash -n scripts/liv8-stop
+          bash -n scripts/install-liv8-cli.sh
