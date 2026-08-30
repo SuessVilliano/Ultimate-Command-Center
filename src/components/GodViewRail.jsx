@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, Bell, BellRing, Brain, CalendarDays, Heart, RefreshCw, ShieldAlert, Sparkles, Target, TrendingUp, Zap } from 'lucide-react';
 import { API_URL } from '../config';
 import * as hs from '../services/highestSelfService';
-import digitalTwinJamaur from '../assets/digital-twin-jamaur-full.jpg';
+import digitalTwinJamaur from '../assets/digitalTwinJamaurFull';
 import SyncAllButton from './SyncAllButton';
 
 const POLL_MS = 5 * 60_000;
