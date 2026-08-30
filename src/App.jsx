@@ -22,7 +22,6 @@ import AgentTeamLive from './pages/AgentTeamLive';
 import Integrations from './pages/Integrations';
 import ActionFeed from './pages/ActionFeed';
 import Trading from './pages/Trading';
-import TradingCommandCenter from './pages/TradingCommandCenter';
 import VoiceAgents from './pages/VoiceAgents';
 import APIBuilder from './pages/APIBuilder';
 import Glasses from './pages/Glasses';
@@ -75,7 +74,7 @@ function AppContent() {
       case 'agent-team': return <AgentTeamLive />;
       case 'integrations': return <Integrations />;
       case 'action-feed': return <ActionFeed />;
-      case 'trading': return <TradingCommandCenter />;
+      case 'trading': return <TradingProcessLive />;
       case 'voice-agents': return <VoiceAgents />;
       case 'api-builder': return <APIBuilder />;
       case 'admin': return <AdminPanel />;
