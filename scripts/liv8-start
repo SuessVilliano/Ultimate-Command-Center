@@ -1,0 +1,132 @@
+#!/bin/bash
+set -u
+
+ROOT="${LIV8_ROOT:-$HOME/clawd}"
+UCC="$ROOT/Ultimate-Command-Center"
+OBSREMOTE="$ROOT/obsremote"
+CLIPPEDIT="$ROOT/clippedit"
+LOGROOT="$HOME/.liv8/logs"
+OPEN_TABS=1
+UPDATE=0
+OPEN_OBS=1
+
+for arg in "$@"; do
+  case "$arg" in
+    --no-browser) OPEN_TABS=0 ;;
+    --no-obs) OPEN_OBS=0 ;;
+    --update) UPDATE=1 ;;
+  esac
+done
+
+mkdir -p "$ROOT" "$LOGROOT"
+
+ok(){ printf '✅ %s\n' "$*"; }
+warn(){ printf '⚠️  %s\n' "$*"; }
+info(){ printf '→ %s\n' "$*"; }
+port_up(){ lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
+wait_port(){ local p="$1"; local n="${2:-20}"; for _ in $(seq 1 "$n"); do port_up "$p" && return 0; sleep .5; done; return 1; }
+
+ensure_repo(){
+  local dir="$1" repo="$2" branch="$3"
+  if [[ ! -d "$dir/.git" ]]; then
+    warn "Missing $(basename "$dir"); cloning it now"
+    git clone "https://github.com/SuessVilliano/$repo.git" "$dir" || return 1
+  fi
+  if [[ "$UPDATE" == "1" ]]; then
+    info "Updating $repo"
+    git -C "$dir" pull --ff-only origin "$branch" || warn "$repo update skipped; local changes may exist"
+  fi
+  if [[ -f "$dir/package.json" && ! -d "$dir/node_modules" ]]; then
+    info "Installing $repo dependencies"
+    (cd "$dir" && npm install) || return 1
+  fi
+}
+
+printf '\n⚡ LIV8 START\n'
+printf 'Workspace: %s\n\n' "$ROOT"
+
+ensure_repo "$OBSREMOTE" obsremote main || exit 1
+ensure_repo "$CLIPPEDIT" clippedit main || exit 1
+ensure_repo "$UCC" Ultimate-Command-Center master || exit 1
+
+# Ollama
+if curl -fsS --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+  ok "Ollama ready on 11434"
+elif command -v ollama >/dev/null 2>&1; then
+  info "Starting Ollama"
+  nohup ollama serve >"$LOGROOT/ollama.log" 2>"$LOGROOT/ollama-error.log" &
+  wait_port 11434 20 && ok "Ollama started" || warn "Ollama did not answer yet; see $LOGROOT/ollama-error.log"
+elif [[ -d "/Applications/Ollama.app" ]]; then
+  open -a Ollama
+  sleep 2
+  wait_port 11434 20 && ok "Ollama started" || warn "Ollama app opened but API is not ready yet"
+else
+  warn "Ollama not found; Juno local AI will be unavailable"
+fi
+
+# OBS Studio
+if [[ "$OPEN_OBS" == "1" ]]; then
+  if pgrep -x OBS >/dev/null 2>&1; then
+    ok "OBS Studio already open"
+  elif [[ -d "/Applications/OBS.app" ]]; then
+    open -a OBS
+    ok "OBS Studio launched"
+  else
+    warn "OBS.app not found in /Applications"
+  fi
+fi
+
+# OBS Remote + Cloudflare are persistent LaunchAgents.
+if launchctl print "gui/$(id -u)/com.obsremote.commandcenter" >/dev/null 2>&1; then
+  launchctl kickstart -k "gui/$(id -u)/com.obsremote.commandcenter" >/dev/null 2>&1 || true
+else
+  bash "$OBSREMOTE/scripts/install-macos-launchagent.sh" >/dev/null 2>&1 || warn "Could not install OBS Remote LaunchAgent"
+fi
+if launchctl print "gui/$(id -u)/com.obsremote.cloudflared" >/dev/null 2>&1; then
+  launchctl kickstart -k "gui/$(id -u)/com.obsremote.cloudflared" >/dev/null 2>&1 || true
+elif [[ -f "$HOME/.cloudflared/config.yml" || -f "$HOME/.cloudflared/config.yaml" ]]; then
+  bash "$OBSREMOTE/scripts/repair-public-access.sh" >/dev/null 2>&1 || warn "OBS Remote tunnel needs attention; run repair-public-access.sh"
+fi
+wait_port 3000 20 && ok "OBS Remote ready on 3000" || warn "OBS Remote not listening on 3000"
+
+# Clippedit local dev server
+if port_up 3001; then
+  ok "Clippedit already running on 3001"
+else
+  info "Starting Clippedit on 3001"
+  (cd "$CLIPPEDIT" && nohup npm run dev -- -p 3001 >"$LOGROOT/clippedit.log" 2>"$LOGROOT/clippedit-error.log" & echo $! >"$HOME/.liv8/clippedit.pid")
+  wait_port 3001 30 && ok "Clippedit ready on 3001" || warn "Clippedit did not start; see $LOGROOT/clippedit-error.log"
+fi
+
+# Command Center API
+if port_up 3005; then
+  ok "LIV8 API already running on 3005"
+else
+  info "Starting LIV8 API on 3005"
+  (cd "$UCC/server" && nohup node server.js >"$LOGROOT/ucc-api.log" 2>"$LOGROOT/ucc-api-error.log" & echo $! >"$HOME/.liv8/ucc-api.pid")
+  wait_port 3005 30 && ok "LIV8 API ready on 3005" || warn "LIV8 API did not start; see $LOGROOT/ucc-api-error.log"
+fi
+
+# Command Center frontend
+if port_up 3002; then
+  ok "Command Center already running on 3002"
+else
+  info "Starting Command Center on 3002"
+  (cd "$UCC" && nohup npm run dev -- --port 3002 >"$LOGROOT/ucc-web.log" 2>"$LOGROOT/ucc-web-error.log" & echo $! >"$HOME/.liv8/ucc-web.pid")
+  wait_port 3002 30 && ok "Command Center ready on 3002" || warn "Command Center did not start; see $LOGROOT/ucc-web-error.log"
+fi
+
+printf '\nLIV8 stack:\n'
+printf '  OBS Remote      http://localhost:3000   https://obsremote.liv8.co\n'
+printf '  Clippedit       http://localhost:3001   https://clipped.liv8.co\n'
+printf '  Command Center  http://localhost:3002   https://command.liv8.co\n'
+printf '  LIV8 API        http://localhost:3005\n'
+printf '  Ollama          http://localhost:11434\n'
+
+if [[ "$OPEN_TABS" == "1" ]]; then
+  open "https://command.liv8.co" >/dev/null 2>&1 || true
+  open "https://clipped.liv8.co" >/dev/null 2>&1 || true
+  open "https://obsremote.liv8.co" >/dev/null 2>&1 || true
+fi
+
+printf '\n🚀 LIV8 is up. Run liv8-status anytime.\n'
