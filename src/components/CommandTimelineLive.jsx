@@ -1,0 +1,48 @@
+import React,{useEffect,useMemo,useState} from 'react';
+import { API_URL } from '../config';
+import { CalendarDays, RefreshCw, Sparkles, Target, Trophy, AlertTriangle, Zap, FolderKanban, HeartPulse, LineChart, CheckCircle2, Clock3 } from 'lucide-react';
+
+const PERIODS=[['yesterday','Yesterday'],['today','Today'],['tomorrow','Tomorrow'],['last_week','Last week'],['this_week','This week'],['next_week','Next week'],['last_month','Last month'],['this_month','This month'],['next_month','Next month'],['this_quarter','This quarter'],['this_year','This year']];
+function pad(n){return String(n).padStart(2,'0')} function ymd(d){return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`}
+function startMonday(d){const x=new Date(d.getFullYear(),d.getMonth(),d.getDate());const day=x.getDay()||7;x.setDate(x.getDate()-day+1);return x}
+function windowFor(key){const n=new Date();let s,e;const day=(o)=>{const x=new Date(n.getFullYear(),n.getMonth(),n.getDate()+o);return x};
+ if(key==='yesterday')s=e=day(-1); else if(key==='today')s=e=day(0); else if(key==='tomorrow')s=e=day(1); else if(key.includes('week')){const o=key==='last_week'?-7:key==='next_week'?7:0;s=startMonday(day(o));e=new Date(s);e.setDate(s.getDate()+6);} else if(key.includes('month')){const o=key==='last_month'?-1:key==='next_month'?1:0;s=new Date(n.getFullYear(),n.getMonth()+o,1);e=new Date(n.getFullYear(),n.getMonth()+o+1,0);} else if(key==='this_quarter'){const m=Math.floor(n.getMonth()/3)*3;s=new Date(n.getFullYear(),m,1);e=new Date(n.getFullYear(),m+3,0);} else {s=new Date(n.getFullYear(),0,1);e=new Date(n.getFullYear(),11,31);} return {start:ymd(s),end:ymd(e)} }
+function rows(p){if(Array.isArray(p))return p;for(const k of ['tasks','projects','events','data','items'])if(Array.isArray(p?.[k]))return p[k];return[]}
+function rowDate(x){return String(x?.dueDate||x?.due_date||x?.date||x?.start||x?.startTime||x?.start_time||x?.updatedAt||x?.updated_at||x?.createdAt||x?.created_at||'').slice(0,10)}
+function within(x,w){const d=rowDate(x);return d&&d>=w.start&&d<=w.end}
+function displayTask(t){return `${t.name||t.title||'Task'} · ${t._project?.name||'Nifty'}${t.dueDate||t.due_date?` · due ${String(t.dueDate||t.due_date).slice(0,10)}`:''}`}
+function displayEvent(e){return `${e.summary||e.title||e.name||'Calendar event'}${e.start?.dateTime||e.start_time||e.startTime?` · ${new Date(e.start?.dateTime||e.start_time||e.startTime).toLocaleString()}`:''}`}
+
+export default function CommandTimelineLive(){
+ const [period,setPeriod]=useState('today'),[loading,setLoading]=useState(true),[error,setError]=useState(''),[ai,setAi]=useState(null),[tasks,setTasks]=useState([]),[calendar,setCalendar]=useState([]),[oura,setOura]=useState(null),[trading,setTrading]=useState(null);
+ const w=useMemo(()=>windowFor(period),[period]);
+ const load=async()=>{setLoading(true);setError('');
+   try{
+     const pr=await fetch(`${API_URL}/api/nifty/projects`);const projects=pr.ok?rows(await pr.json()):[];
+     const taskGroups=await Promise.all(projects.filter(p=>p?.archived!==true).map(async p=>{try{const r=await fetch(`${API_URL}/api/nifty/projects/${encodeURIComponent(p.id)}/tasks`);if(!r.ok)return[];return rows(await r.json()).filter(t=>t?.archived!==true).map(t=>({...t,_project:p}))}catch{return[]}}));
+     setTasks(taskGroups.flat());
+     const span=Math.max(1,Math.ceil((new Date(w.end)-new Date(w.start))/86400000)+1);
+     const calPath=period==='today'?'/api/calendar/today':(period.includes('next')||period==='tomorrow'||period.startsWith('this_'))?`/api/calendar/upcoming?hours=${Math.min(span*24,1440)}`:null;
+     if(calPath){try{const r=await fetch(`${API_URL}${calPath}`);setCalendar(r.ok?rows(await r.json()):[])}catch{setCalendar([])}} else setCalendar([]);
+     try{const r=await fetch(`${API_URL}/api/hs/health/oura/snapshot`);setOura(r.ok?await r.json():null)}catch{setOura(null)}
+     try{const r=await fetch(`${API_URL}/api/trading/hybrid-journal/status`);setTrading(r.ok?await r.json():null)}catch{setTrading(null)}
+     try{const r=await fetch(`${API_URL}/api/intelligence/period`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({period})});setAi(r.ok?await r.json():null)}catch{setAi(null)}
+   }catch(e){setError(e.message||'Timeline sources unavailable')}finally{setLoading(false)}
+ };
+ useEffect(()=>{load()},[period]);
+ const periodTasks=tasks.filter(t=>within(t,w)); const completed=periodTasks.filter(t=>t.completed); const open=periodTasks.filter(t=>!t.completed); const periodCal=calendar.filter(e=>{const d=rowDate(e);return !d|| (d>=w.start&&d<=w.end)});
+ const intelligence=ai?.intelligence||{}; const readiness=oura?.latest?.readiness??oura?.readiness?.score??oura?.readiness??null; const toolNames=(trading?.tools||[]).map(t=>t.name);
+ return <section className="mb-6 rounded-2xl border border-purple-500/25 bg-gradient-to-br from-purple-950/35 via-[#0b0b14] to-cyan-950/20 overflow-hidden">
+   <div className="p-5 border-b border-white/10"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="text-xs uppercase tracking-[.18em] text-purple-300 flex items-center gap-2"><Sparkles className="w-4 h-4"/>Live time intelligence</div><h2 className="text-2xl font-bold text-white mt-1">Command Timeline</h2><p className="text-sm text-gray-500 mt-1">Real source details render even when AI synthesis is offline.</p></div><button onClick={load} className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-gray-300"><RefreshCw className={`w-4 h-4 inline mr-2 ${loading?'animate-spin':''}`}/>Refresh</button></div>
+   <div className="mt-4 flex flex-wrap gap-1.5">{PERIODS.map(([k,l])=><button key={k} onClick={()=>setPeriod(k)} className={`px-3 py-1.5 rounded-lg text-xs ${period===k?'bg-purple-600 text-white':'bg-white/5 text-gray-400'}`}>{l}</button>)}</div></div>
+   <div className="p-5 space-y-4">
+     {error&&<div className="p-3 rounded-xl border border-red-500/25 bg-red-500/10 text-red-300 text-sm"><AlertTriangle className="w-4 h-4 inline mr-2"/>{error}</div>}
+     <div className="grid xl:grid-cols-[1fr_220px] gap-3"><div className="rounded-xl border border-white/10 bg-white/[.03] p-4"><div className="flex items-center gap-2 text-xs text-gray-500"><Clock3 className="w-4 h-4"/>{w.start} → {w.end}</div><h3 className="text-lg font-semibold text-white mt-2">{intelligence.headline||`${PERIODS.find(x=>x[0]===period)?.[1]} source view`}</h3><p className="text-sm text-gray-300 mt-2 whitespace-pre-wrap">{intelligence.summary||`Nifty: ${periodTasks.length} dated task(s) in window, ${completed.length} completed, ${open.length} open. Calendar: ${periodCal.length} visible event(s).`}</p></div><div className="rounded-xl border border-white/10 bg-black/20 p-4 text-center"><Target className="w-5 h-5 text-cyan-300 mx-auto"/><div className="text-[10px] uppercase text-gray-600 mt-2">Alignment</div><div className="text-3xl font-bold text-white">{Number.isFinite(Number(intelligence.score))?Number(intelligence.score):'—'}</div><div className="text-[10px] text-gray-600">AI score only when evidence is sufficient</div></div></div>
+     <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3"><SourceCard icon={FolderKanban} title="Nifty tasks" value={`${periodTasks.length}`} detail={`${completed.length} completed · ${open.length} open`}/><SourceCard icon={CalendarDays} title="Calendar" value={`${periodCal.length}`} detail="Visible events in this window"/><SourceCard icon={HeartPulse} title="Oura readiness" value={readiness??'—'} detail={readiness==null?'Source unavailable':'Current recovery signal'}/><SourceCard icon={LineChart} title="Hybrid MCP" value={trading?.mcp?.configured?'Connected':'—'} detail={toolNames.length?toolNames.join(', '):'No live tool list returned'}/></div>
+     <div className="grid xl:grid-cols-2 gap-3"><DetailList title="Task details" icon={CheckCircle2} items={periodTasks.slice(0,12).map(displayTask)} empty="No Nifty tasks with dates in this period."/><DetailList title="Calendar details" icon={CalendarDays} items={periodCal.slice(0,12).map(displayEvent)} empty="No calendar events available for this period."/></div>
+     {(intelligence.wins?.length||intelligence.attention?.length||intelligence.opportunities?.length||intelligence.nextActions?.length)?<div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3"><DetailList title="Wins" icon={Trophy} items={intelligence.wins}/><DetailList title="Needs attention" icon={AlertTriangle} items={intelligence.attention||intelligence.misses}/><DetailList title="Opportunities" icon={Zap} items={intelligence.opportunities}/><DetailList title="Next moves" icon={CalendarDays} items={intelligence.nextActions}/></div>:null}
+   </div>
+ </section>
+}
+function SourceCard({icon:Icon,title,value,detail}){return <div className="rounded-xl border border-white/10 bg-white/[.03] p-4"><Icon className="w-4 h-4 text-purple-300"/><div className="text-xs text-gray-500 mt-2">{title}</div><div className="text-xl font-bold text-white mt-1">{value}</div><div className="text-[11px] text-gray-600 mt-1 break-words">{detail}</div></div>}
+function DetailList({title,icon:Icon,items=[],empty='Nothing surfaced.'}){return <div className="rounded-xl border border-white/10 bg-white/[.03] p-4"><div className="flex items-center gap-2 text-sm font-semibold text-white"><Icon className="w-4 h-4 text-purple-300"/>{title}</div><div className="mt-3 space-y-2">{items?.length?items.map((x,i)=><div key={i} className="text-sm text-gray-300 border-b border-white/5 pb-2 last:border-0">{typeof x==='string'?x:x?.goal||x?.evidence||JSON.stringify(x)}</div>):<div className="text-sm text-gray-600">{empty}</div>}</div></div>}
