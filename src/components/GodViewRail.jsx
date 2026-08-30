@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, Bell, BellRing, Brain, CalendarDays, Heart, RefreshCw, ShieldAlert, Sparkles, Target, TrendingUp, Zap } from 'lucide-react';
 import { API_URL } from '../config';
 import * as hs from '../services/highestSelfService';
-import digitalTwinJamaur from '../assets/digital-twin-jamaur.svg';
+import digitalTwinJamaur from '../assets/digital-twin-jamaur-full.jpg';
 import SyncAllButton from './SyncAllButton';
 
 const POLL_MS = 5 * 60_000;
@@ -19,9 +19,12 @@ function tone(v) {
 function readSeen() { try { return new Set(JSON.parse(localStorage.getItem(LS_SEEN) || '[]')); } catch { return new Set(); } }
 function saveSeen(seen) { try { localStorage.setItem(LS_SEEN, JSON.stringify([...seen].slice(-250))); } catch {} }
 
-function Metric({ label, value, suffix = '', icon: Icon, score }) {
+function Metric({ label, value, suffix = '', icon: Icon, score, source = 'Live data' }) {
   return <div className={`rounded-xl border p-3 ${tone(score)}`}>
-    <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-gray-500"><Icon className="w-3.5 h-3.5" />{label}</div>
+    <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-gray-500"><Icon className="w-3.5 h-3.5" />{label}</div>
+      <div className="text-[8px] uppercase tracking-wider text-gray-600">{source}</div>
+    </div>
     <div className="mt-1 text-xl font-bold text-white">{value ?? '—'}{value != null && suffix && <span className="ml-1 text-[10px] font-medium text-gray-500">{suffix}</span>}</div>
   </div>;
 }
@@ -88,39 +91,44 @@ export default function GodViewRail({ activePage, onNavigate }) {
 
   const latest = oura?.latest || {};
   const readiness = num(latest.readiness), sleep = num(latest.sleep), activity = num(latest.activity);
-  const alignment = num(intel?.intelligence?.score);
+  const lifeAlignment = num(intel?.intelligence?.score);
   const latestMetrics = health?.latestMetrics || {};
   const labs = health?.markerSummary || [];
   const labValue = marker => labs.find(x => x.marker === marker)?.latest_value ?? labs.find(x => x.marker === marker)?.value ?? null;
   const highCount = signals.filter(s => s.severity === 'high').length;
   const momentum = useMemo(() => {
-    const vals = [readiness, sleep, activity, alignment].filter(v => v != null);
+    const vals = [readiness, sleep, activity, lifeAlignment].filter(v => v != null);
     return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
-  }, [readiness, sleep, activity, alignment]);
+  }, [readiness, sleep, activity, lifeAlignment]);
 
-  return <aside className="hidden 2xl:flex fixed top-6 right-6 bottom-6 w-[360px] z-30 flex-col gap-3 overflow-y-auto pr-1">
+  const ouraSource = oura?.configured ? 'Oura live' : 'Oura unavailable';
+  const healthSource = health ? 'Health OS' : 'Health unavailable';
+  const intelSource = intel ? 'Juno' : 'Juno unavailable';
+
+  return <aside data-testid="god-view-rail" className="hidden 2xl:flex fixed top-6 right-6 bottom-6 w-[360px] z-30 flex-col gap-3 overflow-y-auto pr-1">
     <section className="rounded-2xl border border-purple-500/25 bg-[#0b0c13]/95 shadow-2xl shadow-purple-950/20 overflow-hidden backdrop-blur-xl">
       <div className="p-4 flex items-center justify-between gap-2 border-b border-white/10">
         <div><div className="text-[10px] uppercase tracking-[.18em] text-purple-300">Live Digital Twin</div><div className="font-semibold text-white">LIV8 Overview</div></div>
         <div className="flex items-center gap-2"><SyncAllButton compact /><button onClick={() => refresh()} className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400" title="Refresh live view"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button></div>
       </div>
-      <div className="relative h-[300px] bg-gradient-to-b from-purple-950/20 via-cyan-950/5 to-black overflow-hidden">
-        <img src={digitalTwinJamaur} alt="LIV8 digital twin" className="absolute inset-0 w-full h-full object-cover object-center opacity-95" />
-        <div className="absolute inset-0 bg-gradient-to-t from-[#0b0c13] via-transparent to-transparent pointer-events-none" />
+      <div className="relative h-[430px] bg-gradient-to-b from-cyan-950/10 via-[#070b14] to-black overflow-hidden">
+        <img src={digitalTwinJamaur} alt="LIV8 digital twin" className="absolute inset-0 w-full h-full object-contain object-center opacity-100 p-1" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#0b0c13]/70 via-transparent to-transparent pointer-events-none" />
         <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-black/60 border border-cyan-400/20 text-[10px] text-cyan-300">LIVE • {(activePage || 'command').replaceAll('-', ' ')}</div>
         {momentum != null && <div className="absolute bottom-4 right-4 w-16 h-16 rounded-full border-2 border-cyan-400/40 bg-black/70 grid place-items-center shadow-[0_0_24px_rgba(34,211,238,.18)]"><div className="text-center"><div className="text-xl font-bold text-white">{momentum}</div><div className="text-[8px] uppercase text-cyan-300">momentum</div></div></div>}
       </div>
+      <div className="px-3 pt-3 text-[9px] leading-4 text-gray-500">Twin artwork is visual only. Every number below is rendered from the labeled live source; unavailable data stays blank instead of being estimated.</div>
       <div className="grid grid-cols-2 gap-2 p-3">
-        <Metric label="Readiness" value={readiness} suffix="/100" score={readiness} icon={Activity} />
-        <Metric label="Sleep" value={sleep} suffix="/100" score={sleep} icon={Brain} />
-        <Metric label="Activity" value={activity} suffix="/100" score={activity} icon={TrendingUp} />
-        <Metric label="Alignment" value={alignment} suffix="/100" score={alignment} icon={Target} />
-        <Metric label="Weight" value={latestMetrics.weight ?? null} suffix="lb" icon={Heart} />
-        <Metric label="Signals" value={signals.length} suffix={highCount ? `${highCount} urgent` : 'live'} score={highCount ? 50 : 90} icon={Zap} />
+        <Metric label="Readiness" value={readiness} suffix="/100" score={readiness} icon={Activity} source={ouraSource} />
+        <Metric label="Sleep" value={sleep} suffix="/100" score={sleep} icon={Brain} source={ouraSource} />
+        <Metric label="Activity" value={activity} suffix="/100" score={activity} icon={TrendingUp} source={ouraSource} />
+        <Metric label="Life alignment" value={lifeAlignment} suffix="/100" score={lifeAlignment} icon={Target} source={intelSource} />
+        <Metric label="Weight" value={latestMetrics.weight ?? null} suffix="lb" icon={Heart} source={healthSource} />
+        <Metric label="Signals" value={signals.length} suffix={highCount ? `${highCount} urgent` : 'live'} score={highCount ? 50 : 90} icon={Zap} source={intelSource} />
       </div>
       {(labValue('total_cholesterol') != null || labValue('ldl') != null) && <div className="mx-3 mb-3 grid grid-cols-2 gap-2">
-        <button onClick={() => onNavigate?.('health-os')} className="text-left p-3 rounded-xl border border-pink-500/15 bg-pink-500/[.04]"><div className="text-[9px] uppercase text-pink-300/70">Total cholesterol</div><div className="text-lg font-bold text-white">{labValue('total_cholesterol') ?? '—'} <span className="text-[9px] text-gray-500">mg/dL</span></div></button>
-        <button onClick={() => onNavigate?.('health-os')} className="text-left p-3 rounded-xl border border-violet-500/15 bg-violet-500/[.04]"><div className="text-[9px] uppercase text-violet-300/70">LDL</div><div className="text-lg font-bold text-white">{labValue('ldl') ?? '—'} <span className="text-[9px] text-gray-500">mg/dL</span></div></button>
+        <button onClick={() => onNavigate?.('health-os')} className="text-left p-3 rounded-xl border border-pink-500/15 bg-pink-500/[.04]"><div className="text-[9px] uppercase text-pink-300/70">Total cholesterol <span className="text-gray-600">• Health OS</span></div><div className="text-lg font-bold text-white">{labValue('total_cholesterol') ?? '—'} <span className="text-[9px] text-gray-500">mg/dL</span></div></button>
+        <button onClick={() => onNavigate?.('health-os')} className="text-left p-3 rounded-xl border border-violet-500/15 bg-violet-500/[.04]"><div className="text-[9px] uppercase text-violet-300/70">LDL <span className="text-gray-600">• Health OS</span></div><div className="text-lg font-bold text-white">{labValue('ldl') ?? '—'} <span className="text-[9px] text-gray-500">mg/dL</span></div></button>
       </div>}
     </section>
 
