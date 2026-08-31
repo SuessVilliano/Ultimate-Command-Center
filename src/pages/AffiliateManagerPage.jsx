@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Briefcase, ExternalLink, Target, Users, TrendingUp, CalendarDays, BookOpen, ChevronDown, ChevronUp } from 'lucide-react';
 import AffiliateHub from '../components/affiliates/AffiliateHub';
 
@@ -26,6 +26,21 @@ const LEGACY_SUPPORT_LINKS = [
   ['Support Dashboard','https://docs.google.com/spreadsheets/d/1oD_dS_A4b3lNW7cWEdv6QYeb3zJakV_PoKweyhFgaNs/edit?pli=1&gid=1182538947#gid=1182538947','Legacy support Google Sheet','📊'],
 ];
 
+const STORAGE = {
+  workToolsOpen: 'liv8_ghl_work_tools_open',
+  legacyOpen: 'liv8_ghl_legacy_links_open',
+  affiliateHubOpen: 'liv8_ghl_affiliate_hub_open',
+};
+
+function loadOpenState(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw == null ? fallback : raw === 'true';
+  } catch {
+    return fallback;
+  }
+}
+
 function QuickLink({ item }) {
   const [name, url, description, icon] = item;
   return (
@@ -45,8 +60,35 @@ function QuickLink({ item }) {
   );
 }
 
+function CollapsibleHeader({ title, subtitle, open, onToggle, accent = 'text-gray-400', icon: Icon }) {
+  return (
+    <button onClick={onToggle} className="w-full flex items-center justify-between gap-3 text-left">
+      <div className="min-w-0">
+        <div className="text-sm font-semibold text-white flex items-center gap-2">
+          {Icon ? <Icon className={`w-4 h-4 ${accent}`}/> : null}
+          {title}
+        </div>
+        {subtitle ? <div className="text-xs text-gray-500 mt-1">{subtitle}</div> : null}
+      </div>
+      {open ? <ChevronUp className="w-4 h-4 text-gray-500 shrink-0"/> : <ChevronDown className="w-4 h-4 text-gray-500 shrink-0"/>}
+    </button>
+  );
+}
+
 export default function AffiliateManagerPage(){
-  const [legacyOpen, setLegacyOpen] = useState(false);
+  const [workToolsOpen, setWorkToolsOpen] = useState(() => loadOpenState(STORAGE.workToolsOpen, true));
+  const [legacyOpen, setLegacyOpen] = useState(() => loadOpenState(STORAGE.legacyOpen, false));
+  const [affiliateHubOpen, setAffiliateHubOpen] = useState(() => loadOpenState(STORAGE.affiliateHubOpen, true));
+
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE.workToolsOpen, String(workToolsOpen)); } catch {}
+  }, [workToolsOpen]);
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE.legacyOpen, String(legacyOpen)); } catch {}
+  }, [legacyOpen]);
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE.affiliateHubOpen, String(affiliateHubOpen)); } catch {}
+  }, [affiliateHubOpen]);
 
   return <div className="space-y-5">
     <section className="rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-950/20 via-[#0b0d12] to-purple-950/20 p-5">
@@ -67,28 +109,40 @@ export default function AffiliateManagerPage(){
     </section>
 
     <section className="rounded-2xl border border-white/10 bg-white/[.02] p-4">
-      <div className="flex items-center justify-between mb-3">
-        <div>
-          <div className="text-sm font-semibold text-white">GHL Work Tools</div>
-          <div className="text-xs text-gray-500 mt-1">Quick access to the employee tools you used before the Affiliate Manager pivot.</div>
-        </div>
-      </div>
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
+      <CollapsibleHeader
+        title="GHL Work Tools"
+        subtitle="Quick access to your employee tools. Collapse this when you want a cleaner workspace."
+        open={workToolsOpen}
+        onToggle={() => setWorkToolsOpen(v => !v)}
+      />
+      {workToolsOpen && <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 mt-4">
         {WORK_LINKS.map(item => <QuickLink key={item[0]} item={item}/>) }
-      </div>
+      </div>}
     </section>
 
-    <section className="rounded-xl border border-amber-500/15 bg-amber-500/[.04] overflow-hidden">
-      <button onClick={() => setLegacyOpen(v => !v)} className="w-full flex items-center justify-between gap-3 p-3 text-left">
-        <div className="text-xs text-gray-400"><BookOpen className="w-4 h-4 inline mr-2 text-amber-300"/>Legacy Support Links — accessible, but no active ticket queues, alerts, SLAs, schedules or support tasks.</div>
-        {legacyOpen ? <ChevronUp className="w-4 h-4 text-gray-500"/> : <ChevronDown className="w-4 h-4 text-gray-500"/>}
-      </button>
-      {legacyOpen && <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 p-3 pt-0">
+    <section className="rounded-xl border border-amber-500/15 bg-amber-500/[.04] overflow-hidden p-3">
+      <CollapsibleHeader
+        title="Legacy Support Links"
+        subtitle="Accessible when needed; no active ticket queues, alerts, SLAs, schedules or support tasks."
+        open={legacyOpen}
+        onToggle={() => setLegacyOpen(v => !v)}
+        accent="text-amber-300"
+        icon={BookOpen}
+      />
+      {legacyOpen && <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-3">
         {LEGACY_SUPPORT_LINKS.map(item => <QuickLink key={item[0]} item={item}/>) }
       </div>}
     </section>
 
-    <AffiliateHub/>
+    <section className="rounded-2xl border border-white/10 bg-white/[.02] p-4">
+      <CollapsibleHeader
+        title="Affiliate Hub"
+        subtitle="Partner portfolio, enablement and affiliate-management workspace."
+        open={affiliateHubOpen}
+        onToggle={() => setAffiliateHubOpen(v => !v)}
+      />
+      {affiliateHubOpen && <div className="mt-4"><AffiliateHub/></div>}
+    </section>
   </div>
 }
 
