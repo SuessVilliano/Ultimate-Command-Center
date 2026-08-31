@@ -36,43 +36,31 @@ function loadOpenState(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
     return raw == null ? fallback : raw === 'true';
-  } catch {
-    return fallback;
-  }
+  } catch { return fallback; }
 }
 
 function QuickLink({ item }) {
   const [name, url, description, icon] = item;
-  return (
-    <button
-      onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}
-      className="text-left rounded-xl border border-white/10 bg-white/[.03] p-4 hover:bg-white/[.07] transition-colors"
-    >
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-lg" aria-hidden="true">{icon}</span>
-          <div className="font-semibold text-white truncate">{name}</div>
-        </div>
-        <ExternalLink className="w-4 h-4 text-gray-500 shrink-0"/>
-      </div>
-      <div className="text-xs text-gray-500 mt-2">{description}</div>
-    </button>
-  );
+  return <button
+    onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}
+    className="text-left rounded-xl border border-cyan-500/10 bg-[#080d10] p-4 hover:border-cyan-500/30 hover:bg-[#0b1317] transition-colors shadow-inner shadow-black/30"
+  >
+    <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center gap-2 min-w-0"><span className="text-lg" aria-hidden="true">{icon}</span><div className="font-semibold text-gray-100 truncate">{name}</div></div>
+      <ExternalLink className="w-4 h-4 text-cyan-700 shrink-0"/>
+    </div>
+    <div className="text-xs text-slate-500 mt-2">{description}</div>
+  </button>;
 }
 
-function CollapsibleHeader({ title, subtitle, open, onToggle, accent = 'text-gray-400', icon: Icon }) {
-  return (
-    <button onClick={onToggle} className="w-full flex items-center justify-between gap-3 text-left">
-      <div className="min-w-0">
-        <div className="text-sm font-semibold text-white flex items-center gap-2">
-          {Icon ? <Icon className={`w-4 h-4 ${accent}`}/> : null}
-          {title}
-        </div>
-        {subtitle ? <div className="text-xs text-gray-500 mt-1">{subtitle}</div> : null}
-      </div>
-      {open ? <ChevronUp className="w-4 h-4 text-gray-500 shrink-0"/> : <ChevronDown className="w-4 h-4 text-gray-500 shrink-0"/>}
-    </button>
-  );
+function CollapsibleHeader({ title, subtitle, open, onToggle, accent = 'text-cyan-400', icon: Icon }) {
+  return <button onClick={onToggle} className="w-full flex items-center justify-between gap-3 text-left">
+    <div className="min-w-0">
+      <div className="text-sm font-semibold text-gray-100 flex items-center gap-2">{Icon ? <Icon className={`w-4 h-4 ${accent}`}/> : null}{title}</div>
+      {subtitle ? <div className="text-xs text-slate-500 mt-1">{subtitle}</div> : null}
+    </div>
+    {open ? <ChevronUp className="w-4 h-4 text-cyan-700 shrink-0"/> : <ChevronDown className="w-4 h-4 text-cyan-700 shrink-0"/>}
+  </button>;
 }
 
 export default function AffiliateManagerPage(){
@@ -80,72 +68,36 @@ export default function AffiliateManagerPage(){
   const [legacyOpen, setLegacyOpen] = useState(() => loadOpenState(STORAGE.legacyOpen, false));
   const [affiliateHubOpen, setAffiliateHubOpen] = useState(() => loadOpenState(STORAGE.affiliateHubOpen, true));
 
-  useEffect(() => {
-    try { localStorage.setItem(STORAGE.workToolsOpen, String(workToolsOpen)); } catch {}
-  }, [workToolsOpen]);
-  useEffect(() => {
-    try { localStorage.setItem(STORAGE.legacyOpen, String(legacyOpen)); } catch {}
-  }, [legacyOpen]);
-  useEffect(() => {
-    try { localStorage.setItem(STORAGE.affiliateHubOpen, String(affiliateHubOpen)); } catch {}
-  }, [affiliateHubOpen]);
+  useEffect(() => { try { localStorage.setItem(STORAGE.workToolsOpen, String(workToolsOpen)); } catch {} }, [workToolsOpen]);
+  useEffect(() => { try { localStorage.setItem(STORAGE.legacyOpen, String(legacyOpen)); } catch {} }, [legacyOpen]);
+  useEffect(() => { try { localStorage.setItem(STORAGE.affiliateHubOpen, String(affiliateHubOpen)); } catch {} }, [affiliateHubOpen]);
 
   return <div className="space-y-5">
-    <section className="rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-950/20 via-[#0b0d12] to-purple-950/20 p-5">
+    <section className="rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-[#071217] via-[#080c11] to-[#120b1b] p-5 shadow-xl shadow-black/20">
       <div className="flex items-center gap-3">
-        <div className="w-11 h-11 rounded-xl bg-cyan-500/15 grid place-items-center"><Briefcase className="w-5 h-5 text-cyan-300"/></div>
-        <div>
-          <div className="text-xs uppercase tracking-[.18em] text-cyan-300">GoHighLevel career</div>
-          <h1 className="text-2xl font-bold text-white">Affiliate Manager OS</h1>
-          <p className="text-sm text-gray-500 mt-1">Active work is partner growth, affiliate portfolio management, enablement, product mastery, reporting, events and relationship development. Support-ticket work is legacy, but useful GHL employee tools stay accessible.</p>
-        </div>
+        <div className="w-11 h-11 rounded-xl border border-cyan-500/20 bg-cyan-500/10 grid place-items-center"><Briefcase className="w-5 h-5 text-cyan-300"/></div>
+        <div><div className="text-xs uppercase tracking-[.18em] text-cyan-300">GoHighLevel career</div><h1 className="text-2xl font-bold text-gray-100">Affiliate Manager OS</h1><p className="text-sm text-slate-500 mt-1">Partner growth, portfolio management, enablement, product mastery, reporting, events and relationship development.</p></div>
       </div>
-      <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-5">
-        <P icon={Target} t="Scorecard" d="Know the role metrics and promotion path"/>
-        <P icon={Users} t="Portfolio" d="Prioritize partners and next best actions"/>
-        <P icon={TrendingUp} t="Growth" d="Enable partners and grow referred revenue"/>
-        <P icon={CalendarDays} t="Cadence" d="Run outreach, reviews, follow-ups and events"/>
-      </div>
+      <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-5"><P icon={Target} t="Scorecard" d="Know the role metrics and promotion path"/><P icon={Users} t="Portfolio" d="Prioritize partners and next best actions"/><P icon={TrendingUp} t="Growth" d="Enable partners and grow referred revenue"/><P icon={CalendarDays} t="Cadence" d="Run outreach, reviews, follow-ups and events"/></div>
     </section>
 
-    <section className="rounded-2xl border border-white/10 bg-white/[.02] p-4">
-      <CollapsibleHeader
-        title="GHL Work Tools"
-        subtitle="Quick access to your employee tools. Collapse this when you want a cleaner workspace."
-        open={workToolsOpen}
-        onToggle={() => setWorkToolsOpen(v => !v)}
-      />
-      {workToolsOpen && <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 mt-4">
-        {WORK_LINKS.map(item => <QuickLink key={item[0]} item={item}/>) }
-      </div>}
+    <section className="rounded-2xl border border-[#173039] bg-[#070c0f] p-4">
+      <CollapsibleHeader title="GHL Work Tools" subtitle="Quick access to employee tools. Collapse this when you want a cleaner workspace." open={workToolsOpen} onToggle={() => setWorkToolsOpen(v => !v)} />
+      {workToolsOpen && <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 mt-4">{WORK_LINKS.map(item => <QuickLink key={item[0]} item={item}/>)}</div>}
     </section>
 
-    <section className="rounded-xl border border-amber-500/15 bg-amber-500/[.04] overflow-hidden p-3">
-      <CollapsibleHeader
-        title="Legacy Support Links"
-        subtitle="Accessible when needed; no active ticket queues, alerts, SLAs, schedules or support tasks."
-        open={legacyOpen}
-        onToggle={() => setLegacyOpen(v => !v)}
-        accent="text-amber-300"
-        icon={BookOpen}
-      />
-      {legacyOpen && <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-3">
-        {LEGACY_SUPPORT_LINKS.map(item => <QuickLink key={item[0]} item={item}/>) }
-      </div>}
+    <section className="rounded-2xl border border-amber-500/15 bg-[#0d0d09] p-4">
+      <CollapsibleHeader title="Legacy Support Links" subtitle="Accessible when needed; no active ticket queues, alerts, SLAs, schedules or support tasks." open={legacyOpen} onToggle={() => setLegacyOpen(v => !v)} accent="text-amber-300" icon={BookOpen} />
+      {legacyOpen && <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-3">{LEGACY_SUPPORT_LINKS.map(item => <QuickLink key={item[0]} item={item}/>)}</div>}
     </section>
 
-    <section className="rounded-2xl border border-white/10 bg-white/[.02] p-4">
-      <CollapsibleHeader
-        title="Affiliate Hub"
-        subtitle="Partner portfolio, enablement and affiliate-management workspace."
-        open={affiliateHubOpen}
-        onToggle={() => setAffiliateHubOpen(v => !v)}
-      />
+    <section className="rounded-2xl border border-[#173039] bg-[#070c0f] p-4">
+      <CollapsibleHeader title="Affiliate Hub" subtitle="Partner portfolio, enablement and affiliate-management workspace." open={affiliateHubOpen} onToggle={() => setAffiliateHubOpen(v => !v)} />
       {affiliateHubOpen && <div className="mt-4"><AffiliateHub/></div>}
     </section>
-  </div>
+  </div>;
 }
 
 function P({icon:Icon,t,d}){
-  return <div className="rounded-xl border border-white/10 bg-black/20 p-3"><Icon className="w-4 h-4 text-cyan-300"/><div className="font-semibold text-white text-sm mt-2">{t}</div><div className="text-xs text-gray-500 mt-1">{d}</div></div>
+  return <div className="rounded-xl border border-cyan-500/10 bg-[#080d10] p-3"><Icon className="w-4 h-4 text-cyan-300"/><div className="font-semibold text-gray-100 text-sm mt-2">{t}</div><div className="text-xs text-slate-500 mt-1">{d}</div></div>;
 }
