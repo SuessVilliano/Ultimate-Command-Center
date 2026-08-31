@@ -1,6 +1,7 @@
 import * as ollama from '../lib/ollama-provider.js';
 import { getCommanderPrompt } from '../lib/system-prompt.js';
 import { CAPABILITIES, SOURCE_OF_TRUTH } from '../lib/capability-registry.js';
+import { registerJunoGatewayRoutes } from './juno-gateway-routes.js';
 
 const PORT = () => process.env.PORT || 3005;
 const MAX_TOOL_CONTEXT = 18000;
@@ -229,6 +230,7 @@ export function registerOperatorRoutes(app) {
       sourceOfTruth: SOURCE_OF_TRUTH,
       capabilities: CAPABILITIES,
       chatInterception: ['/api/chat', '/api/commander/chat'],
+      gateway: '/api/juno/gateway/command',
       policy: { safeReads: 'automatic', writes: 'approval_gated', liveTrading: 'dedicated_confirmation_gate' },
     });
   });
@@ -248,8 +250,8 @@ export function registerOperatorRoutes(app) {
     }
   });
 
-  // registerNiftyRoutes is mounted late in server startup. Defer one tick so all
-  // legacy chat routes exist, then wrap them without duplicating frontend code.
+  registerJunoGatewayRoutes(app, operate);
+
   setImmediate(() => {
     const chat = patchChatRoute(app, '/api/chat');
     const commander = patchChatRoute(app, '/api/commander/chat');
