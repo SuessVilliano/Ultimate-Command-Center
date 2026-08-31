@@ -38,9 +38,9 @@ import Today from './pages/Today';
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
   const { theme } = useTheme();
-  const [activePage, setActivePage] = useState(() => {
-    try { return localStorage.getItem('last_page') || 'hs-today'; } catch { return 'hs-today'; }
-  });
+  // Every fresh Command Center session starts at Morning Command.
+  // Navigation still persists during the session; a reload intentionally returns to the operating brief.
+  const [activePage, setActivePage] = useState('hs-today');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [dictationOpen, setDictationOpen] = useState(false);
   const isDark = theme === 'dark';
@@ -50,8 +50,6 @@ function AppContent() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
-
-  useEffect(() => { try { localStorage.setItem('last_page', activePage); } catch {} }, [activePage]);
 
   const handleNavigate = (page) => setActivePage(page);
   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
@@ -88,7 +86,7 @@ function AppContent() {
       case 'business-os': return <BusinessOS />;
       case 'hs-today': return <Today onNavigate={setActivePage} />;
       case 'glasses': return <Glasses onExit={() => setActivePage('dashboard')} />;
-      default: return <CommandDashboard />;
+      default: return <Today onNavigate={setActivePage} />;
     }
   };
 
