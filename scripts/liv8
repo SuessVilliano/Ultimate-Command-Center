@@ -1,0 +1,65 @@
+#!/bin/bash
+set -u
+
+ROOT="${LIV8_ROOT:-$HOME/clawd}"
+UCC="$ROOT/Ultimate-Command-Center"
+LOGROOT="$HOME/.liv8/logs"
+mkdir -p "$LOGROOT"
+
+ok(){ printf '✅ %s\n' "$*"; }
+warn(){ printf '⚠️  %s\n' "$*"; }
+info(){ printf '→ %s\n' "$*"; }
+port_up(){ lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
+wait_port(){ local p="$1"; local n="${2:-30}"; for _ in $(seq 1 "$n"); do port_up "$p" && return 0; sleep .5; done; return 1; }
+
+printf '\n⚡ LIV8 CORE\n'
+
+if [[ ! -d "$UCC/.git" ]]; then
+  warn "Command Center repo missing; cloning it now"
+  mkdir -p "$ROOT"
+  git clone https://github.com/SuessVilliano/Ultimate-Command-Center.git "$UCC" || exit 1
+fi
+
+# Best-effort local AI. Never block Command Center startup on Ollama.
+if curl -fsS --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+  ok "Ollama ready"
+elif command -v ollama >/dev/null 2>&1; then
+  info "Starting Ollama in background"
+  nohup ollama serve >"$LOGROOT/ollama.log" 2>"$LOGROOT/ollama-error.log" &
+else
+  warn "Ollama unavailable; Command Center will still start"
+fi
+
+# API first.
+if port_up 3005; then
+  ok "LIV8 API already running on 3005"
+else
+  info "Starting LIV8 API"
+  if [[ ! -d "$UCC/server/node_modules" ]]; then
+    (cd "$UCC/server" && npm install) || warn "Backend dependency install failed"
+  fi
+  (cd "$UCC/server" && nohup node server.js >"$LOGROOT/ucc-api.log" 2>"$LOGROOT/ucc-api-error.log" & echo $! >"$HOME/.liv8/ucc-api.pid")
+  wait_port 3005 30 && ok "LIV8 API ready" || warn "API not ready yet; see $LOGROOT/ucc-api-error.log"
+fi
+
+# Frontend. This is the required success path.
+if port_up 3002; then
+  ok "Command Center already running on 3002"
+else
+  info "Starting Command Center"
+  if [[ ! -d "$UCC/node_modules" ]]; then
+    (cd "$UCC" && npm install) || exit 1
+  fi
+  (cd "$UCC" && nohup npm run dev -- --port 3002 >"$LOGROOT/ucc-web.log" 2>"$LOGROOT/ucc-web-error.log" & echo $! >"$HOME/.liv8/ucc-web.pid")
+  if wait_port 3002 40; then
+    ok "Command Center ready on 3002"
+  else
+    warn "Local Command Center did not answer; opening production instead"
+    open "https://command.liv8.co" >/dev/null 2>&1 || true
+    exit 0
+  fi
+fi
+
+open "http://localhost:3002" >/dev/null 2>&1 || open "https://command.liv8.co" >/dev/null 2>&1 || true
+printf '\n🚀 Command Center opened.\n'
+printf 'Use liv8-start when you want the full OBS + Clippedit stack.\n'
