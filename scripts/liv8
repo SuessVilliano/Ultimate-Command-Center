@@ -1,0 +1,84 @@
+#!/bin/bash
+set -u
+
+ROOT="${LIV8_ROOT:-$HOME/clawd}"
+UCC="$ROOT/Ultimate-Command-Center"
+LOGROOT="$HOME/.liv8/logs"
+UPDATE=0
+OPEN_BROWSER=1
+
+for arg in "$@"; do
+  case "$arg" in
+    --update) UPDATE=1 ;;
+    --no-browser) OPEN_BROWSER=0 ;;
+  esac
+done
+
+mkdir -p "$LOGROOT"
+ok(){ printf '✅ %s\n' "$*"; }
+warn(){ printf '⚠️  %s\n' "$*"; }
+info(){ printf '→ %s\n' "$*"; }
+port_up(){ lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
+wait_port(){ local p="$1"; local n="${2:-30}"; for _ in $(seq 1 "$n"); do port_up "$p" && return 0; sleep .5; done; return 1; }
+
+printf '\n⚡ LIV8 MORNING COMMAND\n\n'
+
+if [[ ! -d "$UCC/.git" ]]; then
+  warn "Command Center repo missing at $UCC"
+  exit 1
+fi
+
+if [[ "$UPDATE" == "1" ]]; then
+  info "Updating Command Center"
+  git -C "$UCC" pull --ff-only origin master || warn "Update skipped; local changes may exist"
+fi
+
+if [[ -f "$UCC/package.json" && ! -d "$UCC/node_modules" ]]; then
+  info "Installing Command Center dependencies"
+  (cd "$UCC" && npm install) || exit 1
+fi
+
+# Ollama is useful but never allowed to block Morning Command.
+if curl -fsS --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+  ok "Ollama ready"
+elif command -v ollama >/dev/null 2>&1; then
+  info "Starting Ollama in background"
+  nohup ollama serve >"$LOGROOT/ollama.log" 2>"$LOGROOT/ollama-error.log" &
+  wait_port 11434 16 && ok "Ollama started" || warn "Ollama unavailable; Command Center will still open"
+elif [[ -d "/Applications/Ollama.app" ]]; then
+  open -a Ollama >/dev/null 2>&1 || true
+  warn "Ollama app requested; Command Center will not wait for it"
+else
+  warn "Ollama not found; Juno may run degraded"
+fi
+
+# API first.
+if port_up 3005; then
+  ok "LIV8 API already running"
+else
+  info "Starting LIV8 API"
+  (cd "$UCC/server" && nohup node server.js >"$LOGROOT/ucc-api.log" 2>"$LOGROOT/ucc-api-error.log" & echo $! >"$HOME/.liv8/ucc-api.pid")
+  wait_port 3005 30 && ok "LIV8 API ready" || warn "API did not answer yet; see $LOGROOT/ucc-api-error.log"
+fi
+
+# Frontend is the only hard requirement for this launcher.
+if port_up 3002; then
+  ok "Command Center already running"
+else
+  info "Starting Command Center"
+  (cd "$UCC" && nohup npm run dev -- --port 3002 >"$LOGROOT/ucc-web.log" 2>"$LOGROOT/ucc-web-error.log" & echo $! >"$HOME/.liv8/ucc-web.pid")
+  if wait_port 3002 40; then
+    ok "Command Center ready"
+  else
+    warn "Command Center did not start; see $LOGROOT/ucc-web-error.log"
+    exit 1
+  fi
+fi
+
+if [[ "$OPEN_BROWSER" == "1" ]]; then
+  open "http://localhost:3002" >/dev/null 2>&1 || open "https://command.liv8.co" >/dev/null 2>&1 || true
+fi
+
+printf '\n🚀 Morning Command is ready.\n'
+printf '   Command Center: http://localhost:3002\n'
+printf '   Full stack when needed: liv8-start\n\n'
