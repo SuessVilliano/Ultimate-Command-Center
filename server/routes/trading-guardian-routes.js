@@ -10,6 +10,11 @@ import {
   closePaperOrder,
 } from '../lib/juno-trading-engine.js';
 import { brokerStatus, testBrokerConnection, routeDemoSignal } from '../lib/broker-router.js';
+import {
+  dxFuturesHybridFundingStatus,
+  fetchDxFuturesHybridFundingPublicTracking,
+  normalizeImportedDxFuturesAccount,
+} from '../lib/dx-futures-hybrid-funding-adapter.js';
 
 const PORT = () => process.env.PORT || 3005;
 async function internal(path, { method = 'GET', body } = {}) {
@@ -91,6 +96,24 @@ export function registerTradingGuardianRoutes(app) {
       const result = await testBrokerConnection(String(req.params.accountId || '').toUpperCase());
       res.status(result.ok ? 200 : 422).json(result);
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+
+  app.get('/api/trading/juno/dx-futures-hybrid-funding/status', (req, res) => {
+    res.json({ ok: true, ...dxFuturesHybridFundingStatus() });
+  });
+
+  app.get('/api/trading/juno/dx-futures-hybrid-funding/tracking', async (req, res) => {
+    try {
+      const result = await fetchDxFuturesHybridFundingPublicTracking(req.query.url || undefined);
+      res.json(result);
+    } catch (e) { res.status(422).json({ ok: false, error: e.message, status: dxFuturesHybridFundingStatus() }); }
+  });
+
+  app.post('/api/trading/juno/dx-futures-hybrid-funding/import', (req, res) => {
+    try {
+      const normalized = normalizeImportedDxFuturesAccount(req.body || {});
+      res.json(normalized);
+    } catch (e) { res.status(400).json({ ok: false, error: e.message }); }
   });
 
   app.get('/api/trading/juno/plan', (req, res) => {
