@@ -125,6 +125,55 @@ services:
         sync: false
       - key: TELEGRAM_COMMUNITY_CHAT_ID
         sync: false
+      # Juno Hybrid Autopilot broker adapters. Demo adapters can route orders;
+      # live accounts are registry/status-only in this build.
+      - key: KRAKEN_FUTURES_DEMO_ENABLED
+        value: "false"
+      - key: KRAKEN_FUTURES_DEMO_API_KEY
+        sync: false
+      - key: KRAKEN_FUTURES_DEMO_API_SECRET
+        sync: false
+      - key: KRAKEN_FUTURES_DEMO_BASE_URL
+        value: https://demo-futures.kraken.com/derivatives/api/v3
+      - key: KRAKEN_FUTURES_LIVE_API_KEY
+        sync: false
+      - key: KRAKEN_FUTURES_LIVE_API_SECRET
+        sync: false
+      - key: KRAKEN_SPOT_API_KEY
+        sync: false
+      - key: KRAKEN_SPOT_API_SECRET
+        sync: false
+      - key: TRADOVATE_DEMO_ENABLED
+        value: "false"
+      - key: TRADOVATE_DEMO_ACCESS_TOKEN
+        sync: false
+      - key: TRADOVATE_DEMO_ACCOUNT_ID
+        sync: false
+      - key: TRADOVATE_DEMO_USERNAME
+        sync: false
+      - key: TRADOVATE_DEMO_BASE_URL
+        value: https://demo.tradovateapi.com/v1
+      - key: TRADOVATE_LIVE_ACCESS_TOKEN
+        sync: false
+      - key: TRADOVATE_LIVE_ACCOUNT_ID
+        sync: false
+      - key: TRADOVATE_LIVE_USERNAME
+        sync: false
+      - key: DXTRADE_DEMO_ENABLED
+        value: "false"
+      - key: DXTRADE_DEMO_ORDER_URL
+        sync: false
+      - key: DXTRADE_DEMO_ACCESS_TOKEN
+        sync: false
+      - key: DXTRADE_LIVE_ORDER_URL
+        sync: false
+      - key: DXTRADE_LIVE_ACCESS_TOKEN
+        sync: false
+      # Contract mapping + quantity examples. Set only when verified for the account.
+      - key: JUNO_SYMBOL_MNQ
+        sync: false
+      - key: JUNO_SIZE_MNQ
+        value: "1"
       - key: VILOUD_RTMP_URL
         sync: false
       - key: VILOUD_STREAM_KEY
