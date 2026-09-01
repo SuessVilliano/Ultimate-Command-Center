@@ -10,6 +10,12 @@ import {
   updateLedger,
 } from '../lib/juno-gateway.js';
 import { compileTradingInstruction, saveTradingPlan } from '../lib/juno-trading-engine.js';
+import { executeAction, getAction, listActions, resolveAction, validateAction } from '../lib/juno-action-registry.js';
+import { sendChatMessage } from '../lib/telegram-bridge.js';
+
+function confirmationToken(actionId) {
+  return `CONFIRM ${actionId}`;
+}
 
 function summarizeResult(result) {
   if (!result) return 'No operator result';
@@ -37,6 +43,12 @@ export function registerJunoGatewayRoutes(app, operate) {
     res.json({ ok: true, entries: getLedger({ limit: req.query.limit, source: req.query.source, status: req.query.status }) });
   });
 
+  app.get('/api/juno/gateway/actions', (req, res) => {
+    const auth = authenticateGateway(req);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+    res.json({ ok: true, actions: listActions() });
+  });
+
   app.get('/api/juno/gateway/session/:source/:externalId', (req, res) => {
     const auth = authenticateGateway(req);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
@@ -55,9 +67,13 @@ export function registerJunoGatewayRoutes(app, operate) {
       externalId: req.body?.externalId || req.body?.chatId || req.body?.sessionId || 'primary',
       userId: req.body?.userId || 'owner',
     });
+    const action = resolveAction(message, req.body?.action, req.body?.params);
+    const registered = action ? getAction(action.name) : null;
     const paperPlanInstruction = isPaperTradingPlanInstruction(message);
     const permission = paperPlanInstruction
       ? { level: 'auto_private_write', requiresConfirmation: false, reason: 'Paper/demo trading-plan configuration only; no live order can be placed' }
+      : registered
+      ? { level: registered.policy, requiresConfirmation: ['confirm', 'live_trade_confirm'].includes(registered.policy), reason: `Registered action policy: ${registered.policy}` }
       : classifyPermission(message);
 
     const ledger = appendLedger({
@@ -67,7 +83,7 @@ export function registerJunoGatewayRoutes(app, operate) {
       request: message,
       permission,
       status: 'received',
-      metadata: { transport: req.body?.transport || identity.source },
+      metadata: { transport: req.body?.transport || identity.source, action },
     });
 
     appendSessionMessage(identity, { role: 'user', content: message, ledgerId: ledger.id });
@@ -104,8 +120,24 @@ export function registerJunoGatewayRoutes(app, operate) {
       }
     }
 
+    if (action) {
+      const validation = validateAction(action);
+      if (!validation.ok) {
+        const failed = updateLedger(ledger.id, { status: 'failed', error: validation.error });
+        return res.status(422).json({ ok: false, actionId: ledger.id, status: 'failed', error: validation.error, ledger: failed });
+      }
+    }
+
     if (permission.requiresConfirmation) {
-      const held = updateLedger(ledger.id, { status: 'awaiting_confirmation', resultSummary: permission.reason });
+      let preview = null;
+      if (permission.level === 'live_trade_confirm' && action?.name === 'hybrid.trade.execute') {
+        try { preview = await executeAction({ name: 'hybrid.trade.preview', params: action.params }, { identity, ledgerId: ledger.id }); }
+        catch (error) {
+          const failed = updateLedger(ledger.id, { status: 'failed', error: `Trade preview failed: ${error.message}` });
+          return res.status(502).json({ ok: false, actionId: ledger.id, status: 'failed', error: failed.error, ledger: failed });
+        }
+      }
+      const held = updateLedger(ledger.id, { status: 'awaiting_confirmation', resultSummary: permission.reason, tools: preview ? [preview] : [] });
       appendSessionMessage(identity, {
         role: 'assistant',
         content: `Confirmation required: ${permission.reason}`,
@@ -118,12 +150,21 @@ export function registerJunoGatewayRoutes(app, operate) {
         permission,
         status: 'awaiting_confirmation',
         confirmationRequired: true,
+        confirmationToken: confirmationToken(ledger.id),
+        preview,
         ledger: held,
       });
     }
 
     try {
       updateLedger(ledger.id, { status: 'running' });
+      if (action) {
+        const executed = await executeAction(action, { identity, ledgerId: ledger.id });
+        const finished = updateLedger(ledger.id, { status: 'success', tools: [executed], resultSummary: `${action.name} executed and confirmed by its adapter` });
+        const response = `${action.name} completed successfully.`;
+        appendSessionMessage(identity, { role: 'assistant', content: response, ledgerId: ledger.id });
+        return res.json({ ok: true, actionId: ledger.id, identity, permission, status: 'success', executionConfirmed: true, action, result: executed.data, ledger: finished });
+      }
       const result = await operate(message);
 
       // The current operator safely executes reads, but its write path is still approval-only.
@@ -175,6 +216,61 @@ export function registerJunoGatewayRoutes(app, operate) {
       const failed = updateLedger(ledger.id, { status: 'failed', error: error?.message || 'Gateway execution failed' });
       appendSessionMessage(identity, { role: 'assistant', content: `Execution failed: ${error?.message || 'unknown error'}`, ledgerId: ledger.id });
       return res.status(500).json({ ok: false, actionId: ledger.id, error: error?.message || 'Gateway execution failed', ledger: failed });
+    }
+  });
+
+  app.post('/api/juno/gateway/actions/:actionId/confirm', async (req, res) => {
+    const auth = authenticateGateway(req);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+    const ledger = getLedger({ limit: 200 }).find(row => row.id === req.params.actionId);
+    if (!ledger) return res.status(404).json({ error: 'Action not found' });
+    if (ledger.status !== 'awaiting_confirmation') return res.status(409).json({ error: `Action is ${ledger.status}, not awaiting_confirmation` });
+    if (req.body?.confirmation !== confirmationToken(ledger.id)) return res.status(400).json({ error: `Exact confirmation required: ${confirmationToken(ledger.id)}` });
+    const action = ledger.metadata?.action;
+    const validation = validateAction(action);
+    if (!validation.ok) return res.status(422).json({ error: validation.error });
+    try {
+      updateLedger(ledger.id, { status: 'running', metadata: { ...ledger.metadata, confirmedAt: new Date().toISOString(), confirmedBy: req.body?.userId || 'owner' } });
+      const executed = await executeAction(action, { identity: { actorKey: ledger.actorKey, sessionKey: ledger.sessionKey }, ledgerId: ledger.id, confirmed: true });
+      const finished = updateLedger(ledger.id, { status: 'confirmed', tools: [...(ledger.tools || []), executed], resultSummary: `${action.name} executed after exact confirmation` });
+      return res.json({ ok: true, actionId: ledger.id, status: 'confirmed', executionConfirmed: true, action, result: executed.data, ledger: finished });
+    } catch (error) {
+      const failed = updateLedger(ledger.id, { status: 'failed', error: error?.message || 'Confirmed action failed' });
+      return res.status(502).json({ ok: false, actionId: ledger.id, status: 'failed', error: failed.error, ledger: failed });
+    }
+  });
+
+  app.post('/api/juno/gateway/telegram/webhook', async (req, res) => {
+    const expected = process.env.TELEGRAM_WEBHOOK_SECRET;
+    const supplied = req.get('x-telegram-bot-api-secret-token');
+    if (!expected || supplied !== expected) return res.status(expected ? 403 : 503).json({ error: expected ? 'Invalid Telegram webhook secret' : 'TELEGRAM_WEBHOOK_SECRET is not configured' });
+    const message = req.body?.message || req.body?.channel_post;
+    if (!message?.text || !message?.chat?.id) return res.json({ ok: true, ignored: true });
+    const chatId = String(message.chat.id);
+    const allowed = String(process.env.TELEGRAM_ALLOWED_CHAT_IDS || process.env.TELEGRAM_JUNO_CHAT_ID || '').split(',').map(x => x.trim()).filter(Boolean);
+    if (!allowed.includes(chatId)) return res.status(403).json({ error: 'Telegram chat is not authorized' });
+    try {
+      const confirmation = message.text.trim().match(/^CONFIRM\s+([0-9a-f-]{36})$/i);
+      const target = confirmation
+        ? `/api/juno/gateway/actions/${confirmation[1]}/confirm`
+        : '/api/juno/gateway/command';
+      const requestBody = confirmation
+        ? { confirmation: `CONFIRM ${confirmation[1]}`, userId: 'owner' }
+        : { source: 'telegram', transport: 'telegram_webhook', externalId: chatId, userId: 'owner', message: message.text };
+      const response = await fetch(`http://127.0.0.1:${process.env.PORT || 3005}${target}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.JUNO_GATEWAY_KEY || ''}` },
+        body: JSON.stringify(requestBody),
+        signal: AbortSignal.timeout(30000),
+      });
+      const payload = await response.json().catch(() => ({}));
+      const reply = payload.confirmationRequired
+        ? `Confirmation required.\n\nPreview: ${JSON.stringify(payload.preview?.data || payload.preview || {}).slice(0, 2500)}\n\nConfirm exactly with: ${payload.confirmationToken}`
+        : payload.result?.response || payload.result?.text || payload.result?.message || (payload.executionConfirmed ? `${payload.action?.name || 'Action'} completed.` : payload.error || 'Juno could not complete that request.');
+      await sendChatMessage(chatId, reply);
+      return res.status(response.ok ? 200 : response.status).json({ ok: response.ok, actionId: payload.actionId, status: payload.status });
+    } catch (error) {
+      return res.status(502).json({ ok: false, error: error?.message || 'Telegram gateway failed' });
     }
   });
 }

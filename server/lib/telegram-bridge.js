@@ -135,6 +135,16 @@ export async function sendMessage(channelKey, text) {
   };
 }
 
+/** Send a Gateway response to an already-authorized Telegram chat ID. */
+export async function sendChatMessage(chatId, text) {
+  if (!chatId) throw new Error('chatId is required');
+  const result = await tgApi('sendMessage', {
+    chat_id: String(chatId),
+    text: String(text).slice(0, 4000),
+  });
+  return { messageId: result.message_id, chatId: String(chatId), sentAt: new Date().toISOString() };
+}
+
 /**
  * Get new messages (long polling)
  * Returns messages received since last check
@@ -361,6 +371,7 @@ export async function forwardToKraken(signalText) {
 export default {
   initTelegram,
   sendMessage,
+  sendChatMessage,
   getUpdates,
   getMessageQueue,
   queueForReadback,
