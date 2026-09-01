@@ -3,20 +3,26 @@ const upper = v => v == null ? null : String(v).trim().toUpperCase();
 
 export const HYBRID_FUNDING_PUBLIC_ACCOUNTS = Object.freeze([
   {
-    id: 'HF_DX_36240f5d',
+    id: 'HF_PUBLIC_36240f5d',
     publicId: '36240f5d-bf00-4e91-ab41-f8604e1e8776',
-    provider: 'dx_futures',
+    provider: 'hybrid_funding_propaccount',
     program: 'hybrid_funding',
-    label: 'Hybrid Funding DX Futures 1',
+    market: 'unclassified',
+    platform: 'unclassified',
+    accountType: 'unclassified',
+    label: 'Hybrid Funding Public Account 36240f5d',
     publicUrl: 'https://hybridfundingdashboard.propaccount.com/public-overview/36240f5d-bf00-4e91-ab41-f8604e1e8776',
     trackingEnabled: true,
   },
   {
-    id: 'HF_DX_83db3117',
+    id: 'HF_PUBLIC_83db3117',
     publicId: '83db3117-30c4-434d-819c-df35d1d3b470',
-    provider: 'dx_futures',
+    provider: 'hybrid_funding_propaccount',
     program: 'hybrid_funding',
-    label: 'Hybrid Funding DX Futures 2',
+    market: 'unclassified',
+    platform: 'unclassified',
+    accountType: 'unclassified',
+    label: 'Hybrid Funding Public Account 83db3117',
     publicUrl: 'https://hybridfundingdashboard.propaccount.com/public-overview/83db3117-30c4-434d-819c-df35d1d3b470',
     trackingEnabled: true,
   },
@@ -52,7 +58,7 @@ export function dxFuturesHybridFundingStatus() {
     trackedPublicAccounts: HYBRID_FUNDING_PUBLIC_ACCOUNTS.length,
     importTrackingSupported: true,
     capabilities: ['orders_if_provider_api_enabled','public_tracking','multi_account_public_tracking','account_import','positions_if_endpoint_enabled'],
-    note: 'DXtrade API availability is controlled by the broker/prop firm. This adapter uses provider-supplied endpoints only and falls back to public/read-only tracking or imported account data.'
+    note: 'Hybrid Funding public accounts may represent either DX Futures or DXtrade Forex. Public URLs remain neutral until the account market/platform is positively identified.'
   };
 }
 
