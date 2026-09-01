@@ -9,12 +9,21 @@ import {
   normalizeIdentity,
   updateLedger,
 } from '../lib/juno-gateway.js';
+import { compileTradingInstruction, saveTradingPlan } from '../lib/juno-trading-engine.js';
 
 function summarizeResult(result) {
   if (!result) return 'No operator result';
   if (result.approvalRequired) return 'Action held for approval';
   if (result.response) return String(result.response).slice(0, 600);
   return 'Completed';
+}
+
+function isPaperTradingPlanInstruction(message = '') {
+  const t = String(message).toLowerCase();
+  if (/\b(live|real money|real account|funded account|kraken live|prop live)\b/.test(t)) return false;
+  const planLanguage = /\b(wait for (the )?orb|opening range|trade signals|trading plan|paper|demo|minimum grade|min score|max risk|risk\s*[0-9.]+\s*%|arm paper|disable trading|stop trading)\b/.test(t);
+  const actionLanguage = /\b(wait|trade|take|use|set|make|risk|arm|enable|disable|stop|only)\b/.test(t);
+  return planLanguage && actionLanguage;
 }
 
 export function registerJunoGatewayRoutes(app, operate) {
@@ -46,7 +55,10 @@ export function registerJunoGatewayRoutes(app, operate) {
       externalId: req.body?.externalId || req.body?.chatId || req.body?.sessionId || 'primary',
       userId: req.body?.userId || 'owner',
     });
-    const permission = classifyPermission(message);
+    const paperPlanInstruction = isPaperTradingPlanInstruction(message);
+    const permission = paperPlanInstruction
+      ? { level: 'auto_private_write', requiresConfirmation: false, reason: 'Paper/demo trading-plan configuration only; no live order can be placed' }
+      : classifyPermission(message);
 
     const ledger = appendLedger({
       source: identity.source,
@@ -59,6 +71,38 @@ export function registerJunoGatewayRoutes(app, operate) {
     });
 
     appendSessionMessage(identity, { role: 'user', content: message, ledgerId: ledger.id });
+
+    // Deterministic fast path for natural-language PAPER/DEMO plan updates.
+    // This never enables live execution. It only edits Juno's persisted paper plan.
+    if (paperPlanInstruction) {
+      try {
+        updateLedger(ledger.id, { status: 'running' });
+        const compiled = compileTradingInstruction(message);
+        const plan = saveTradingPlan({ ...compiled.patch, mode: 'PAPER' });
+        const response = `Paper trading plan updated. Mode: PAPER. ORB wait: ${plan.waitForOrb ? 'on' : 'off'}. Direction: ${plan.direction}. Minimum grade: ${plan.minGrade}. Minimum score: ${plan.minScore}. Risk cap: ${plan.maxRiskPct}%. ${plan.enabled ? 'Paper routing is armed.' : 'Paper routing is not armed yet.'}`;
+        const finished = updateLedger(ledger.id, {
+          status: 'success',
+          tools: [{ name: 'juno.trading.plan', ok: true }],
+          resultSummary: response,
+          metadata: { transport: req.body?.transport || identity.source, planId: plan.id, mode: 'PAPER' },
+        });
+        appendSessionMessage(identity, { role: 'assistant', content: response, ledgerId: ledger.id });
+        return res.json({
+          ok: true,
+          actionId: ledger.id,
+          identity,
+          permission,
+          status: 'success',
+          executionConfirmed: true,
+          result: { response, compiled, plan, liveExecution: false },
+          ledger: finished,
+        });
+      } catch (error) {
+        const failed = updateLedger(ledger.id, { status: 'failed', error: error?.message || 'Trading plan update failed' });
+        appendSessionMessage(identity, { role: 'assistant', content: `Trading plan update failed: ${error?.message || 'unknown error'}`, ledgerId: ledger.id });
+        return res.status(500).json({ ok: false, actionId: ledger.id, error: error?.message || 'Trading plan update failed', ledger: failed });
+      }
+    }
 
     if (permission.requiresConfirmation) {
       const held = updateLedger(ledger.id, { status: 'awaiting_confirmation', resultSummary: permission.reason });
