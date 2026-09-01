@@ -13,6 +13,8 @@ import { brokerStatus, testBrokerConnection, routeDemoSignal } from '../lib/brok
 import {
   dxFuturesHybridFundingStatus,
   fetchDxFuturesHybridFundingPublicTracking,
+  fetchAllHybridFundingPublicTracking,
+  listHybridFundingPublicAccounts,
   normalizeImportedDxFuturesAccount,
 } from '../lib/dx-futures-hybrid-funding-adapter.js';
 
@@ -99,11 +101,16 @@ export function registerTradingGuardianRoutes(app) {
   });
 
   app.get('/api/trading/juno/dx-futures-hybrid-funding/status', (req, res) => {
-    res.json({ ok: true, ...dxFuturesHybridFundingStatus() });
+    res.json({ ok: true, ...dxFuturesHybridFundingStatus(), accounts: listHybridFundingPublicAccounts() });
+  });
+
+  app.get('/api/trading/juno/dx-futures-hybrid-funding/accounts', (req, res) => {
+    res.json({ ok: true, accounts: listHybridFundingPublicAccounts() });
   });
 
   app.get('/api/trading/juno/dx-futures-hybrid-funding/tracking', async (req, res) => {
     try {
+      if (req.query.all === 'true') return res.json(await fetchAllHybridFundingPublicTracking());
       const result = await fetchDxFuturesHybridFundingPublicTracking(req.query.url || undefined);
       res.json(result);
     } catch (e) { res.status(422).json({ ok: false, error: e.message, status: dxFuturesHybridFundingStatus() }); }
