@@ -169,10 +169,38 @@ services:
         sync: false
       - key: DXTRADE_LIVE_ACCESS_TOKEN
         sync: false
+      # DX Futures / Hybrid Funding. The prop provider decides whether direct API
+      # order access is exposed. Public account tracking/import can work without it.
+      - key: DX_FUTURES_HF_ENABLED
+        value: "false"
+      - key: DX_FUTURES_HF_ENVIRONMENT
+        value: demo
+      - key: DX_FUTURES_HF_ORDER_URL
+        sync: false
+      - key: DX_FUTURES_HF_STATUS_URL
+        sync: false
+      - key: DX_FUTURES_HF_ACCESS_TOKEN
+        sync: false
+      - key: DX_FUTURES_HF_AUTH_SCHEME
+        value: Bearer
+      - key: DX_FUTURES_HF_AUTH_HEADER
+        sync: false
+      - key: DX_FUTURES_HF_ACCOUNT_ID
+        sync: false
+      - key: DX_FUTURES_HF_ACCOUNT_CODE
+        sync: false
+      - key: DX_FUTURES_HF_ORDER_TEMPLATE
+        value: generic
+      - key: DX_FUTURES_HF_PUBLIC_URL
+        sync: false
       # Contract mapping + quantity examples. Set only when verified for the account.
       - key: JUNO_SYMBOL_MNQ
         sync: false
       - key: JUNO_SIZE_MNQ
+        value: "1"
+      - key: JUNO_SYMBOL_DX_FUTURES_HYBRID_FUNDING_MNQ
+        sync: false
+      - key: JUNO_SIZE_DX_FUTURES_HYBRID_FUNDING_MNQ
         value: "1"
       - key: VILOUD_RTMP_URL
         sync: false
