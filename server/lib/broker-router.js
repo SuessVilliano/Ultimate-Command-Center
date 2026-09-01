@@ -1,4 +1,9 @@
 import crypto from 'crypto';
+import {
+  dxFuturesHybridFundingStatus,
+  placeDxFuturesHybridFunding,
+  testDxFuturesHybridFundingConnection,
+} from './dx-futures-hybrid-funding-adapter.js';
 
 const upper = v => v == null ? null : String(v).trim().toUpperCase();
 const asNum = v => Number.isFinite(Number(v)) ? Number(v) : null;
@@ -26,6 +31,7 @@ function sizeFor(accountId, symbol, fallback = 1) {
 }
 
 export function brokerAccounts() {
+  const dxFutures = dxFuturesHybridFundingStatus();
   return [
     { id: 'JUNO_DEMO', provider: 'internal', environment: 'paper', live: false, configured: true, enabled: true, capabilities: ['ledger','shadow','journal'] },
     {
@@ -46,6 +52,10 @@ export function brokerAccounts() {
       configured: Boolean(process.env.DXTRADE_DEMO_ORDER_URL && process.env.DXTRADE_DEMO_ACCESS_TOKEN),
       enabled: envBool('DXTRADE_DEMO_ENABLED', false), capabilities: ['provider_specific','demo'],
       note: 'DXtrade APIs vary by broker/prop provider; configure the exact demo order endpoint supplied by that provider.'
+    },
+    {
+      ...dxFutures,
+      configured: dxFutures.orderConfigured || dxFutures.publicTrackingConfigured,
     },
     { id: 'KRAKEN_FUTURES_LIVE', provider: 'kraken_futures', environment: 'live', live: true, configured: Boolean(process.env.KRAKEN_FUTURES_LIVE_API_KEY), enabled: false, capabilities: ['status_only'], note: 'Registered for future confirmed live routing; automatic live placement is intentionally disabled.' },
     { id: 'KRAKEN_SPOT_LIVE', provider: 'kraken_spot', environment: 'live', live: true, configured: Boolean(process.env.KRAKEN_SPOT_API_KEY), enabled: false, capabilities: ['status_only'], note: 'Spot live account is tracked but not available to automatic signal execution.' },
@@ -137,6 +147,7 @@ export async function placeOnDemoAccount(accountId, alert) {
     if (account.id === 'KRAKEN_FUTURES_DEMO') return await placeKrakenDemo(alert);
     if (account.id === 'TRADOVATE_DEMO') return await placeTradovateDemo(alert);
     if (account.id === 'DXTRADE_DEMO') return await placeDxtradeDemo(alert);
+    if (account.id === 'DX_FUTURES_HYBRID_FUNDING') return await placeDxFuturesHybridFunding(alert);
     return { ok: false, account: account.id, error: 'No demo adapter available' };
   } catch (error) {
     return { ok: false, account: account.id, provider: account.provider, environment: account.environment, error: error?.message || 'Demo broker execution failed' };
@@ -168,6 +179,7 @@ export async function testBrokerConnection(accountId) {
       return { ok: true, account: account.id, provider: account.provider, environment: account.environment, accounts: Array.isArray(data) ? data.map(a => ({ id: a.id, name: a.name, active: a.active })) : data };
     }
     if (account.id === 'DXTRADE_DEMO') return { ok: true, account: account.id, configured: true, note: 'Endpoint/token present; provider-specific read test is not standardized.' };
+    if (account.id === 'DX_FUTURES_HYBRID_FUNDING') return await testDxFuturesHybridFundingConnection();
     return { ok: false, account: account.id, error: 'No test implemented' };
   } catch (error) {
     return { ok: false, account: account.id, provider: account.provider, environment: account.environment, error: error?.message || 'Connection test failed' };
