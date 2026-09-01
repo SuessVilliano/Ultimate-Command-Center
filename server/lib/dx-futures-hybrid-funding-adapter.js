@@ -1,6 +1,27 @@
 const asNum = v => Number.isFinite(Number(v)) ? Number(v) : null;
 const upper = v => v == null ? null : String(v).trim().toUpperCase();
 
+export const HYBRID_FUNDING_PUBLIC_ACCOUNTS = Object.freeze([
+  {
+    id: 'HF_DX_36240f5d',
+    publicId: '36240f5d-bf00-4e91-ab41-f8604e1e8776',
+    provider: 'dx_futures',
+    program: 'hybrid_funding',
+    label: 'Hybrid Funding DX Futures 1',
+    publicUrl: 'https://hybridfundingdashboard.propaccount.com/public-overview/36240f5d-bf00-4e91-ab41-f8604e1e8776',
+    trackingEnabled: true,
+  },
+  {
+    id: 'HF_DX_83db3117',
+    publicId: '83db3117-30c4-434d-819c-df35d1d3b470',
+    provider: 'dx_futures',
+    program: 'hybrid_funding',
+    label: 'Hybrid Funding DX Futures 2',
+    publicUrl: 'https://hybridfundingdashboard.propaccount.com/public-overview/83db3117-30c4-434d-819c-df35d1d3b470',
+    trackingEnabled: true,
+  },
+]);
+
 function enabled() {
   return ['1','true','yes','on'].includes(String(process.env.DX_FUTURES_HF_ENABLED || '').toLowerCase());
 }
@@ -15,6 +36,10 @@ function authHeaders() {
   return headers;
 }
 
+export function listHybridFundingPublicAccounts() {
+  return HYBRID_FUNDING_PUBLIC_ACCOUNTS.map(account => ({ ...account }));
+}
+
 export function dxFuturesHybridFundingStatus() {
   return {
     id: 'DX_FUTURES_HYBRID_FUNDING',
@@ -23,9 +48,10 @@ export function dxFuturesHybridFundingStatus() {
     live: String(process.env.DX_FUTURES_HF_ENVIRONMENT || 'demo').toLowerCase() === 'live',
     enabled: enabled(),
     orderConfigured: Boolean(process.env.DX_FUTURES_HF_ORDER_URL && process.env.DX_FUTURES_HF_ACCESS_TOKEN),
-    publicTrackingConfigured: Boolean(process.env.DX_FUTURES_HF_PUBLIC_URL),
+    publicTrackingConfigured: Boolean(process.env.DX_FUTURES_HF_PUBLIC_URL) || HYBRID_FUNDING_PUBLIC_ACCOUNTS.length > 0,
+    trackedPublicAccounts: HYBRID_FUNDING_PUBLIC_ACCOUNTS.length,
     importTrackingSupported: true,
-    capabilities: ['orders_if_provider_api_enabled','public_tracking','account_import','positions_if_endpoint_enabled'],
+    capabilities: ['orders_if_provider_api_enabled','public_tracking','multi_account_public_tracking','account_import','positions_if_endpoint_enabled'],
     note: 'DXtrade API availability is controlled by the broker/prop firm. This adapter uses provider-supplied endpoints only and falls back to public/read-only tracking or imported account data.'
   };
 }
@@ -126,15 +152,34 @@ export async function fetchDxFuturesHybridFundingPublicTracking(urlOverride) {
   const contentType = response.headers.get('content-type') || '';
   if (!response.ok) throw new Error(`DX Futures public tracking HTTP ${response.status}`);
   if (contentType.includes('application/json')) {
-    return { ok: true, source: 'public_url_json', ...normalizeTrackingPayload(await response.json()) };
+    return { ok: true, source: 'public_url_json', url, ...normalizeTrackingPayload(await response.json()) };
   }
   const text = await response.text();
   return {
     ok: true,
     source: 'public_url_html',
+    url,
     observedAt: new Date().toISOString(),
     rawHtml: text.slice(0, 250000),
-    note: 'Public page is HTML. Command Center can store/display the page now; a site-specific parser can be added after seeing one real Hybrid Funding public URL.',
+    note: 'Public page is HTML. A site-specific parser can be added once the dashboard response structure is identified.',
+  };
+}
+
+export async function fetchAllHybridFundingPublicTracking() {
+  const results = [];
+  for (const account of HYBRID_FUNDING_PUBLIC_ACCOUNTS.filter(a => a.trackingEnabled)) {
+    try {
+      const tracking = await fetchDxFuturesHybridFundingPublicTracking(account.publicUrl);
+      results.push({ account, tracking });
+    } catch (error) {
+      results.push({ account, tracking: { ok: false, url: account.publicUrl, error: error?.message || 'Tracking fetch failed', observedAt: new Date().toISOString() } });
+    }
+  }
+  return {
+    ok: results.every(r => r.tracking?.ok),
+    tracked: results.length,
+    healthy: results.filter(r => r.tracking?.ok).length,
+    results,
   };
 }
 
@@ -149,6 +194,10 @@ export function normalizeImportedDxFuturesAccount(input = {}) {
 
 export async function testDxFuturesHybridFundingConnection() {
   const status = dxFuturesHybridFundingStatus();
+  if (HYBRID_FUNDING_PUBLIC_ACCOUNTS.length) {
+    const all = await fetchAllHybridFundingPublicTracking();
+    return { ok: all.healthy > 0 || status.orderConfigured, status, publicAccounts: all };
+  }
   if (status.publicTrackingConfigured) {
     try {
       const tracking = await fetchDxFuturesHybridFundingPublicTracking();
