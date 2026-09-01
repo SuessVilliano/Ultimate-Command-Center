@@ -9,6 +9,7 @@ import {
   listPaperOrders,
   closePaperOrder,
 } from '../lib/juno-trading-engine.js';
+import { brokerStatus, testBrokerConnection, routeDemoSignal } from '../lib/broker-router.js';
 
 const PORT = () => process.env.PORT || 3005;
 async function internal(path, { method = 'GET', body } = {}) {
@@ -70,6 +71,7 @@ export function registerTradingGuardianRoutes(app) {
     liveExecutionAllowed: false,
     paperExecutionAllowed: true,
     junoTradingPlan: getTradingPlan(),
+    brokers: brokerStatus(),
     sources: ['Auto Hybrid AI', 'Hybrid AI Supercator', 'AH-AI QQE', 'MNQ Trading Bible', 'Hybrid Journal MCP when configured'],
     autoHybridAi: AUTO_HYBRID_AI,
     sessionWindows: SESSION_WINDOWS_ET,
@@ -78,12 +80,19 @@ export function registerTradingGuardianRoutes(app) {
     preferredWebhook: {
       format: 'JSON',
       fields: ['signal_id','strategy_id','strategy_version','action','ticker','tf','price','score','grade','sl','tp1','tp2','tp3','adx','tenkan','kijun','sma','atr','regime','cloud','mtf','volume_ok','confirmed'],
-      note: 'TradingView defines the setup. Juno applies the active plan and account rules. Only PAPER/DEMO routing is enabled here.'
+      note: 'TradingView defines the setup. Juno applies the active plan and account rules. Only PAPER/DEMO broker routing is automatic.'
     }
   }));
 
-  // Natural-language plan layer for commands such as:
-  // "wait for ORB then trade signals above or below on demo, minimum A, risk .25%"
+  app.get('/api/trading/juno/brokers', (req, res) => res.json(brokerStatus()));
+
+  app.post('/api/trading/juno/brokers/:accountId/test', async (req, res) => {
+    try {
+      const result = await testBrokerConnection(String(req.params.accountId || '').toUpperCase());
+      res.status(result.ok ? 200 : 422).json(result);
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+
   app.get('/api/trading/juno/plan', (req, res) => {
     res.json({ ok: true, plan: getTradingPlan() });
   });
@@ -108,7 +117,9 @@ export function registerTradingGuardianRoutes(app) {
       const enabled = req.body?.enabled !== false;
       const mode = String(req.body?.mode || 'PAPER').toUpperCase();
       if (mode !== 'PAPER') return res.status(403).json({ ok: false, error: 'Live execution is not enabled. Arm PAPER/DEMO first.' });
-      res.json({ ok: true, plan: saveTradingPlan({ enabled, mode: 'PAPER' }) });
+      const patch = { enabled, mode: 'PAPER' };
+      if (Array.isArray(req.body?.targetAccounts)) patch.targetAccounts = req.body.targetAccounts;
+      res.json({ ok: true, plan: saveTradingPlan(patch), brokers: brokerStatus() });
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
 
@@ -151,7 +162,12 @@ export function registerTradingGuardianRoutes(app) {
       const plan = getTradingPlan();
       const planEvaluation = evaluatePlanForAlert(richAlert, plan);
       const paper = req.body?.paper === false ? { placed: false, skipped: true } : createPaperOrder(richAlert, plan, planEvaluation);
-      res.json({ ok: true, symbol, alert: parsed, richAlert, guardian, plan, planEvaluation, paper, inputs: input, tools });
+      let brokerRouting = { ok: true, attempted: 0, succeeded: 0, results: [] };
+      if (paper?.placed && req.body?.routeBrokers !== false) {
+        const targets = (plan.targetAccounts || []).filter(id => id !== 'JUNO_DEMO');
+        brokerRouting = await routeDemoSignal(richAlert, targets);
+      }
+      res.json({ ok: true, symbol, alert: parsed, richAlert, guardian, plan, planEvaluation, paper, brokerRouting, inputs: input, tools });
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
 
@@ -168,7 +184,7 @@ export function registerTradingGuardianRoutes(app) {
       const guardian = evaluateGuardian(input);
       const plan = getTradingPlan();
       const planEvaluation = evaluatePlanForAlert(richAlert, plan);
-      res.json({ ok: true, symbol, richAlert, guardian, plan, planEvaluation, inputs: input, tools });
+      res.json({ ok: true, symbol, richAlert, guardian, plan, planEvaluation, brokers: brokerStatus(), inputs: input, tools });
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
 }
