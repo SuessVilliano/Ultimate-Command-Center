@@ -54,6 +54,7 @@ function defaultPlan() {
     direction: 'BOTH',
     allowedSymbols: ['MNQ'],
     allowedStrategies: ['hybrid_ai','hybrid_supercator','auto_hybrid_ai','ah_ai_qqe'],
+    targetAccounts: ['JUNO_DEMO'],
     minScore: 65,
     minGrade: 'A',
     maxRiskPct: 0.25,
@@ -93,6 +94,14 @@ export function compileTradingInstruction(text = '') {
   if (/\barm\b|turn\s+on|enable/.test(low)) patch.enabled = true;
   if (/\bdisarm\b|turn\s+off|disable|stop trading/.test(low)) patch.enabled = false;
 
+  const selectedAccounts = [];
+  if (/juno\s*(demo|paper)|internal\s*(demo|paper)/.test(low)) selectedAccounts.push('JUNO_DEMO');
+  if (/kraken.*(demo|paper)|(demo|paper).*kraken/.test(low)) selectedAccounts.push('KRAKEN_FUTURES_DEMO');
+  if (/tradovate.*(demo|paper)|(demo|paper).*tradovate/.test(low)) selectedAccounts.push('TRADOVATE_DEMO');
+  if (/dx\s*trade.*(demo|paper)|(demo|paper).*dx\s*trade|dxtrade.*(demo|paper)|(demo|paper).*dxtrade/.test(low)) selectedAccounts.push('DXTRADE_DEMO');
+  if (/all\s+(demo|paper)\s+accounts|all\s+demos/.test(low)) selectedAccounts.push('JUNO_DEMO','KRAKEN_FUTURES_DEMO','TRADOVATE_DEMO','DXTRADE_DEMO');
+  if (selectedAccounts.length) patch.targetAccounts = [...new Set(selectedAccounts)];
+
   const risk = low.match(/(?:risk|max risk)\s*(?:of|=|:)?\s*(0?\.\d+|\d+(?:\.\d+)?)\s*%/);
   if (risk) patch.maxRiskPct = Number(risk[1]);
   const score = low.match(/(?:score|min score|confidence)\s*(?:of|=|:|at least)?\s*(\d{2,3})/);
@@ -119,6 +128,7 @@ export function evaluatePlanForAlert(alert, plan = getTradingPlan(), now = new D
   if (plan.waitForOrb && session.id === 'orb') block('Waiting for ORB to finish at 10:00 ET.');
   if (plan.waitForOrb && session.hour < 10 && session.hour >= 9.5) block('ORB is still forming.');
   if (plan.allowedSymbols?.length && !plan.allowedSymbols.includes(alert.symbol)) block(`${alert.symbol} is not enabled for this plan.`);
+  if (plan.allowedStrategies?.length && alert.strategyId && !plan.allowedStrategies.includes(alert.strategyId)) reasons.push(`Strategy ${alert.strategyId} is not in the preferred strategy list; signal remains visible for review.`);
   if (plan.direction === 'BUY' && alert.direction !== 'BUY') block('Plan is long-only.');
   if (plan.direction === 'SELL' && alert.direction !== 'SELL') block('Plan is short-only.');
   if (!alert.direction) block('Alert has no executable direction.');
@@ -128,9 +138,10 @@ export function evaluatePlanForAlert(alert, plan = getTradingPlan(), now = new D
   if (alert.entry == null) block('No entry price supplied.');
   if (alert.sl == null) reasons.push('No stop supplied; paper order can be logged but risk cannot be computed.');
   if (alert.tp1 == null) reasons.push('No TP1 supplied.');
+  if (!Array.isArray(plan.targetAccounts) || plan.targetAccounts.length === 0) block('No demo target accounts are selected.');
 
   if (eligible) reasons.push(`Eligible for ${plan.mode} routing after deterministic plan checks.`);
-  return { eligible, reasons, session, planId: plan.id, mode: plan.mode };
+  return { eligible, reasons, session, planId: plan.id, mode: plan.mode, targetAccounts: plan.targetAccounts || [] };
 }
 
 function readPaperOrders() {
@@ -163,6 +174,7 @@ export function createPaperOrder(alert, plan = getTradingPlan(), evaluation = ev
     riskPctCap: plan.maxRiskPct,
     status: 'OPEN',
     account: 'JUNO_DEMO',
+    routedAccounts: plan.targetAccounts || ['JUNO_DEMO'],
     openedAt: new Date().toISOString(),
     source: 'juno-trading-engine',
   };
@@ -179,7 +191,7 @@ export function createPaperOrder(alert, plan = getTradingPlan(), evaluation = ev
       on_setup: 1,
       followed_plan: 1,
       journal_ref: order.id,
-      notes: `PAPER/DEMO order from ${order.strategyId}; grade=${order.grade || 'n/a'} score=${order.score ?? 'n/a'} SL=${order.sl ?? 'n/a'} TP1=${order.tp1 ?? 'n/a'} TP2=${order.tp2 ?? 'n/a'} TP3=${order.tp3 ?? 'n/a'}`,
+      notes: `PAPER/DEMO order from ${order.strategyId}; grade=${order.grade || 'n/a'} score=${order.score ?? 'n/a'} SL=${order.sl ?? 'n/a'} TP1=${order.tp1 ?? 'n/a'} TP2=${order.tp2 ?? 'n/a'} TP3=${order.tp3 ?? 'n/a'} targets=${(order.routedAccounts || []).join(',')}`,
     });
   } catch {}
   return { placed: true, order, evaluation };
