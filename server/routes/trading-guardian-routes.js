@@ -1,4 +1,14 @@
 import { evaluateGuardian, parseHybridAiAlert, SESSION_WINDOWS_ET, QQE_FACTORS, HYBRID_AI_ALERT_TYPES, AUTO_HYBRID_AI } from '../lib/trading-guardian-rules.js';
+import {
+  normalizeRichAlert,
+  getTradingPlan,
+  saveTradingPlan,
+  compileTradingInstruction,
+  evaluatePlanForAlert,
+  createPaperOrder,
+  listPaperOrders,
+  closePaperOrder,
+} from '../lib/juno-trading-engine.js';
 
 const PORT = () => process.env.PORT || 3005;
 async function internal(path, { method = 'GET', body } = {}) {
@@ -49,7 +59,7 @@ async function enrichGuardianInput(input, symbol, tools) {
 
 function alertInput(body = {}) {
   if (body.alert && typeof body.alert === 'object') return body.alert;
-  if (body.type || body.event || body.side) return body;
+  if (body.type || body.event || body.side || body.action) return body;
   return body.message || body.text || '';
 }
 
@@ -57,34 +67,91 @@ export function registerTradingGuardianRoutes(app) {
   app.get('/api/trading/guardian/status', (req, res) => res.json({
     ok: true,
     advisoryOnly: true,
-    executionAllowed: false,
-    sources: ['Auto Hybrid AI', 'MNQ Trading Bible', 'QQE Framework', 'Hybrid Journal MCP when configured'],
+    liveExecutionAllowed: false,
+    paperExecutionAllowed: true,
+    junoTradingPlan: getTradingPlan(),
+    sources: ['Auto Hybrid AI', 'Hybrid AI Supercator', 'AH-AI QQE', 'MNQ Trading Bible', 'Hybrid Journal MCP when configured'],
     autoHybridAi: AUTO_HYBRID_AI,
     sessionWindows: SESSION_WINDOWS_ET,
     qqeFactors: QQE_FACTORS,
     hybridAiAlertTypes: HYBRID_AI_ALERT_TYPES,
     preferredWebhook: {
       format: 'JSON',
-      fields: ['type','side','symbol','timeframe','price','adx','tenkan','kijun','sma','atr'],
-      note: 'A technical candidate is never automatic trade approval.'
+      fields: ['signal_id','strategy_id','strategy_version','action','ticker','tf','price','score','grade','sl','tp1','tp2','tp3','adx','tenkan','kijun','sma','atr','regime','cloud','mtf','volume_ok','confirmed'],
+      note: 'TradingView defines the setup. Juno applies the active plan and account rules. Only PAPER/DEMO routing is enabled here.'
     }
   }));
 
+  // Natural-language plan layer for commands such as:
+  // "wait for ORB then trade signals above or below on demo, minimum A, risk .25%"
+  app.get('/api/trading/juno/plan', (req, res) => {
+    res.json({ ok: true, plan: getTradingPlan() });
+  });
+
+  app.post('/api/trading/juno/plan/compile', (req, res) => {
+    try {
+      const text = req.body?.text || req.body?.message || req.body?.instruction || '';
+      if (!String(text).trim()) return res.status(400).json({ ok: false, error: 'instruction text is required' });
+      const compiled = compileTradingInstruction(text);
+      const applied = req.body?.apply === true ? saveTradingPlan(compiled.patch) : null;
+      res.json({ ok: true, ...compiled, applied });
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+
+  app.patch('/api/trading/juno/plan', (req, res) => {
+    try { res.json({ ok: true, plan: saveTradingPlan(req.body || {}) }); }
+    catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+
+  app.post('/api/trading/juno/arm', (req, res) => {
+    try {
+      const enabled = req.body?.enabled !== false;
+      const mode = String(req.body?.mode || 'PAPER').toUpperCase();
+      if (mode !== 'PAPER') return res.status(403).json({ ok: false, error: 'Live execution is not enabled. Arm PAPER/DEMO first.' });
+      res.json({ ok: true, plan: saveTradingPlan({ enabled, mode: 'PAPER' }) });
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+
+  app.get('/api/trading/juno/paper/orders', (req, res) => {
+    try { res.json({ ok: true, orders: listPaperOrders(req.query.limit || 100) }); }
+    catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+
+  app.post('/api/trading/juno/paper/orders/:id/close', (req, res) => {
+    try {
+      const order = closePaperOrder(req.params.id, req.body || {});
+      if (!order) return res.status(404).json({ ok: false, error: 'paper order not found' });
+      res.json({ ok: true, order });
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+
   app.post('/api/trading/guardian/parse-alert', (req, res) => {
     const alert = parseHybridAiAlert(alertInput(req.body));
-    res.status(alert.type === 'UNKNOWN' ? 422 : 200).json({ ok: alert.type !== 'UNKNOWN', alert });
+    const richAlert = normalizeRichAlert(req.body || {}, alert);
+    res.status(alert.type === 'UNKNOWN' && !richAlert.direction ? 422 : 200).json({ ok: alert.type !== 'UNKNOWN' || !!richAlert.direction, alert, richAlert });
   });
 
   app.post('/api/trading/guardian/alert', async (req, res) => {
     try {
-      const alert = parseHybridAiAlert(alertInput(req.body));
-      if (alert.type === 'UNKNOWN') return res.status(422).json({ ok: false, error: 'Unrecognized Hybrid AI alert', alert });
-      const symbol = String(req.body?.symbol || alert.symbol || 'MNQ').toUpperCase();
-      const input = { ...(req.body || {}), symbol, alert };
+      const parsed = parseHybridAiAlert(alertInput(req.body));
+      const richAlert = normalizeRichAlert(req.body || {}, parsed);
+      if (parsed.type === 'UNKNOWN' && !richAlert.direction) return res.status(422).json({ ok: false, error: 'Unrecognized Hybrid AI alert', alert: parsed });
+      const symbol = richAlert.symbol || String(req.body?.symbol || parsed.symbol || 'MNQ').toUpperCase();
+      const input = { ...(req.body || {}), symbol, alert: parsed };
+      input.signalGrade ??= richAlert.grade;
+      input.confidence ??= richAlert.score;
+      input.adx ??= richAlert.adx;
+      input.tenkan ??= richAlert.tenkan;
+      input.kijun ??= richAlert.kijun;
+      input.sma ??= richAlert.sma;
+      input.atr ??= richAlert.atr;
       const tools = [];
-      if (req.body?.enrich !== false && ['AUTO_BUY_CANDIDATE','AUTO_SELL_CANDIDATE'].includes(alert.type)) await enrichGuardianInput(input, symbol, tools);
+      if (req.body?.enrich !== false && ['AUTO_BUY_CANDIDATE','AUTO_SELL_CANDIDATE'].includes(parsed.type)) await enrichGuardianInput(input, symbol, tools);
       const guardian = evaluateGuardian(input);
-      res.json({ ok: true, symbol, alert, guardian, inputs: input, tools });
+      const plan = getTradingPlan();
+      const planEvaluation = evaluatePlanForAlert(richAlert, plan);
+      const paper = req.body?.paper === false ? { placed: false, skipped: true } : createPaperOrder(richAlert, plan, planEvaluation);
+      res.json({ ok: true, symbol, alert: parsed, richAlert, guardian, plan, planEvaluation, paper, inputs: input, tools });
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
 
@@ -94,11 +161,14 @@ export function registerTradingGuardianRoutes(app) {
       const enrich = req.body?.enrich !== false;
       const parsed = input.alert ? parseHybridAiAlert(input.alert) : null;
       if (parsed && parsed.type !== 'UNKNOWN') input.alert = parsed;
-      const symbol = String(req.body?.symbol || parsed?.symbol || 'MNQ').toUpperCase();
+      const richAlert = normalizeRichAlert(req.body || {}, parsed || {});
+      const symbol = richAlert.symbol || String(req.body?.symbol || parsed?.symbol || 'MNQ').toUpperCase();
       const tools = [];
       if (enrich) await enrichGuardianInput(input, symbol, tools);
       const guardian = evaluateGuardian(input);
-      res.json({ ok: true, symbol, guardian, inputs: input, tools });
+      const plan = getTradingPlan();
+      const planEvaluation = evaluatePlanForAlert(richAlert, plan);
+      res.json({ ok: true, symbol, richAlert, guardian, plan, planEvaluation, inputs: input, tools });
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
 }
