@@ -3,26 +3,30 @@ const upper = v => v == null ? null : String(v).trim().toUpperCase();
 
 export const HYBRID_FUNDING_PUBLIC_ACCOUNTS = Object.freeze([
   {
-    id: 'HF_PUBLIC_36240f5d',
+    id: 'HF_FUTURES_36240f5d',
     publicId: '36240f5d-bf00-4e91-ab41-f8604e1e8776',
     provider: 'hybrid_funding_propaccount',
     program: 'hybrid_funding',
-    market: 'unclassified',
-    platform: 'unclassified',
-    accountType: 'unclassified',
-    label: 'Hybrid Funding Public Account 36240f5d',
+    market: 'futures',
+    platform: 'dx_futures',
+    accountType: 'hybrid_funding_futures',
+    fundingStatus: 'tracked',
+    label: 'Hybrid Funding DX Futures',
     publicUrl: 'https://hybridfundingdashboard.propaccount.com/public-overview/36240f5d-bf00-4e91-ab41-f8604e1e8776',
     trackingEnabled: true,
   },
   {
-    id: 'HF_PUBLIC_83db3117',
+    id: 'HF_FOREX_5K_83db3117',
     publicId: '83db3117-30c4-434d-819c-df35d1d3b470',
     provider: 'hybrid_funding_propaccount',
     program: 'hybrid_funding',
-    market: 'unclassified',
-    platform: 'unclassified',
-    accountType: 'unclassified',
-    label: 'Hybrid Funding Public Account 83db3117',
+    market: 'forex',
+    platform: 'dxtrade',
+    accountType: 'live_funded',
+    accountSize: 5000,
+    currency: 'USD',
+    fundingStatus: 'live_funded',
+    label: 'Hybrid Funding Forex Live Funded $5K',
     publicUrl: 'https://hybridfundingdashboard.propaccount.com/public-overview/83db3117-30c4-434d-819c-df35d1d3b470',
     trackingEnabled: true,
   },
@@ -58,7 +62,7 @@ export function dxFuturesHybridFundingStatus() {
     trackedPublicAccounts: HYBRID_FUNDING_PUBLIC_ACCOUNTS.length,
     importTrackingSupported: true,
     capabilities: ['orders_if_provider_api_enabled','public_tracking','multi_account_public_tracking','account_import','positions_if_endpoint_enabled'],
-    note: 'Hybrid Funding public accounts may represent either DX Futures or DXtrade Forex. Public URLs remain neutral until the account market/platform is positively identified.'
+    note: 'Hybrid Funding public accounts are classified by market/platform so futures and forex risk/execution logic remain separate.'
   };
 }
 
