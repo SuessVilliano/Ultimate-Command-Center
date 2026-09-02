@@ -8,6 +8,7 @@ import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getSetting, setSetting, logAgentInteraction } from './database.js';
 import * as ollama from './ollama-provider.js';
+import { localAiChat } from './local-ai-client.js';
 
 let anthropicClient = null;
 let openaiClient = null;
@@ -223,7 +224,7 @@ function getFallbackProviders(failedProvider) {
 }
 
 async function callProvider(provider, messages, options) {
-  if (provider === 'ollama') return ollama.chat(messages, { ...options, model: options.model || getDefaultModel('ollama') });
+  if (provider === 'ollama') return localAiChat(messages, { ...options, model: options.model || getDefaultModel('ollama') });
   if (provider === 'openai') {
     const response = await chatWithOpenAI(messages, { ...options, model: options.model || getDefaultModel('openai') });
     return { text: response.choices[0]?.message?.content || '', usage: response.usage || null };
@@ -279,7 +280,7 @@ export async function chat(messages, options = {}) {
   }
 
   if (provider === 'ollama' && !allowCloudFallback()) {
-    throw new Error('Local AI is unavailable. Start Ollama on the Mac mini. Paid cloud fallback is disabled.');
+    throw new Error('Local AI bridge is unavailable. Keep Ollama and the LIV8 Mac AI worker running on the Mac mini. Paid cloud fallback is disabled.');
   }
   throw new Error(`AI provider unavailable: ${errors.map(e => e.provider).join(', ')}`);
 }
