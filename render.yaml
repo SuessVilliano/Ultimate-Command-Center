@@ -26,11 +26,11 @@ services:
       - key: LIV8_MAC_BRIDGE_TOKEN
         sync: false
       - key: LOCAL_AI_FIRST
-        value: "false"
+        value: "true"
       - key: ALLOW_PAID_AI_FALLBACK
         value: "false"
       - key: AI_PROVIDER
-        value: gemini
+        value: ollama
       - key: GEMINI_API_KEY
         sync: false
       - key: ANTHROPIC_API_KEY
