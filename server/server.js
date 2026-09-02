@@ -693,6 +693,7 @@ app.post('/api/qa/evaluate', async (req, res) => {
 // God Mode Brief - unified briefing across all systems
 app.get('/api/briefing/god-mode', async (req, res) => {
   try {
+    const supportRoleEnabled = String(process.env.SUPPORT_ROLE_ENABLED || '').toLowerCase() === 'true';
     // Gather data from all systems in parallel
     const [draftStats, casebookStats, recentDrafts] = await Promise.all([
       Promise.resolve(db.getDraftStats()),
@@ -701,7 +702,7 @@ app.get('/api/briefing/god-mode', async (req, res) => {
     ]);
 
     // Get ticket queue from DB
-    const openTickets = db.getTicketsByStatus([2, 3, 6, 7]);
+    const openTickets = supportRoleEnabled ? db.getTicketsByStatus([2, 3, 6, 7]) : [];
     const urgentTickets = openTickets.filter(t => t.priority >= 3);
 
     // Get proactive state if available
@@ -719,7 +720,7 @@ app.get('/api/briefing/god-mode', async (req, res) => {
     } catch (e) {}
 
     const now = new Date();
-    const hour = now.getHours();
+    const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hourCycle: 'h23' }).format(now));
     const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
 
     const godModeBrief = {
@@ -739,7 +740,7 @@ app.get('/api/briefing/god-mode', async (req, res) => {
         }
       },
 
-      draftQueue: {
+      draftQueue: supportRoleEnabled ? {
         ...draftStats,
         pendingDrafts: recentDrafts.map(d => ({
           id: d.id,
@@ -749,7 +750,7 @@ app.get('/api/briefing/god-mode', async (req, res) => {
           qaPasssed: d.qa_passed,
           createdAt: d.created_at
         }))
-      },
+      } : { PENDING_REVIEW: 0, APPROVED: 0, ESCALATION_RECOMMENDED: 0, pendingDrafts: [] },
 
       casebook: casebookStats,
 
@@ -769,10 +770,10 @@ app.get('/api/briefing/god-mode', async (req, res) => {
     if (urgentTickets.length > 0) {
       godModeBrief.priorities.push(`${urgentTickets.length} urgent ticket(s) need attention`);
     }
-    if (draftStats.PENDING_REVIEW > 0) {
+    if (supportRoleEnabled && draftStats.PENDING_REVIEW > 0) {
       godModeBrief.priorities.push(`${draftStats.PENDING_REVIEW} draft(s) ready for review`);
     }
-    if (draftStats.ESCALATION_RECOMMENDED > 0) {
+    if (supportRoleEnabled && draftStats.ESCALATION_RECOMMENDED > 0) {
       godModeBrief.priorities.push(`${draftStats.ESCALATION_RECOMMENDED} ticket(s) recommended for escalation`);
     }
     if ((proactiveState.detectedIssues?.length || 0) > 0) {
@@ -2580,6 +2581,27 @@ app.get('/api/calendar/reminders', (req, res) => {
 });
 
 // Get OAuth URL for Google Calendar
+let googleRuntimeConnection = null;
+app.get('/api/google/status', (_req, res) => res.json({
+  configured: Boolean(process.env.GOOGLE_CLIENT_ID),
+  connected: Boolean(googleRuntimeConnection?.accessToken),
+  email: googleRuntimeConnection?.email || process.env.GOOGLE_CALENDAR_EMAIL || null,
+  services: { calendar: Boolean(googleRuntimeConnection?.accessToken), gmail: Boolean(googleRuntimeConnection?.accessToken) }
+}));
+
+app.post('/api/google/connect-token', async (req, res) => {
+  try {
+    const accessToken = String(req.body?.accessToken || '');
+    if (!accessToken) return res.status(400).json({ error: 'accessToken is required' });
+    const profileResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10000) });
+    const profile = await profileResponse.json().catch(() => ({}));
+    if (!profileResponse.ok) return res.status(401).json({ error: profile.error?.message || 'Google token validation failed' });
+    googleRuntimeConnection = { accessToken, email: profile.email || null, connectedAt: new Date().toISOString() };
+    await calendarService.fetchCalendarEvents(accessToken, { maxResults: 50 }).catch(error => console.warn('Initial Google Calendar sync failed:', error.message));
+    res.json({ connected: true, email: googleRuntimeConnection.email, services: { calendar: true, gmail: true } });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
 app.get('/api/calendar/oauth-url', (req, res) => {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const redirectUri = req.query.redirect_uri || `${req.protocol}://${req.get('host')}/auth/google/callback`;
