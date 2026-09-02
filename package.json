@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "server": "cd server && node server.js",
-    "start:all": "concurrently \"npm run dev\" \"npm run server\""
+    "start:all": "concurrently \"npm run dev\" \"npm run server\"",
+    "mac-ai-worker": "node scripts/mac-ai-worker.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.294.0",
