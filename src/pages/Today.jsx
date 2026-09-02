@@ -26,8 +26,8 @@ const pill = {
 };
 
 export default function Today({ onNavigate }) {
-  const date = new Date().toISOString().slice(0, 10);
-  const dayName = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+  const date = new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+  const dayName = new Date().toLocaleDateString('en-US', { timeZone:'America/New_York', weekday: 'long' });
   const [brief, setBrief] = useState(null);
   const [oura, setOura] = useState(null);
   const [health, setHealth] = useState(null);
@@ -69,7 +69,7 @@ export default function Today({ onNavigate }) {
     return Array.isArray(raw) ? raw.filter(Boolean).slice(0, 3) : [];
   }, [brief]);
 
-  const mcpConnected = !!(mcp?.configured || mcp?.connected || mcp?.session?.connected);
+  const mcpConnected = !!(mcp?.connected || mcp?.mcp?.hasSession || (mcp?.mcp?.initialized && mcp?.tools?.length));
   const ouraConfigured = !!oura?.configured;
   const ouraLive = ouraConfigured && [readiness, sleepScore, activityScore].some(v => v != null);
   const healthLive = !!(health?.latestMetrics || health?.metrics?.length);
