@@ -134,7 +134,7 @@ export default function GodViewRail({ activePage, onNavigate }) {
   const healthSource = health ? 'Health OS' : 'Health unavailable';
   const intelSource = intel ? 'Juno' : 'Juno unavailable';
 
-  return <aside data-testid="god-view-rail" className="hidden 2xl:flex fixed top-6 right-6 bottom-6 w-[360px] z-30 flex-col gap-3 overflow-y-auto pr-1">
+  return <aside data-testid="god-view-rail" className="hidden 2xl:flex fixed top-6 right-6 bottom-6 w-[360px] z-30 flex-col gap-3 overflow-y-auto overscroll-contain pr-1 pb-6">
     <style>{`
       @keyframes metaSvFloat { 0%,100% { transform: translate3d(0,0,0) scale(1); } 50% { transform: translate3d(0,-7px,0) scale(1.008); } }
       @keyframes metaSvGlow { 0%,100% { transform: scale(.94); opacity: .45; } 50% { transform: scale(1.07); opacity: 1; } }
@@ -161,7 +161,7 @@ export default function GodViewRail({ activePage, onNavigate }) {
 
       {twinExpanded && <>
         {twinVisible && <>
-          <div className="relative h-[430px] bg-gradient-to-b from-cyan-950/10 via-[#070b14] to-black overflow-hidden">
+          <div className="relative h-[350px] min-h-[350px] bg-gradient-to-b from-cyan-950/10 via-[#070b14] to-black overflow-hidden">
             <div className="meta-sv-glow absolute left-1/2 bottom-7 -translate-x-1/2 w-56 h-20 rounded-[100%] blur-3xl bg-cyan-400/30 pointer-events-none" style={{ animation: `metaSvGlow ${motionDuration * .72}s ease-in-out infinite`, opacity: glowOpacity }} />
             <img
               src={digitalTwinJamaur}
