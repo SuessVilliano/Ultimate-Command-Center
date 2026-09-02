@@ -21,6 +21,7 @@ const fmtMin = sec => sec == null ? '—' : `${Math.round(sec / 60)}m`;
 const fmtHours = sec => sec == null ? '—' : `${(sec / 3600).toFixed(1)}h`;
 const n = v => Number.isFinite(Number(v)) ? Number(v) : null;
 const last = arr => Array.isArray(arr) && arr.length ? arr[arr.length - 1] : null;
+const USER_TIME_ZONE = 'America/New_York';
 
 function sourceLabel(endpoint) {
   if (!endpoint) return 'Unknown';
@@ -101,7 +102,7 @@ export default function HealthMetricsDashboard() {
   const workouts = oura.workouts || [];
 
   const hrChart = useMemo(() => (oura.heartRate || []).slice(-160).map(x => ({
-    t: x.timestamp ? new Date(x.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '',
+    t: x.timestamp ? new Date(x.timestamp).toLocaleTimeString('en-US', { timeZone: USER_TIME_ZONE, hour: 'numeric', minute: '2-digit' }) : '',
     bpm: n(x.bpm),
   })).filter(x => x.bpm != null), [oura.heartRate]);
 

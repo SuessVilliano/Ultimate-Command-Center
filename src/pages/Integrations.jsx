@@ -31,6 +31,7 @@ function Integrations() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState({});
   const [integrationStatus, setIntegrationStatus] = useState({});
+  const [googleStatus, setGoogleStatus] = useState({ configured: false, connected: false });
 
   // Taskade State
   const [taskadeWorkspaces, setTaskadeWorkspaces] = useState([]);
@@ -68,7 +69,23 @@ function Integrations() {
   useEffect(() => {
     loadIntegrationStatus();
     loadSyncStatus();
+    loadGoogleStatus();
+    const hash = new URLSearchParams(window.location.hash.replace(/^#/,''));
+    const accessToken = hash.get('access_token');
+    if (accessToken) {
+      fetch(`${API_URL}/api/google/connect-token`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({accessToken}) })
+        .then(r=>r.json()).then(data=>{ if(data.connected)setGoogleStatus(data); window.history.replaceState({},'',window.location.pathname+window.location.search); });
+    }
   }, []);
+
+  const loadGoogleStatus = async () => { try { const r=await fetch(`${API_URL}/api/google/status`); if(r.ok)setGoogleStatus(await r.json()); } catch {} };
+  const connectGoogle = async () => {
+    const redirectUri = `${window.location.origin}${window.location.pathname}`;
+    const r = await fetch(`${API_URL}/api/calendar/oauth-url?redirect_uri=${encodeURIComponent(redirectUri)}`);
+    const data = await r.json().catch(()=>({}));
+    if (!r.ok || !data.url) return alert(data.error || 'Google OAuth is not configured on the Command Center API.');
+    window.location.assign(data.url);
+  };
 
   // ============================================
   // SYNC FUNCTIONS
@@ -497,6 +514,12 @@ function Integrations() {
 
       {/* Integration Cards Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+
+        {/* GOOGLE WORKSPACE CARD */}
+        <div className={`rounded-xl border p-6 ${isDark ? 'bg-[#0a0a0f] border-cyan-900/30' : 'bg-white border-gray-200 shadow-sm'}`}>
+          <div className="flex items-center justify-between mb-4"><div className="flex items-center gap-3"><div className="p-2 rounded-lg bg-cyan-500/20"><Mail className="w-6 h-6 text-cyan-400" /></div><div><h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>Google Workspace</h3><p className="text-xs text-gray-500">Gmail + Google Calendar</p></div></div><StatusBadge connected={googleStatus.connected} configured={googleStatus.configured} /></div>
+          {googleStatus.connected?<div className="space-y-3"><div className="flex items-center gap-2 text-sm text-emerald-400"><CheckCircle2 className="w-4 h-4"/>Gmail connected</div><div className="flex items-center gap-2 text-sm text-emerald-400"><Calendar className="w-4 h-4"/>Calendar connected</div><p className="text-xs text-gray-500">{googleStatus.email}</p></div>:<div><p className="text-sm text-gray-400 mb-3">Connect once to authorize both services.</p><button onClick={connectGoogle} disabled={!googleStatus.configured} className="w-full px-4 py-2 rounded-lg bg-cyan-600 text-white disabled:opacity-40"><ExternalLink className="w-4 h-4 inline mr-2"/>Connect Google</button>{!googleStatus.configured&&<p className="text-xs text-amber-400 mt-2">GOOGLE_CLIENT_ID must be added to the API service.</p>}</div>}
+        </div>
 
         {/* TASKADE CARD */}
         <div className={`rounded-xl border p-6 ${

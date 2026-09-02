@@ -4,6 +4,7 @@ import { registerHybridJournalMcpRoutes } from './hybrid-journal-mcp-routes.js';
 import { registerAppleHealthRoutes } from './apple-health-routes.js';
 import { registerLocalAiRoutes } from './local-ai-routes.js';
 import { registerMacAiBridgeRoutes } from './mac-ai-bridge-routes.js';
+import { registerMacAiRelayRoutes } from '../lib/mac-ai-relay.js';
 import { registerOperatorRoutes } from './operator-routes.js';
 import { registerTimeIntelligenceRoutes } from './time-intelligence-routes.js';
 import { registerLocalWorkspaceMcpRoutes } from './local-workspace-mcp-routes.js';
@@ -28,6 +29,7 @@ export function registerNiftyRoutes(app) {
   registerAppleHealthRoutes(app);
   registerLocalAiRoutes(app);
   registerMacAiBridgeRoutes(app);
+  registerMacAiRelayRoutes(app);
   registerOperatorRoutes(app);
   registerTimeIntelligenceRoutes(app);
   registerLocalWorkspaceMcpRoutes(app);

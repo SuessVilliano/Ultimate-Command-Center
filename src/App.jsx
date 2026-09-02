@@ -40,7 +40,7 @@ function AppContent() {
   const { theme } = useTheme();
   // Every fresh Command Center session starts at Morning Command.
   // Navigation still persists during the session; a reload intentionally returns to the operating brief.
-  const [activePage, setActivePage] = useState('hs-today');
+  const [activePage, setActivePage] = useState(() => window.location.hash.includes('access_token=') ? 'integrations' : 'hs-today');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [dictationOpen, setDictationOpen] = useState(false);
   const isDark = theme === 'dark';

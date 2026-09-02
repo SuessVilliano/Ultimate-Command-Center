@@ -504,7 +504,7 @@ const DEFAULT_SCHEDULE = [
   { id: 4, time: '07:00', duration: 30, activity: 'Reading / Learning', type: 'growth', icon: 'BookOpen', color: 'cyan' },
   { id: 5, time: '07:30', duration: 30, activity: 'Family Time / Breakfast', type: 'family', icon: 'Heart', color: 'pink' },
   { id: 6, time: '08:00', duration: 60, activity: 'Deep Work Block 1', type: 'work', icon: 'Zap', color: 'purple', priority: true },
-  { id: 7, time: '09:00', duration: 480, activity: '9-5 Job (SaaS Support)', type: 'job', icon: 'Building2', color: 'blue' },
+  { id: 7, time: '09:00', duration: 480, activity: 'GoHighLevel Affiliate Manager', type: 'job', icon: 'Building2', color: 'blue' },
   { id: 8, time: '17:00', duration: 30, activity: 'Walk / Decompress', type: 'wellness', icon: 'Wind', color: 'green' },
   { id: 9, time: '17:30', duration: 90, activity: 'Family Time', type: 'family', icon: 'Heart', color: 'pink' },
   { id: 10, time: '19:00', duration: 120, activity: 'Deep Work Block 2 (Business)', type: 'work', icon: 'Zap', color: 'purple', priority: true },
@@ -621,6 +621,20 @@ function Dashboard() {
     localStorage.setItem(STORAGE_KEYS.COMPLETED_TODAY, JSON.stringify(completed));
     setCompletedToday(completed);
   };
+
+  // Schedule completion and Daily Wellness are two views of the same habit state.
+  useEffect(() => {
+    const links = { 1: 'meditation', 2: 'workout', 4: 'reading', 8: 'walk', 12: 'meditation' };
+    const next = { ...wellness };
+    let changed = false;
+    Object.entries(links).forEach(([id, key]) => {
+      if (completedToday.includes(Number(id)) && !next[key].todayDone) {
+        next[key] = { ...next[key], todayDone: true, streak: Math.max(1, next[key].streak) };
+        changed = true;
+      }
+    });
+    if (changed) saveWellness(next);
+  }, [completedToday]);
 
   // Handlers
   const handleSetFocus = () => {

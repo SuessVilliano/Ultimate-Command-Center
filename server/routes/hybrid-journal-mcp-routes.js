@@ -60,15 +60,18 @@ export function registerHybridJournalMcpRoutes(app) {
     const mcp = hybridJournalMcp.status();
     const fallback = hybridJournal.status();
     let tools = [];
+    let mcpError = null;
     let executionGateway = { configured: Boolean(executionKey()), reachable: false };
     if (mcp.configured) {
-      try { tools = (await hybridJournalMcp.listTools()).map(({ name, title, description }) => ({ name, title, description })); } catch {}
+      try { tools = (await hybridJournalMcp.listTools()).map(({ name, title, description }) => ({ name, title, description })); }
+      catch (error) { mcpError = error.message; }
     }
     if (executionGateway.configured) {
       try { executionGateway = { ...executionGateway, reachable: true, ...(await execution('/api/execution/status')) }; }
       catch (error) { executionGateway.error = error.message; }
     }
-    res.json({ mcp, fallback, tools, executionGateway, executionRequiresConfirmation: true });
+    const connected = Boolean(mcp.hasSession || (mcp.initialized && tools.length));
+    res.json({ mcp, connected, mcpError, fallback, tools, executionGateway, executionRequiresConfirmation: true });
   });
 
   app.get('/api/trading/hybrid-journal/snapshot', async (req, res) => {
