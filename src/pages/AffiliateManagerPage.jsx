@@ -3,6 +3,7 @@ import { Briefcase, ExternalLink, Target, Users, TrendingUp, CalendarDays, BookO
 import AffiliateHub from '../components/affiliates/AffiliateHub';
 
 const WORK_LINKS = [
+  ['Affiliate EXPAND Sheet','https://docs.google.com/spreadsheets/d/1FhqNEO_K2yvd9RAieCbMR42Wc2Pa5RdE59uvVXqYuNs/edit?gid=1126268514#gid=1126268514','Affiliate portfolio, segmentation, reactivation and performance data','📊'],
   ['First Promoters','https://firstpromoter.com/login','Affiliate tracking, referrals and payouts','🚀'],
   ['HighLevel','https://app.gohighlevel.com/','Product / platform workspace','⚡'],
   ['HQ','https://support.leadconnectorhq.com/login','LeadConnector / HighLevel HQ','🏢'],
