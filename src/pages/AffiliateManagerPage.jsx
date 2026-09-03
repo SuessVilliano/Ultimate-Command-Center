@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Briefcase, ExternalLink, Target, Users, TrendingUp, CalendarDays, BookOpen, ChevronDown, ChevronUp } from 'lucide-react';
 import AffiliateHub from '../components/affiliates/AffiliateHub';
+import ReactivationPortfolio from '../components/affiliates/ReactivationPortfolio';
 
 const WORK_LINKS = [
   ['Affiliate EXPAND Sheet','https://docs.google.com/spreadsheets/d/1FhqNEO_K2yvd9RAieCbMR42Wc2Pa5RdE59uvVXqYuNs/edit?gid=1126268514#gid=1126268514','Affiliate portfolio, segmentation, reactivation and performance data','📊'],
@@ -91,6 +92,8 @@ export default function AffiliateManagerPage(){
       <CollapsibleHeader title="Legacy Support Links" subtitle="Accessible when needed; no active ticket queues, alerts, SLAs, schedules or support tasks." open={legacyOpen} onToggle={() => setLegacyOpen(v => !v)} accent="text-amber-300" icon={BookOpen} />
       {legacyOpen && <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-3">{LEGACY_SUPPORT_LINKS.map(item => <QuickLink key={item[0]} item={item}/>)}</div>}
     </section>
+
+    <ReactivationPortfolio />
 
     <section className="rounded-2xl border border-[#173039] bg-[#070c0f] p-4">
       <CollapsibleHeader title="Affiliate Hub" subtitle="Partner portfolio, enablement and affiliate-management workspace." open={affiliateHubOpen} onToggle={() => setAffiliateHubOpen(v => !v)} />
