@@ -1,191 +1,39 @@
-import React, {useEffect, useMemo, useRef, useState} from 'react'
+import React,{useEffect,useMemo,useRef,useState} from 'react'
 import {createRoot} from 'react-dom/client'
 import '@google/model-viewer'
 import QRCode from 'qrcode'
 import './styles.css'
+import {MAX_FILES,MAX_TOTAL_BYTES,buildSceneUrl,isPublicHttps,slugify,validateAdd,withinGeofence} from './scene-utils.js'
 
-const MAX_FILES = 20
-const MAX_TOTAL_BYTES = 100 * 1024 * 1024
+const defaultSettings={scale:1,yaw:0,autoplay:true,autoRotate:false,shadow:1,exposure:1,arScale:'auto'}
+const bytes=n=>{if(!n)return'0 B';const u=['B','KB','MB','GB'],i=Math.min(Math.floor(Math.log(n)/Math.log(1024)),u.length-1);return`${(n/1024**i).toFixed(i?1:0)} ${u[i]}`}
+const deviceToken=()=>{let t=localStorage.getItem('liv8-ar-device');if(!t){t=crypto.randomUUID();localStorage.setItem('liv8-ar-device',t)}return t}
+async function api(path,options={}){const r=await fetch(path,{headers:{'Content-Type':'application/json',...(options.headers||{})},...options});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||`Request failed (${r.status})`);return d}
 
-const defaultSettings = {
-  scale: 1,
-  yaw: 0,
-  autoplay: true,
-  autoRotate: false,
-  shadow: 1,
-  exposure: 1,
-  arScale: 'auto',
+function getShared(){const p=new URLSearchParams(location.search),src=p.get('src');if(!src)return null;return{src,name:p.get('name')||'Shared AR object',settings:{scale:Number(p.get('scale')||1),yaw:Number(p.get('yaw')||0),autoplay:p.get('autoplay')!=='0',autoRotate:p.get('spin')==='1',shadow:Number(p.get('shadow')||1),exposure:Number(p.get('exposure')||1),arScale:p.get('arscale')||'auto'},trigger:p.get('trigger')==='geo'?{type:'geo',lat:Number(p.get('lat')),lng:Number(p.get('lng')),radius:Number(p.get('radius')||100)}:{type:'qr'},claimLimit:Number(p.get('claims')||0)}}
+
+function Viewer({shared}){
+  const [gate,setGate]=useState(shared.trigger?.type==='geo'?'checking':'open'),[distance,setDistance]=useState(null),[claim,setClaim]=useState(''),viewerRef=useRef(null)
+  const sceneId=new URLSearchParams(location.search).get('scene')||slugify(shared.name)
+  useEffect(()=>{api('/api/ar/events',{method:'POST',body:JSON.stringify({sceneId,type:'scene_open'})}).catch(()=>{});if(shared.trigger?.type!=='geo')return;navigator.geolocation.getCurrentPosition(pos=>{const user={lat:pos.coords.latitude,lng:pos.coords.longitude},target={lat:shared.trigger.lat,lng:shared.trigger.lng};const ok=withinGeofence(user,target,shared.trigger.radius);setDistance(Math.round(Math.hypot(0,0)+((()=>{const R=6371000,r=d=>d*Math.PI/180,dl=r(target.lat-user.lat),dn=r(target.lng-user.lng),a=Math.sin(dl/2)**2+Math.cos(r(user.lat))*Math.cos(r(target.lat))*Math.sin(dn/2)**2;return 2*R*Math.atan2(Math.sqrt(a),Math.sqrt(1-a))})())));setGate(ok?'open':'blocked');api('/api/ar/events',{method:'POST',body:JSON.stringify({sceneId,type:ok?'geo_unlock':'geo_denied'})}).catch(()=>{})},()=>{setGate('blocked');api('/api/ar/events',{method:'POST',body:JSON.stringify({sceneId,type:'geo_denied',meta:{reason:'permission'}})}).catch(()=>{})},{enableHighAccuracy:true,timeout:10000})},[])
+  async function doClaim(){try{const d=await api(`/api/ar/scenes/${encodeURIComponent(sceneId)}/claim`,{method:'POST',body:JSON.stringify({token:deviceToken()})});setClaim(d.duplicate?'Already claimed on this device.':`Claimed!${d.remaining===null?'':` ${d.remaining} remaining.`}`)}catch(e){setClaim(e.message)} }
+  if(gate==='checking')return <main className="viewerOnly"><div className="empty"><h2>Checking location…</h2><p>This experience unlocks only near its physical location.</p></div></main>
+  if(gate==='blocked')return <main className="viewerOnly"><div className="empty"><h2>AR experience locked</h2><p>{distance===null?'Allow location access to unlock this experience.':`You are about ${distance} m from the target. Move within ${shared.trigger.radius} m and reload.`}</p></div></main>
+  return <main className="viewerOnly"><div className="viewerTop"><strong>{shared.name}</strong><span>Move your phone, then tap AR.</span></div><model-viewer ref={viewerRef} src={shared.src} ar ar-modes="webxr scene-viewer quick-look" ar-scale={shared.settings.arScale} camera-controls touch-action="pan-y" auto-rotate={shared.settings.autoRotate||undefined} autoplay={shared.settings.autoplay||undefined} shadow-intensity={shared.settings.shadow} exposure={shared.settings.exposure} orientation={`0deg ${shared.settings.yaw}deg 0deg`} scale={`${shared.settings.scale} ${shared.settings.scale} ${shared.settings.scale}`} onArStatus={e=>{if(e.detail.status==='session-started')api('/api/ar/events',{method:'POST',body:JSON.stringify({sceneId,type:'ar_session'})}).catch(()=>{})}}><button slot="ar-button" className="arButton" onClick={()=>api('/api/ar/events',{method:'POST',body:JSON.stringify({sceneId,type:'ar_button'})}).catch(()=>{})}>View in AR</button><div className="hint">Drag to rotate • pinch to zoom • place it in the room</div></model-viewer>{shared.claimLimit>0&&<div className="claimBar"><button className="primary" onClick={doClaim}>Claim collectible</button>{claim&&<span>{claim}</span>}</div>}</main>
 }
 
-function bytes(n) {
-  if (!n) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB']
-  const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), units.length - 1)
-  return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`
+function App(){
+  const shared=useMemo(getShared,[]);if(shared&&innerWidth<900)return <Viewer shared={shared}/>
+  const [assets,setAssets]=useState(shared?[{name:shared.name,url:shared.src,remote:true,size:0}]:[]),[activeIndex,setActiveIndex]=useState(0),[remoteUrl,setRemoteUrl]=useState(shared?.src||''),[settings,setSettings]=useState(shared?.settings||defaultSettings),[qr,setQr]=useState(''),[notice,setNotice]=useState(shared?'Shared AR experience loaded.':''),[title,setTitle]=useState('My AR Experience'),[slug,setSlug]=useState('my-ar-experience'),[trigger,setTrigger]=useState({type:'qr',lat:'',lng:'',radius:100}),[claimLimit,setClaimLimit]=useState(0),[publishing,setPublishing]=useState(false),[publishResult,setPublishResult]=useState(null),viewerRef=useRef(null)
+  const active=assets[activeIndex],total=assets.reduce((s,a)=>s+(a.size||0),0),publicBase=import.meta.env.VITE_PUBLIC_AR_BASE_URL||''
+  useEffect(()=>()=>assets.forEach(a=>{if(!a.remote&&a.url?.startsWith('blob:'))URL.revokeObjectURL(a.url)}),[])
+  function addFiles(list){const all=[...list],unsupported=all.filter(f=>!/\.glb$/i.test(f.name));if(unsupported.length)return setNotice('Local preview accepts .GLB only. External .GLTF often needs companion .bin/texture files; publish it as a complete HTTPS-hosted asset instead.');const check=validateAdd(assets.length,total,all);if(!check.ok)return setNotice(check.error);const mapped=all.map(f=>({name:f.name,url:URL.createObjectURL(f),size:f.size,remote:false}));if(!mapped.length)return;setAssets(p=>[...p,...mapped]);setActiveIndex(assets.length);setNotice(`${mapped.length} GLB model${mapped.length>1?'s':''} added for local preview.`)}
+  function addRemote(){if(assets.length>=MAX_FILES)return setNotice(`Limit is ${MAX_FILES} assets per scene.`);try{const u=new URL(remoteUrl);if(u.protocol!=='https:'||!/\.(glb|gltf)(\?.*)?$/i.test(u.href))throw 0;setAssets(p=>[...p,{name:u.pathname.split('/').pop()||'Remote model',url:u.href,size:0,remote:true}]);setActiveIndex(assets.length);setNotice('Published HTTPS model added. It can be shared across devices.')}catch{setNotice('Use a public HTTPS URL pointing directly to a .glb or complete .gltf asset.') }}
+  function scene(){return{title,slug:slugify(slug),src:active?.url,assets:active?[{name:active.name,url:active.url,remote:active.remote}]:[],settings,trigger:{...trigger,lat:Number(trigger.lat),lng:Number(trigger.lng),radius:Number(trigger.radius)},claimLimit:Number(claimLimit)||0}}
+  async function localQr(){if(!active)return setNotice('Add a model first.');if(!active.remote)return setNotice('Local blob files are preview-only. Add a published HTTPS model first.');if(!isPublicHttps(publicBase))return setNotice('Publishing is locked until VITE_PUBLIC_AR_BASE_URL is a reachable HTTPS deployment URL.');try{const url=buildSceneUrl(publicBase,scene());setQr(await QRCode.toDataURL(url,{width:360,margin:1,errorCorrectionLevel:'M'}));setNotice('Test QR generated from the public HTTPS viewer URL.')}catch(e){setNotice(e.message)}}
+  async function publishSqr(){if(!active?.remote)return setNotice('SQR publishing requires a public HTTPS model, not a local blob.');if(!isPublicHttps(publicBase))return setNotice('Set VITE_PUBLIC_AR_BASE_URL to your deployed HTTPS AR viewer first.');if(trigger.type==='geo'&&(!Number.isFinite(Number(trigger.lat))||!Number.isFinite(Number(trigger.lng))))return setNotice('Enter valid latitude and longitude for the geofence.');setPublishing(true);try{const s=scene(),publicUrl=buildSceneUrl(publicBase,s);const d=await api('/api/ar/publish',{method:'POST',body:JSON.stringify({scene:{...s,publicUrl},qrStyle:'rounded'})});setPublishResult(d.data);if(d.data?.sqr?.qrUrl)setQr(d.data.sqr.qrUrl);else setQr(await QRCode.toDataURL(d.data?.sqr?.shortUrl||publicUrl,{width:360,margin:1}));setNotice('Published through SQR. The dynamic QR can be retargeted later without reprinting.')}catch(e){setNotice(`Publish failed: ${e.message}`)}finally{setPublishing(false)}}
+  const patch=(k,v)=>setSettings(s=>({...s,[k]:v}))
+  return <main className="app"><header><div><span className="eyebrow">LIV8 LABS</span><h1>AR Studio</h1><p>Create a physical-world AR experience, gate it by QR or location, then publish through SQR.</p></div><div className="badge">WebAR • No app required</div></header><section className="grid"><aside className="panel controls"><h2>1. Scene</h2><input value={title} onChange={e=>{setTitle(e.target.value);setSlug(slugify(e.target.value))}} placeholder="Scene title"/><input value={slug} onChange={e=>setSlug(slugify(e.target.value))} placeholder="scene-slug"/><label className="selectLabel">Trigger<select value={trigger.type} onChange={e=>setTrigger(t=>({...t,type:e.target.value}))}><option value="qr">QR / anywhere</option><option value="geo">GPS geofence</option></select></label>{trigger.type==='geo'&&<div className="geoGrid"><input value={trigger.lat} onChange={e=>setTrigger(t=>({...t,lat:e.target.value}))} placeholder="Latitude"/><input value={trigger.lng} onChange={e=>setTrigger(t=>({...t,lng:e.target.value}))} placeholder="Longitude"/><input type="number" min="10" value={trigger.radius} onChange={e=>setTrigger(t=>({...t,radius:e.target.value}))} placeholder="Radius meters"/></div>}<label className="selectLabel">Claim limit<input type="number" min="0" value={claimLimit} onChange={e=>setClaimLimit(e.target.value)} /><small>0 = no collectible claim button</small></label><h2>2. Add model</h2><label className="drop" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();addFiles(e.dataTransfer.files)}}><input type="file" accept=".glb,model/gltf-binary" multiple onChange={e=>addFiles(e.target.files)}/><b>Drop GLB here</b><span>Up to {MAX_FILES} files • {bytes(MAX_TOTAL_BYTES)} total</span></label><div className="or">or use a published model URL</div><div className="row"><input value={remoteUrl} onChange={e=>setRemoteUrl(e.target.value)} placeholder="https://.../character.glb"/><button onClick={addRemote}>Add</button></div><h2>3. Scene controls</h2><Control label="Size" value={settings.scale} min=.1 max=5 step=.1 onChange={v=>patch('scale',v)}/><Control label="Rotation" value={settings.yaw} min={-180} max={180} step={1} suffix="°" onChange={v=>patch('yaw',v)}/><Control label="Shadow" value={settings.shadow} min={0} max={2} step=.1 onChange={v=>patch('shadow',v)}/><Control label="Exposure" value={settings.exposure} min=.2 max={2} step=.1 onChange={v=>patch('exposure',v)}/><label className="toggle"><input type="checkbox" checked={settings.autoRotate} onChange={e=>patch('autoRotate',e.target.checked)}/><span>Auto spin</span></label><label className="toggle"><input type="checkbox" checked={settings.autoplay} onChange={e=>patch('autoplay',e.target.checked)}/><span>Play built-in animation</span></label><label className="selectLabel">AR scaling<select value={settings.arScale} onChange={e=>patch('arScale',e.target.value)}><option value="auto">Pinch resize allowed</option><option value="fixed">Lock real-world size</option></select></label><h2>4. Publish</h2><button className="primary" disabled={publishing} onClick={publishSqr}>{publishing?'Publishing…':'Publish dynamic SQR experience'}</button><button className="ghost" onClick={localQr}>Generate test QR</button>{qr&&<div className="qr"><img src={qr}/><span>{publishResult?.sqr?.shortUrl||'Scan with phone camera'}</span></div>}{notice&&<div className="notice">{notice}</div>}</aside><section className="panel stage"><div className="stageTop"><div><b>{active?.name||'No model loaded'}</b><span>{active?(active.remote?'Published HTTPS asset':`${bytes(active.size)} • local preview only`):'Add a GLB to begin'}</span></div>{active&&<button className="ghost" onClick={()=>viewerRef.current?.activateAR?.()}>Open AR</button>}</div>{active?<model-viewer ref={viewerRef} key={active.url} src={active.url} ar ar-modes="webxr scene-viewer quick-look" ar-scale={settings.arScale} camera-controls touch-action="pan-y" auto-rotate={settings.autoRotate||undefined} autoplay={settings.autoplay||undefined} shadow-intensity={settings.shadow} exposure={settings.exposure} orientation={`0deg ${settings.yaw}deg 0deg`} scale={`${settings.scale} ${settings.scale} ${settings.scale}`}><button slot="ar-button" className="arButton">View in AR</button><div className="hint">Drag to rotate • pinch to zoom • tap AR to place it in your room</div></model-viewer>:<div className="empty"><div className="cube">◈</div><h3>Your character goes here</h3><p>Export Roblox/Minecraft/custom characters to GLB for the cleanest browser AR workflow.</p></div>}{!!assets.length&&<div className="assetStrip">{assets.map((a,i)=><button className={i===activeIndex?'active':''} key={a.url} onClick={()=>setActiveIndex(i)}><span>{i+1}</span>{a.name}</button>)}</div>}</section></section><section className="capabilities panel"><b>Live stack:</b><span>SQR dynamic QR</span><span>WebXR / Scene Viewer / Quick Look</span><span>GPS unlock</span><span>collectible claims</span><span>internal AR analytics</span><span>8th Wall adapter next</span></section></main>
 }
-
-function getSharedState() {
-  const p = new URLSearchParams(location.search)
-  const src = p.get('src')
-  if (!src) return null
-  return {
-    src,
-    name: p.get('name') || 'Shared AR object',
-    settings: {
-      scale: Number(p.get('scale') || 1),
-      yaw: Number(p.get('yaw') || 0),
-      autoplay: p.get('autoplay') !== '0',
-      autoRotate: p.get('spin') === '1',
-      shadow: Number(p.get('shadow') || 1),
-      exposure: Number(p.get('exposure') || 1),
-      arScale: p.get('arscale') || 'auto',
-    }
-  }
-}
-
-function App() {
-  const shared = useMemo(getSharedState, [])
-  const [assets, setAssets] = useState(shared ? [{name: shared.name, url: shared.src, remote: true, size: 0}] : [])
-  const [activeIndex, setActiveIndex] = useState(0)
-  const [remoteUrl, setRemoteUrl] = useState(shared?.src || '')
-  const [settings, setSettings] = useState(shared?.settings || defaultSettings)
-  const [qr, setQr] = useState('')
-  const [notice, setNotice] = useState(shared ? 'Shared AR experience loaded.' : '')
-  const viewerRef = useRef(null)
-  const active = assets[activeIndex]
-
-  useEffect(() => () => assets.forEach(a => { if (!a.remote && a.url?.startsWith('blob:')) URL.revokeObjectURL(a.url) }), [])
-
-  const total = assets.reduce((sum, a) => sum + (a.size || 0), 0)
-
-  async function makeQr(url) {
-    setQr(await QRCode.toDataURL(url, {width: 360, margin: 1, errorCorrectionLevel: 'M'}))
-  }
-
-  function addFiles(fileList) {
-    const incoming = [...fileList].filter(f => /\.(glb|gltf)$/i.test(f.name))
-    const nextTotal = total + incoming.reduce((s, f) => s + f.size, 0)
-    if (assets.length + incoming.length > MAX_FILES) {
-      setNotice(`Limit is ${MAX_FILES} files per scene in this MVP.`)
-      return
-    }
-    if (nextTotal > MAX_TOTAL_BYTES) {
-      setNotice('Keep total local scene assets under 100 MB for reliable mobile AR performance.')
-      return
-    }
-    const mapped = incoming.map(f => ({name: f.name, url: URL.createObjectURL(f), size: f.size, remote: false}))
-    if (!mapped.length) {
-      setNotice('Drop .GLB or .GLTF files for 3D AR. Video/image planes are next in the pipeline.')
-      return
-    }
-    setAssets(prev => [...prev, ...mapped])
-    setActiveIndex(assets.length)
-    setNotice(`${mapped.length} model${mapped.length > 1 ? 's' : ''} added. Local uploads preview on this device; publish with a public HTTPS asset URL to make the QR shareable.`)
-  }
-
-  function addRemote() {
-    try {
-      const u = new URL(remoteUrl)
-      if (u.protocol !== 'https:') throw new Error()
-      const item = {name: u.pathname.split('/').pop() || 'Remote model', url: u.href, size: 0, remote: true}
-      setAssets(prev => [...prev, item].slice(-MAX_FILES))
-      setActiveIndex(Math.min(assets.length, MAX_FILES - 1))
-      setNotice('Remote model added. This one can be shared by QR across devices.')
-    } catch {
-      setNotice('Use a public HTTPS URL that points directly to a .glb or .gltf file.')
-    }
-  }
-
-  async function publishQr() {
-    if (!active) return setNotice('Add a model first.')
-    if (!active.remote) return setNotice('Local blob files cannot travel through a QR. Add the same model from a public HTTPS URL, or connect object storage in the production phase.')
-    const url = new URL(location.origin + location.pathname)
-    url.searchParams.set('src', active.url)
-    url.searchParams.set('name', active.name)
-    url.searchParams.set('scale', settings.scale)
-    url.searchParams.set('yaw', settings.yaw)
-    url.searchParams.set('autoplay', settings.autoplay ? '1' : '0')
-    url.searchParams.set('spin', settings.autoRotate ? '1' : '0')
-    url.searchParams.set('shadow', settings.shadow)
-    url.searchParams.set('exposure', settings.exposure)
-    url.searchParams.set('arscale', settings.arScale)
-    await makeQr(url.toString())
-    setNotice('QR generated. Scan it on a phone, then tap “View in AR.”')
-  }
-
-  function patch(key, value) { setSettings(s => ({...s, [key]: value})) }
-
-  if (shared && innerWidth < 900) {
-    return <main className="viewerOnly">
-      <div className="viewerTop"><strong>{shared.name}</strong><span>Move your phone, then tap AR.</span></div>
-      <model-viewer
-        ref={viewerRef}
-        src={shared.src}
-        ar
-        ar-modes="webxr scene-viewer quick-look"
-        ar-scale={settings.arScale}
-        camera-controls
-        touch-action="pan-y"
-        auto-rotate={settings.autoRotate || undefined}
-        autoplay={settings.autoplay || undefined}
-        shadow-intensity={settings.shadow}
-        exposure={settings.exposure}
-        orientation={`0deg ${settings.yaw}deg 0deg`}
-        scale={`${settings.scale} ${settings.scale} ${settings.scale}`}
-      >
-        <button slot="ar-button" className="arButton">View in AR</button>
-        <div className="hint">Drag to rotate • pinch to zoom • AR lets you place it in the room</div>
-      </model-viewer>
-    </main>
-  }
-
-  return <main className="app">
-    <header>
-      <div><span className="eyebrow">LIV8 LABS</span><h1>AR Studio</h1><p>Drop a 3D object, tune it, generate a QR, then place it in the real world from a phone.</p></div>
-      <div className="badge">WebAR • No app required</div>
-    </header>
-
-    <section className="grid">
-      <aside className="panel controls">
-        <h2>1. Add assets</h2>
-        <label className="drop" onDragOver={e => e.preventDefault()} onDrop={e => {e.preventDefault(); addFiles(e.dataTransfer.files)}}>
-          <input type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" multiple onChange={e => addFiles(e.target.files)} />
-          <b>Drop GLB / GLTF here</b><span>Up to {MAX_FILES} files • {bytes(MAX_TOTAL_BYTES)} total</span>
-        </label>
-        <div className="or">or use a published model URL</div>
-        <div className="row"><input value={remoteUrl} onChange={e => setRemoteUrl(e.target.value)} placeholder="https://.../character.glb"/><button onClick={addRemote}>Add</button></div>
-
-        <h2>2. Scene controls</h2>
-        <Control label="Size" value={settings.scale} min=.1 max=5 step=.1 onChange={v => patch('scale', v)} />
-        <Control label="Rotation" value={settings.yaw} min={-180} max={180} step={1} suffix="°" onChange={v => patch('yaw', v)} />
-        <Control label="Shadow" value={settings.shadow} min={0} max={2} step=.1 onChange={v => patch('shadow', v)} />
-        <Control label="Exposure" value={settings.exposure} min={.2} max={2} step=.1 onChange={v => patch('exposure', v)} />
-        <label className="toggle"><input type="checkbox" checked={settings.autoRotate} onChange={e => patch('autoRotate', e.target.checked)}/><span>Auto spin</span></label>
-        <label className="toggle"><input type="checkbox" checked={settings.autoplay} onChange={e => patch('autoplay', e.target.checked)}/><span>Play built-in animation</span></label>
-        <label className="selectLabel">AR scaling<select value={settings.arScale} onChange={e => patch('arScale', e.target.value)}><option value="auto">Pinch resize allowed</option><option value="fixed">Lock real-world size</option></select></label>
-
-        <h2>3. Publish</h2>
-        <button className="primary" onClick={publishQr}>Generate scan-to-AR QR</button>
-        {qr && <div className="qr"><img src={qr}/><span>Scan with the phone camera</span></div>}
-        {notice && <div className="notice">{notice}</div>}
-      </aside>
-
-      <section className="panel stage">
-        <div className="stageTop"><div><b>{active?.name || 'No model loaded'}</b><span>{active ? (active.remote ? 'Shareable URL' : `${bytes(active.size)} • local preview`) : 'Add a GLB to begin'}</span></div>{active && <button className="ghost" onClick={() => viewerRef.current?.activateAR?.()}>Open AR</button>}</div>
-        {active ? <model-viewer ref={viewerRef} key={active.url} src={active.url} ar ar-modes="webxr scene-viewer quick-look" ar-scale={settings.arScale} camera-controls touch-action="pan-y" auto-rotate={settings.autoRotate || undefined} autoplay={settings.autoplay || undefined} shadow-intensity={settings.shadow} exposure={settings.exposure} orientation={`0deg ${settings.yaw}deg 0deg`} scale={`${settings.scale} ${settings.scale} ${settings.scale}`}>
-          <button slot="ar-button" className="arButton">View in AR</button>
-          <div className="hint">Drag to rotate • pinch to zoom • tap AR to place in your room</div>
-        </model-viewer> : <div className="empty"><div className="cube">◈</div><h3>Your character goes here</h3><p>Roblox/Minecraft/Pokémon-style characters work best after export or conversion to GLB.</p></div>}
-        {!!assets.length && <div className="assetStrip">{assets.map((a, i) => <button className={i === activeIndex ? 'active' : ''} key={a.url} onClick={() => setActiveIndex(i)}><span>{i + 1}</span>{a.name}</button>)}</div>}
-      </section>
-    </section>
-
-    <section className="capabilities panel"><b>Platform direction:</b><span>QR launch</span><span>3D placement</span><span>drag / rotate / pinch scale</span><span>animation playback</span><span>location unlocks</span><span>image-target triggers</span><span>video memorials</span><span>collectibles / sweepstakes</span></section>
-  </main>
-}
-
-function Control({label, value, min, max, step, suffix='', onChange}) {
-  return <label className="control"><div><span>{label}</span><output>{value}{suffix}</output></div><input type="range" value={value} min={min} max={max} step={step} onChange={e => onChange(Number(e.target.value))}/></label>
-}
-
-createRoot(document.getElementById('root')).render(<App />)
+function Control({label,value,min,max,step,suffix='',onChange}){return <label className="control"><div><span>{label}</span><output>{value}{suffix}</output></div><input type="range" value={value} min={min} max={max} step={step} onChange={e=>onChange(Number(e.target.value))}/></label>}
+createRoot(document.getElementById('root')).render(<App/>)
