@@ -1,43 +1,55 @@
 # LIV8 AR Studio
 
-A standalone WebAR MVP inside Ultimate Command Center.
+A no-app-required WebAR creator and physical-world content layer inside Ultimate Command Center.
 
-## What works now
+## Working model now
 
-- Drag/drop up to 20 GLB/GLTF models (100 MB total local-scene guardrail)
-- Desktop/mobile 3D preview
-- Drag to rotate, pinch/zoom, adjustable scale/yaw/shadow/exposure
-- Built-in GLTF animation playback and optional auto-spin
-- Mobile AR launch using WebXR / Android Scene Viewer / iOS Quick Look through `<model-viewer>`
-- Shareable scan-to-AR QR links when a model is hosted at a public HTTPS URL
-- QR carries scene settings so the receiver opens the same configured object
-- Mobile shared-viewer mode optimized for scanning a QR and immediately entering AR
+- Local `.glb` drag/drop preview with 20-file / 100 MB editor guardrails. Local GLTF was deliberately removed because external `.bin`/texture companions make single-file blob preview unreliable.
+- Public HTTPS `.glb` / complete `.gltf` assets can be shared and published.
+- 3D controls: rotate, pinch/zoom, scale, yaw, shadow, exposure, animation autoplay, auto-spin and fixed/adjustable AR scale.
+- AR launch through WebXR / Android Scene Viewer / iOS Quick Look via `<model-viewer>`.
+- QR-anywhere and GPS-geofence triggers. Geofenced viewers request location only when needed and unlock by Haversine distance.
+- SQR server integration: dynamic short link + branded QR publishing with `SQR_API_KEY` kept server-only.
+- Configurable SQR custom domain/project IDs, ready for `scan.elevate.co` after the domain is verified in SQR.
+- Development scene persistence with a repository-style JSON store, plus internal AR analytics events.
+- MVP collectible claims with a per-browser UUID and a finite claim limit. Production must move claims to authenticated users and a transactional database.
+- Automated Node tests for URL/HTTPS rules, asset limits, geofencing and claim limits.
 
-## Run
+## Run the complete local stack
 
 ```bash
 cd apps/ar-studio
+cp .env.example .env
 npm install
-npm run dev
+npm run start:all
 ```
 
-Open the HTTPS deployment on a phone. Camera/AR features require a secure context.
+`start:all` starts the API on port 8787 and Vite on 5173. Vite proxies `/api` to the AR API.
 
-## Why the first viewer uses model-viewer
+Local development is for editing/testing only. A QR intended for another phone is blocked until `VITE_PUBLIC_AR_BASE_URL` points to a real HTTPS deployment.
 
-The first slice intentionally uses the browser-native AR path for the fastest reliable cross-device object placement. The official `8thwall/8thwall` open-source repository can be layered in for image-target tracking, face effects, sky effects, and richer camera pipelines. The separately distributed 8th Wall engine binary includes SLAM/world tracking but has its own limited-use license.
+## SQR + scan.elevate.co setup
 
-## Production phase
+1. In SQR, add and verify `scan.elevate.co` as a custom domain and complete the DNS record SQR requests.
+2. Retrieve its SQR domain ID from the SQR dashboard/API and set `SQR_DOMAIN_ID` on the server.
+3. Optionally create a dedicated `LIV8 AR` SQR project and set `SQR_PROJECT_ID`.
+4. Put the lifetime-account API key in the deployment secret `SQR_API_KEY`. Never expose it as a `VITE_` variable and never commit it.
+5. Deploy the AR viewer/API over HTTPS and set `VITE_PUBLIC_AR_BASE_URL`, for example `https://ar.elevate.co/`.
+6. In AR Studio, add a public HTTPS model, configure the scene and press **Publish dynamic SQR experience**.
 
-1. Object storage: direct uploads to a public/private asset bucket so local files become shareable without manually pasting a URL.
-2. Scene persistence: project/scene records, owner, slug, QR, analytics, expiration, access rules.
-3. 8th Wall image targets: upload a poster/photo/logo/marker, process target, bind 3D/video content to it.
-4. Geofenced unlocks: radius-based location checks for scavenger hunts, giveaways, sweepstakes and event activations.
-5. Video planes: MP4/WebM textures that appear on walls, memorial cards, framed photos, signs and portals.
-6. Multi-object scene composer: position X/Y/Z, rotation, scale, timeline, animation triggers, sound and interactions.
-7. Collectibles: claim codes, inventory, one-time unlocks, leaderboards and campaign analytics.
-8. Moderation/rights controls for uploaded characters, brand assets and memorial content.
+Publishing creates or updates the dynamic SQR link, then creates the QR tied to that link. The physical QR can remain unchanged while its destination is retargeted later.
 
-## Recommended asset limits
+## Data ownership
 
-The editor accepts 20 model files and 100 MB total for the MVP. For actual mobile AR, target 5–15 MB per GLB and keep a normal scene under roughly 50 MB whenever possible. Texture compression and mesh optimization matter more than raw file count.
+SQR owns QR/short-link delivery and scan analytics. LIV8 owns scene configuration and in-experience events such as `scene_open`, `ar_button`, `ar_session`, `geo_unlock`, `geo_denied` and collectible claims. The current JSON store is intentionally replaceable; Supabase/Postgres should be the production persistence layer.
+
+## Production limits / next adapters
+
+- Direct asset upload/object storage is still required to turn a file dropped from a user's computer into a public model without manually providing an HTTPS asset URL.
+- The JSON dev store is not appropriate for horizontally scaled production or high-value sweepstakes claims.
+- Image-target recognition, wall/poster tracking, richer camera effects and multi-object world composition remain the next layer. The official open 8th Wall stack can be used as an optional adapter where it adds image-target/world-tracking capability without making LIV8 dependent on it.
+- Add authenticated ownership, moderation/rights controls, transactional claims, rate limiting and production analytics storage before public multi-tenant launch.
+
+## Recommended mobile assets
+
+The editor guardrail is 20 files / 100 MB, but production mobile AR should generally target 5–15 MB per GLB and keep normal experiences well below 50 MB. Mesh simplification and compressed textures have the biggest impact on load time.
