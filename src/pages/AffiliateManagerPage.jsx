@@ -2,9 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { Briefcase, ExternalLink, Target, Users, TrendingUp, CalendarDays, BookOpen, ChevronDown, ChevronUp } from 'lucide-react';
 import AffiliateHub from '../components/affiliates/AffiliateHub';
 import ReactivationPortfolio from '../components/affiliates/ReactivationPortfolio';
+import AffiliateInteractionCapture from '../components/affiliates/AffiliateInteractionCapture';
 
 const WORK_LINKS = [
-  ['Affiliate EXPAND Sheet','https://docs.google.com/spreadsheets/d/1FhqNEO_K2yvd9RAieCbMR42Wc2Pa5RdE59uvVXqYuNs/edit?gid=1126268514#gid=1126268514','Affiliate portfolio, segmentation, reactivation and performance data','📊'],
+  ['Affiliate EXPAND — Jamaur Book View','https://docs.google.com/spreadsheets/d/1FhqNEO_K2yvd9RAieCbMR42Wc2Pa5RdE59uvVXqYuNs/edit?gid=2031531288#gid=2031531288','Jamaur’s assigned affiliate book, notes, status, forecasting and performance data','📊'],
   ['First Promoters','https://firstpromoter.com/login','Affiliate tracking, referrals and payouts','🚀'],
   ['HighLevel','https://app.gohighlevel.com/','Product / platform workspace','⚡'],
   ['HQ','https://support.leadconnectorhq.com/login','LeadConnector / HighLevel HQ','🏢'],
@@ -20,6 +21,8 @@ const WORK_LINKS = [
   ['ADP','https://workforcenow.adp.com/theme/index.html#/home','Payroll / workforce','💰'],
   ['Darwinbox','https://gohighlevel.darwinbox.com/','Darwinbox HR','📦'],
   ['Nifty','https://niftypm.com/','Canonical Affiliate Career tasks and project execution','🗂️'],
+  ['Affiliate Follow-Up Log','https://docs.google.com/document/d/18zpSQcsZ-D6DxdwUulCusrXr-kPwYUKE36G6bLZoo34/edit','Shared interaction log connected to the Nifty and TaskMagic workflow','📝'],
+  ['TaskMagic','https://app.taskmagic.com/','Route approved affiliate follow-ups and external automations','🪄'],
 ];
 
 const LEGACY_SUPPORT_LINKS = [
@@ -94,6 +97,8 @@ export default function AffiliateManagerPage(){
     </section>
 
     <ReactivationPortfolio />
+
+    <AffiliateInteractionCapture />
 
     <section className="rounded-2xl border border-[#173039] bg-[#070c0f] p-4">
       <CollapsibleHeader title="Affiliate Hub" subtitle="Partner portfolio, enablement and affiliate-management workspace." open={affiliateHubOpen} onToggle={() => setAffiliateHubOpen(v => !v)} />
