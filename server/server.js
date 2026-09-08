@@ -3386,6 +3386,46 @@ app.post('/api/ghl/contacts/:contactId/tags', async (req, res) => {
   }
 });
 
+// Add an explicitly approved interaction note to a matched GHL contact.
+app.post('/api/ghl/contacts/:contactId/notes', async (req, res) => {
+  try {
+    const { body, title, color, pinned, userId, approved, routing } = req.body || {};
+    if (approved !== true) return res.status(400).json({ error: 'Explicit approval is required before posting a CRM note.' });
+    if (!body || !String(body).trim()) return res.status(400).json({ error: 'Note body is required.' });
+    const payload = {
+      body: String(body).trim().slice(0, 20000),
+      ...(title ? { title: String(title).trim().slice(0, 160) } : {}),
+      ...(color ? { color: String(color).trim() } : {}),
+      ...(typeof pinned === 'boolean' ? { pinned } : {}),
+      ...(userId ? { userId: String(userId).trim() } : {})
+    };
+    const result = await integrations.ghl.createContactNote(req.params.contactId, payload);
+    let taskMagic = 'not_configured';
+    const taskMagicUrl = process.env.TASKMAGIC_AFFILIATE_WEBHOOK_URL;
+    if (routing?.sensitive) taskMagic = 'skipped_sensitive';
+    else if (taskMagicUrl) {
+      try {
+        const routed = await fetch(taskMagicUrl, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            event: 'affiliate.interaction.approved',
+            contactId: req.params.contactId,
+            noteId: result?.note?.id || null,
+            title: payload.title || null,
+            body: payload.body,
+            ...routing,
+            approvedAt: new Date().toISOString(),
+          })
+        });
+        taskMagic = routed.ok ? 'routed' : `failed_${routed.status}`;
+      } catch { taskMagic = 'failed'; }
+    }
+    res.status(201).json({ ...result, automation: { taskMagic } });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get GHL pipelines
 app.get('/api/ghl/pipelines', async (req, res) => {
   try {
