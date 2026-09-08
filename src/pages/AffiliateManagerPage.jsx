@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Briefcase, ExternalLink, Target, Users, TrendingUp, CalendarDays, BookOpen, ChevronDown, ChevronUp } from 'lucide-react';
+import { Briefcase, ExternalLink, Target, Users, TrendingUp, CalendarDays, BookOpen, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import AffiliateHub from '../components/affiliates/AffiliateHub';
 import ReactivationPortfolio from '../components/affiliates/ReactivationPortfolio';
 import AffiliateInteractionCapture from '../components/affiliates/AffiliateInteractionCapture';
 
 const WORK_LINKS = [
+  ['Affiliate EXPAND App','https://expand-command-center.vercel.app/leadership#home','Open the full affiliate application in a separate browser tab','🧭'],
   ['Affiliate EXPAND — Jamaur Book View','https://docs.google.com/spreadsheets/d/1FhqNEO_K2yvd9RAieCbMR42Wc2Pa5RdE59uvVXqYuNs/edit?gid=2031531288#gid=2031531288','Jamaur’s assigned affiliate book, notes, status, forecasting and performance data','📊'],
   ['Affiliate EXPAND — Companion Sheet','https://docs.google.com/spreadsheets/d/1DnYn1NCarQFWd-2LCt2QGP4LmPBXCoVbDEG4GiEWSVg/edit?gid=1220225360#gid=1220225360','Companion affiliate workspace and operating data','📈'],
   ['First Promoters','https://firstpromoter.com/login','Affiliate tracking, referrals and payouts','🚀'],
@@ -26,6 +27,8 @@ const WORK_LINKS = [
   ['TaskMagic','https://app.taskmagic.com/','Route approved affiliate follow-ups and external automations','🪄'],
 ];
 
+const AFFILIATE_APP_URL = 'https://expand-command-center.vercel.app/leadership#home';
+
 const LEGACY_SUPPORT_LINKS = [
   ['Freshdesk','https://gohighlevelassist.freshdesk.com/a/dashboard/default','Legacy Freshdesk dashboard','🎫'],
   ['Fresh Chat','https://highlevel-team.freshchat.com/a/309618592266199/inbox/3/0','Legacy Freshchat inbox','🆘'],
@@ -36,6 +39,7 @@ const STORAGE = {
   workToolsOpen: 'liv8_ghl_work_tools_open',
   legacyOpen: 'liv8_ghl_legacy_links_open',
   affiliateHubOpen: 'liv8_ghl_affiliate_hub_open',
+  affiliateAppOpen: 'liv8_ghl_affiliate_app_open',
 };
 
 function loadOpenState(key, fallback) {
@@ -73,10 +77,13 @@ export default function AffiliateManagerPage(){
   const [workToolsOpen, setWorkToolsOpen] = useState(() => loadOpenState(STORAGE.workToolsOpen, true));
   const [legacyOpen, setLegacyOpen] = useState(() => loadOpenState(STORAGE.legacyOpen, false));
   const [affiliateHubOpen, setAffiliateHubOpen] = useState(() => loadOpenState(STORAGE.affiliateHubOpen, true));
+  const [affiliateAppOpen, setAffiliateAppOpen] = useState(() => loadOpenState(STORAGE.affiliateAppOpen, true));
+  const [affiliateAppKey, setAffiliateAppKey] = useState(0);
 
   useEffect(() => { try { localStorage.setItem(STORAGE.workToolsOpen, String(workToolsOpen)); } catch {} }, [workToolsOpen]);
   useEffect(() => { try { localStorage.setItem(STORAGE.legacyOpen, String(legacyOpen)); } catch {} }, [legacyOpen]);
   useEffect(() => { try { localStorage.setItem(STORAGE.affiliateHubOpen, String(affiliateHubOpen)); } catch {} }, [affiliateHubOpen]);
+  useEffect(() => { try { localStorage.setItem(STORAGE.affiliateAppOpen, String(affiliateAppOpen)); } catch {} }, [affiliateAppOpen]);
 
   return <div className="space-y-5">
     <section className="rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-[#071217] via-[#080c11] to-[#120b1b] p-5 shadow-xl shadow-black/20">
@@ -85,6 +92,31 @@ export default function AffiliateManagerPage(){
         <div><div className="text-xs uppercase tracking-[.18em] text-cyan-300">GoHighLevel career</div><h1 className="text-2xl font-bold text-gray-100">Affiliate Manager OS</h1><p className="text-sm text-slate-500 mt-1">Partner growth, portfolio management, enablement, product mastery, reporting, events and relationship development.</p></div>
       </div>
       <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-5"><P icon={Target} t="Scorecard" d="Know the role metrics and promotion path"/><P icon={Users} t="Portfolio" d="Prioritize partners and next best actions"/><P icon={TrendingUp} t="Growth" d="Enable partners and grow referred revenue"/><P icon={CalendarDays} t="Cadence" d="Run outreach, reviews, follow-ups and events"/></div>
+    </section>
+
+    <section className="overflow-hidden rounded-2xl border border-purple-500/25 bg-[#07090d] shadow-xl shadow-black/20">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-purple-500/15 p-4">
+        <CollapsibleHeader
+          title="Affiliate EXPAND App"
+          subtitle="Full affiliate workspace embedded inside the GHL tab."
+          open={affiliateAppOpen}
+          onToggle={() => setAffiliateAppOpen(v => !v)}
+          accent="text-purple-300"
+          icon={Briefcase}
+        />
+        {affiliateAppOpen && <div className="ml-auto flex gap-2">
+          <button onClick={() => setAffiliateAppKey(v => v + 1)} className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/5"><RefreshCw className="h-3.5 w-3.5"/>Refresh</button>
+          <a href={AFFILIATE_APP_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-purple-500/25 px-3 py-2 text-xs text-purple-200 hover:bg-purple-500/10"><ExternalLink className="h-3.5 w-3.5"/>Open separately</a>
+        </div>}
+      </div>
+      {affiliateAppOpen && <iframe
+        key={affiliateAppKey}
+        src={AFFILIATE_APP_URL}
+        title="Affiliate EXPAND Command Center"
+        allow="microphone; clipboard-read; clipboard-write"
+        referrerPolicy="strict-origin-when-cross-origin"
+        className="h-[78vh] min-h-[720px] w-full border-0 bg-[#030305]"
+      />}
     </section>
 
     <section className="rounded-2xl border border-[#173039] bg-[#070c0f] p-4">
