@@ -2,12 +2,12 @@ import React, { useMemo, useRef, useState } from 'react';
 import {
   Upload, Users, PhoneCall, ListChecks, Clock3, Search, X, ExternalLink,
   Mail, ShieldAlert, ChevronRight, Trash2, Linkedin, Youtube, Instagram,
-  Globe2, Save, CheckCircle2, AlertTriangle
+  Globe2, Save, CheckCircle2, AlertTriangle, TrendingUp, Target, Activity
 } from 'lucide-react';
 
 const SESSION_KEY = 'liv8_ghl_reactivation_book_v1';
 const RESEARCH_KEY = 'liv8_ghl_affiliate_research_v1';
-const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1FhqNEO_K2yvd9RAieCbMR42Wc2Pa5RdE59uvVXqYuNs/edit?gid=1126268514#gid=1126268514';
+const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1FhqNEO_K2yvd9RAieCbMR42Wc2Pa5RdE59uvVXqYuNs/edit?gid=2031531288#gid=2031531288';
 
 function parseCSV(text) {
   const rows = [];
@@ -33,29 +33,45 @@ function num(value) {
 }
 
 function hasStopInstruction(row) {
-  const text = [row.story, row.dnc].join(' ').toLowerCase();
+  const text = [row.story, row.dnc, row.activeStatus].join(' ').toLowerCase();
   return /suspend|do not contact|do-not-contact|outreach should stop|no check-in|stop until leadership|not to keep/.test(text);
+}
+
+function first(raw, ...keys) {
+  for (const key of keys) if (raw[key] != null && String(raw[key]).trim() !== '') return String(raw[key]).trim();
+  return '';
 }
 
 function mapRow(headers, values) {
   const raw = Object.fromEntries(headers.map((h, i) => [String(h || '').trim(), String(values[i] || '').trim()]));
   const row = {
-    id: raw['Promoter ID'],
-    name: raw['Promoter Full Name'] || raw['Promoter Email'] || 'Unknown',
-    email: raw['Promoter Email'],
+    id: first(raw, 'Promoter ID', 'PROMOTER ID'),
+    name: first(raw, 'Promoter Full Name', 'AFFILIATE', 'Promoter Email', 'EMAIL') || 'Unknown',
+    email: first(raw, 'Promoter Email', 'EMAIL'),
     previousAfm: raw.AFM,
     newAfm: raw['NEW AFM'],
     priority: raw.PRIORITY,
     dormantBand: raw['DORMANT BAND'],
-    lifetime: num(raw.Lifetime),
-    prevQ: num(raw['Prev Q']),
-    currQ: num(raw['Curr Q']),
+    lifetime: num(first(raw, 'Lifetime', 'LIFETIME')),
+    prevQ: num(first(raw, 'Prev Q', 'PREV Q')),
+    currQ: num(first(raw, 'Curr Q', 'QTD')),
+    mtd: num(raw.MTD),
+    qoqPacing: num(raw['QoQ PACING']),
+    mom: first(raw, 'MoM', 'MOM'),
+    activeStatus: first(raw, 'ACTIVE STATUS', 'STATUS'),
     lastMrr: num(raw['Last MRR']),
-    endorsement: raw.Endorsement,
+    endorsement: first(raw, 'Endorsement', 'ENDORSEMENT'),
     award: raw.Award,
     country: raw.Country,
-    niche: raw.Niche,
-    story: raw['The story · last note'],
+    niche: first(raw, 'Niche', 'NICHE'),
+    story: first(raw, 'The story · last note', 'LAST NOTE'),
+    promoterProfile: raw['PROMOTER PROFILE'],
+    youtube: raw.YOUTUBE,
+    instagram: raw.INSTAGRAM,
+    endorsementWorkbook: raw['ENDORSEMENT WORKBOOK'],
+    forecasting: raw.FORECASTING,
+    affiliateDoc: raw['AFFILIATE DOC'],
+    highlevelContact: raw['HIGHLEVEL CONTACT'],
     touches: num(raw.TOUCHES),
     valueGiven: raw['VALUE GIVEN?'],
     replied: raw['REPLIED?'],
@@ -64,7 +80,7 @@ function mapRow(headers, values) {
     outcome: raw.OUTCOME,
     owner: raw.OWNER,
     nextMove: raw['NEXT MOVE + DATE'],
-    source: 'Affiliate EXPAND',
+    source: raw.AFFILIATE ? 'Affiliate EXPAND · Book View' : 'Affiliate EXPAND · Reactivation',
   };
   row.stopOutreach = hasStopInstruction(row);
   return row;
@@ -72,14 +88,19 @@ function mapRow(headers, values) {
 
 function importAssignedBook(text) {
   const rows = parseCSV(text);
-  const headerIndex = rows.findIndex(r => r.some(c => String(c).trim() === 'Promoter Email') && r.some(c => String(c).trim() === 'NEW AFM'));
+  const headerIndex = rows.findIndex(r => {
+    const cells = r.map(c => String(c).trim());
+    return (cells.includes('Promoter Email') && cells.includes('NEW AFM')) ||
+      (cells.includes('AFFILIATE') && cells.includes('PROMOTER ID') && cells.includes('ACTIVE STATUS'));
+  });
   if (headerIndex < 0) throw new Error('This does not look like the Affiliate EXPAND Reactivation export.');
   const headers = rows[headerIndex];
+  const isBookView = headers.includes('AFFILIATE');
   const mapped = rows.slice(headerIndex + 1)
     .filter(r => r.some(Boolean))
     .map(r => mapRow(headers, r))
-    .filter(r => r.newAfm.toLowerCase() === 'jamaur johnson' && r.id);
-  if (!mapped.length) throw new Error('No rows assigned to Jamaur Johnson were found in NEW AFM.');
+    .filter(r => (isBookView || r.newAfm.toLowerCase() === 'jamaur johnson') && r.id);
+  if (!mapped.length) throw new Error('No affiliates were found in this assigned book export.');
   return mapped;
 }
 
@@ -124,6 +145,13 @@ export default function ReactivationPortfolio() {
     personal: book.filter(a => a.priority.startsWith('1')).length,
     ladder: book.filter(a => a.priority.startsWith('2')).length,
     sequence: book.filter(a => a.priority.startsWith('3')).length,
+    mtd: book.reduce((s, a) => s + a.mtd, 0),
+    projectedMonth: book.reduce((s, a) => s + a.mtd, 0) * 4,
+    qoqPacing: book.reduce((s, a) => s + a.prevQ, 0) ? Math.round(book.reduce((s, a) => s + a.currQ, 0) / book.reduce((s, a) => s + a.prevQ, 0) * 100) : 0,
+    active: book.filter(a => /reactivation|needs attention|active/i.test(a.activeStatus) && !/inactive/i.test(a.activeStatus)).length,
+    needsAttention: book.filter(a => /needs attention/i.test(a.activeStatus)).length,
+    reactivation: book.filter(a => /reactivation/i.test(a.activeStatus)).length,
+    doNotPursue: book.filter(a => /do not pursue/i.test(a.activeStatus)).length,
   }), [book]);
 
   const filtered = useMemo(() => {
@@ -132,7 +160,7 @@ export default function ReactivationPortfolio() {
       if (band !== 'all' && bandKey(a.dormantBand) !== band) return false;
       if (priority !== 'all' && !a.priority.startsWith(priority)) return false;
       if (!q) return true;
-      return [a.name, a.email, a.country, a.niche, a.story, a.previousAfm, a.award]
+      return [a.name, a.email, a.country, a.niche, a.story, a.previousAfm, a.award, a.activeStatus, a.endorsement]
         .join(' ').toLowerCase().includes(q);
     }).sort((a, b) => (b.currQ - a.currQ) || (b.prevQ - a.prevQ) || (b.lifetime - a.lifetime));
   }, [book, query, band, priority]);
@@ -167,7 +195,7 @@ export default function ReactivationPortfolio() {
       <div>
         <div className="text-xs uppercase tracking-[.18em] text-cyan-300">Private portfolio import</div>
         <h2 className="mt-1 text-xl font-bold text-white">Load Jamaur's Reactivation Book</h2>
-        <p className="mt-2 max-w-2xl text-sm text-slate-400">Import the authorized Affiliate EXPAND CSV. Only rows assigned to Jamaur Johnson in NEW AFM are loaded. The file stays in this browser tab session and is never committed to the public repository.</p>
+        <p className="mt-2 max-w-2xl text-sm text-slate-400">Import the authorized Affiliate EXPAND CSV. Both the assigned Reactivation export and Jamaur's 51-account Book View are supported. The file stays in this browser tab session and is never committed to the public repository.</p>
       </div>
       <ShieldAlert className="h-8 w-8 text-cyan-300"/>
     </div>
@@ -203,8 +231,8 @@ export default function ReactivationPortfolio() {
 
     <section className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
       {[
-        ['Assigned', summary.total], ['Quiet 30d', summary.quiet30], ['Quiet quarter', summary.quietQuarter], ['Dormant 90+', summary.dormant],
-        ['Lifetime trials', summary.lifetime.toLocaleString()], ['Prev Q', summary.prevQ], ['Curr Q', summary.currQ], ['Personal calls', summary.personal]
+        ['Book size', summary.total], ['MTD trials', summary.mtd], ['Projected month', summary.projectedMonth], ['QTD trials', summary.currQ],
+        ['QoQ pace', `${summary.qoqPacing}%`], ['Needs attention', summary.needsAttention], ['Reactivation', summary.reactivation], ['Do not pursue', summary.doNotPursue]
       ].map(([label, value]) => <div key={label} className="rounded-xl border border-white/10 bg-white/[.03] p-3">
         <div className="text-xl font-bold text-white">{value}</div><div className="mt-1 text-[11px] text-slate-500">{label}</div>
       </div>)}
@@ -236,7 +264,8 @@ export default function ReactivationPortfolio() {
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-semibold text-white">{a.name}</span>
-                  <span className={`rounded px-2 py-0.5 text-[10px] ${a.priority.startsWith('1') ? 'bg-purple-500/15 text-purple-300' : a.priority.startsWith('2') ? 'bg-cyan-500/15 text-cyan-300' : 'bg-white/5 text-slate-400'}`}>{a.priority}</span>
+                  {a.priority && <span className={`rounded px-2 py-0.5 text-[10px] ${a.priority.startsWith('1') ? 'bg-purple-500/15 text-purple-300' : a.priority.startsWith('2') ? 'bg-cyan-500/15 text-cyan-300' : 'bg-white/5 text-slate-400'}`}>{a.priority}</span>}
+                  {a.activeStatus && <span className={`rounded px-2 py-0.5 text-[10px] ${/needs attention/i.test(a.activeStatus) ? 'bg-amber-500/15 text-amber-300' : /reactivation/i.test(a.activeStatus) ? 'bg-rose-500/15 text-rose-300' : /do not pursue/i.test(a.activeStatus) ? 'bg-slate-500/20 text-slate-400' : 'bg-emerald-500/15 text-emerald-300'}`}>{a.activeStatus}</span>}
                   {a.stopOutreach && <span className="rounded bg-red-500/15 px-2 py-0.5 text-[10px] text-red-300">HOLD OUTREACH</span>}
                 </div>
                 <div className="mt-1 truncate text-xs text-slate-500">{a.email} · {a.country || 'Country unknown'}</div>
@@ -245,7 +274,7 @@ export default function ReactivationPortfolio() {
               <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-slate-600"/>
             </div>
             <div className="mt-3 flex flex-wrap gap-3 text-xs text-slate-400">
-              <span>{a.lifetime.toLocaleString()} lifetime</span><span>{a.prevQ} prev Q</span><span>{a.currQ} curr Q</span><span>{a.dormantBand}</span>
+              <span>{a.lifetime.toLocaleString()} lifetime</span><span>{a.mtd} MTD</span><span>{a.currQ} QTD</span><span>{a.prevQ} prev Q</span>{a.qoqPacing ? <span>{a.qoqPacing}% QoQ</span> : null}
             </div>
           </button>)}
         </div>
@@ -263,7 +292,11 @@ export default function ReactivationPortfolio() {
           </div>
           <div className="max-h-[620px] space-y-4 overflow-y-auto p-4">
             <div className="grid grid-cols-3 gap-2">
-              {[['Lifetime', selected.lifetime], ['Prev Q', selected.prevQ], ['Curr Q', selected.currQ]].map(([l,v]) => <div key={l} className="rounded-lg bg-black/20 p-2 text-center"><div className="font-bold text-white">{v}</div><div className="text-[10px] text-slate-500">{l}</div></div>)}
+              {[['Lifetime', selected.lifetime], ['MTD', selected.mtd], ['QTD', selected.currQ]].map(([l,v]) => <div key={l} className="rounded-lg bg-black/20 p-2 text-center"><div className="font-bold text-white">{v}</div><div className="text-[10px] text-slate-500">{l}</div></div>)}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-lg border border-white/10 p-2"><div className="text-[10px] uppercase text-slate-600">QoQ pace</div><div className="mt-1 text-sm font-semibold text-white">{selected.qoqPacing || 0}%</div></div>
+              <div className="rounded-lg border border-white/10 p-2"><div className="text-[10px] uppercase text-slate-600">Endorsement</div><div className="mt-1 text-sm font-semibold text-white">{selected.endorsement || 'Not Endorsed'}</div></div>
             </div>
             <div><div className="text-[10px] uppercase tracking-wide text-slate-600">Contact</div>
               <a href={selected.stopOutreach ? undefined : `mailto:${selected.email}`} className={`mt-1 inline-flex items-center gap-2 text-sm ${selected.stopOutreach ? 'cursor-not-allowed text-slate-600' : 'text-cyan-300'}`}><Mail className="h-4 w-4"/>{selected.email}</a>
