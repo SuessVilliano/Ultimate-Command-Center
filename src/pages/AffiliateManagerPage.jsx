@@ -6,6 +6,7 @@ import AffiliateInteractionCapture from '../components/affiliates/AffiliateInter
 
 const WORK_LINKS = [
   ['Affiliate EXPAND — Jamaur Book View','https://docs.google.com/spreadsheets/d/1FhqNEO_K2yvd9RAieCbMR42Wc2Pa5RdE59uvVXqYuNs/edit?gid=2031531288#gid=2031531288','Jamaur’s assigned affiliate book, notes, status, forecasting and performance data','📊'],
+  ['Affiliate EXPAND — Companion Sheet','https://docs.google.com/spreadsheets/d/1DnYn1NCarQFWd-2LCt2QGP4LmPBXCoVbDEG4GiEWSVg/edit?gid=1220225360#gid=1220225360','Companion affiliate workspace and operating data','📈'],
   ['First Promoters','https://firstpromoter.com/login','Affiliate tracking, referrals and payouts','🚀'],
   ['HighLevel','https://app.gohighlevel.com/','Product / platform workspace','⚡'],
   ['HQ','https://support.leadconnectorhq.com/login','LeadConnector / HighLevel HQ','🏢'],
