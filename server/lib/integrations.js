@@ -337,6 +337,15 @@ export const ghl = {
     });
   },
 
+  // Add an approved note to a contact (HighLevel Contacts Notes API v3)
+  async createContactNote(contactId, data) {
+    return ghlRequest(`/contacts/${encodeURIComponent(contactId)}/notes`, {
+      method: 'POST',
+      headers: { Version: 'v3' },
+      body: JSON.stringify(data)
+    }, true);
+  },
+
   // Get pipelines
   async getPipelines() {
     return ghlRequest('/pipelines');
