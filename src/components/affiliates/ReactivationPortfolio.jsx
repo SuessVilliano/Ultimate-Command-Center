@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 
 const SESSION_KEY = 'liv8_ghl_reactivation_book_v1';
+const BOOK_UPDATED_EVENT = 'liv8:affiliate-book-updated';
 const RESEARCH_KEY = 'liv8_ghl_affiliate_research_v1';
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1FhqNEO_K2yvd9RAieCbMR42Wc2Pa5RdE59uvVXqYuNs/edit?gid=2031531288#gid=2031531288';
 
@@ -172,6 +173,7 @@ export default function ReactivationPortfolio() {
       const imported = importAssignedBook(await file.text());
       sessionStorage.setItem(SESSION_KEY, JSON.stringify(imported));
       setBook(imported);
+      window.dispatchEvent(new CustomEvent(BOOK_UPDATED_EVENT));
       setSelectedId(imported[0]?.id || null);
     } catch (e) { setError(e.message); }
     if (fileRef.current) fileRef.current.value = '';
@@ -181,6 +183,7 @@ export default function ReactivationPortfolio() {
     sessionStorage.removeItem(SESSION_KEY);
     sessionStorage.removeItem(RESEARCH_KEY);
     setBook([]); setResearch({}); setSelectedId(null);
+    window.dispatchEvent(new CustomEvent(BOOK_UPDATED_EVENT));
   }
 
   function saveResearch(field, value) {
