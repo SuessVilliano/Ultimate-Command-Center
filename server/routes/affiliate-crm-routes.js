@@ -3,18 +3,18 @@ const SANDBOX_FORM_ID = process.env.GHL_AFFILIATE_SANDBOX_FORM_ID || 'TVI6Ch94dC
 
 function config() {
   return {
-    token: process.env.GHL_AFFILIATE_SANDBOX_API_KEY || '',
+    pit: process.env.GHL_AFFILIATE_SANDBOX_PIT || '',
     locationId: process.env.GHL_AFFILIATE_SANDBOX_LOCATION_ID || '',
   };
 }
 
 async function request(path, options = {}) {
-  const { token } = config();
-  if (!token) throw Object.assign(new Error('GHL_AFFILIATE_SANDBOX_API_KEY is not configured'), { status: 503 });
+  const { pit } = config();
+  if (!pit) throw Object.assign(new Error('GHL_AFFILIATE_SANDBOX_PIT is not configured'), { status: 503 });
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${pit}`,
       Version: options.version || '2021-07-28',
       'Content-Type': 'application/json',
       ...(options.headers || {}),
@@ -64,13 +64,14 @@ async function findExactContact({ identifier, email, promoterId }) {
 
 export function registerAffiliateCrmRoutes(app) {
   app.get('/api/affiliate/crm-note/status', (_req, res) => {
-    const { token, locationId } = config();
+    const { pit, locationId } = config();
     res.json({
-      configured: Boolean(token && locationId),
+      configured: Boolean(pit && locationId),
       sandboxOnly: true,
+      authType: 'PIT',
       formId: SANDBOX_FORM_ID,
       locationConfigured: Boolean(locationId),
-      tokenConfigured: Boolean(token),
+      pitConfigured: Boolean(pit),
     });
   });
 
@@ -91,6 +92,7 @@ export function registerAffiliateCrmRoutes(app) {
       res.json({
         success: true,
         sandboxOnly: true,
+        authType: 'PIT',
         contactId,
         contactEmail: contact.email || email || null,
         formId: SANDBOX_FORM_ID,
