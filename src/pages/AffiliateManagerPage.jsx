@@ -5,9 +5,9 @@ import ReactivationPortfolio from '../components/affiliates/ReactivationPortfoli
 import AffiliateInteractionCapture from '../components/affiliates/AffiliateInteractionCapture';
 
 const WORK_LINKS = [
-  ['Affiliate EXPAND App','https://expand-command-center.vercel.app/leadership#home','Open the full affiliate application in a separate browser tab','🧭'],
-  ['Affiliate EXPAND — Jamaur Book View','https://docs.google.com/spreadsheets/d/1FhqNEO_K2yvd9RAieCbMR42Wc2Pa5RdE59uvVXqYuNs/edit?gid=2031531288#gid=2031531288','Jamaur’s assigned affiliate book, notes, status, forecasting and performance data','📊'],
-  ['Affiliate EXPAND — Companion Sheet','https://docs.google.com/spreadsheets/d/1DnYn1NCarQFWd-2LCt2QGP4LmPBXCoVbDEG4GiEWSVg/edit?gid=1220225360#gid=1220225360','Companion affiliate workspace and operating data','📈'],
+  ['Affiliate Command Center (ACC)','https://expand-command-center.vercel.app/leadership#home','Open the Affiliate Command Center for leadership, sessions and partner operations','🧭'],
+  ['My Book','https://docs.google.com/spreadsheets/d/1FhqNEO_K2yvd9RAieCbMR42Wc2Pa5RdE59uvVXqYuNs/edit?gid=2031531288#gid=2031531288','Jamaur’s assigned affiliate book with notes, status, forecasting and performance data','📊'],
+  ['Affiliate SOPs','https://docs.google.com/spreadsheets/d/1DnYn1NCarQFWd-2LCt2QGP4LmPBXCoVbDEG4GiEWSVg/edit?gid=1220225360#gid=1220225360','Affiliate team procedures, operating guidance and reference material','📈'],
   ['First Promoters','https://firstpromoter.com/login','Affiliate tracking, referrals and payouts','🚀'],
   ['HighLevel','https://app.gohighlevel.com/','Product / platform workspace','⚡'],
   ['HQ','https://support.leadconnectorhq.com/login','LeadConnector / HighLevel HQ','🏢'],
@@ -16,7 +16,6 @@ const WORK_LINKS = [
   ['ChatGPT','https://chatgpt.com/g/g-68b6f4f1844881918c4892febc6e9a44-highlevel-support-agent','HighLevel GPT workspace','🤖'],
   ['Google Calendar','https://calendar.google.com/calendar/u/0/r?cid=jamaur.johnson@gohighlevel.com&pli=1','Partner calls, internal meetings and events','📅'],
   ['Weekly Affiliate Q&A','https://speakwith.us/affiliate-qa-page752776','Share this registration page with affiliates for the weekly sessions','🎙️'],
-  ['Senior Zoom','https://us02web.zoom.us/j/3297827881','Senior team Zoom room','🎥'],
   ['BambooHR','https://gohighlevel.bamboohr.com/home','HR portal','🎋'],
   ['Slack','https://app.slack.com/client/E098GV8SRC2/GMBP6HAPM','GHL Slack workspace','💬'],
   ['Knowledgebase','https://help.gohighlevel.com/support/home','HighLevel Help Center','📚'],
@@ -31,6 +30,7 @@ const WORK_LINKS = [
 const AFFILIATE_APP_URL = 'https://expand-command-center.vercel.app/leadership#home';
 
 const LEGACY_SUPPORT_LINKS = [
+  ['Senior Zoom','https://us02web.zoom.us/j/3297827881','Legacy senior support team Zoom room','🎥'],
   ['Freshdesk','https://gohighlevelassist.freshdesk.com/a/dashboard/default','Legacy Freshdesk dashboard','🎫'],
   ['Fresh Chat','https://highlevel-team.freshchat.com/a/309618592266199/inbox/3/0','Legacy Freshchat inbox','🆘'],
   ['Support Dashboard','https://docs.google.com/spreadsheets/d/1oD_dS_A4b3lNW7cWEdv6QYeb3zJakV_PoKweyhFgaNs/edit?pli=1&gid=1182538947#gid=1182538947','Legacy support Google Sheet','📊'],
@@ -98,7 +98,7 @@ export default function AffiliateManagerPage(){
     <section className="overflow-hidden rounded-2xl border border-purple-500/25 bg-[#07090d] shadow-xl shadow-black/20">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-purple-500/15 p-4">
         <CollapsibleHeader
-          title="Affiliate EXPAND App"
+          title="Affiliate Command Center (ACC)"
           subtitle="Full affiliate workspace embedded inside the GHL tab."
           open={affiliateAppOpen}
           onToggle={() => setAffiliateAppOpen(v => !v)}
