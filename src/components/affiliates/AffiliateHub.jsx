@@ -127,7 +127,7 @@ function contactToAffiliate(c) {
   };
 }
 
-export default function AffiliateHub({ isDark, currentUser, aiServerStatus, onOpenSettings }) {
+export default function AffiliateHub({ isDark = true, currentUser, aiServerStatus, onOpenSettings }) {
   const [affiliates, setAffiliates] = useState([]);
   const [dataSource, setDataSource] = useState('none');
   const [loading, setLoading] = useState(false);
@@ -413,7 +413,7 @@ Match the channel: SMS/DM = short and casual, Email = subject-worthy and structu
   const btn = (active, base) => `flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${active ? base : 'bg-gray-600 text-gray-400 cursor-not-allowed'}`;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 text-slate-100">
       {/* Toast */}
       {toast && (
         <div className="fixed bottom-6 right-6 z-50 px-4 py-2 rounded-lg bg-green-600 text-white text-sm shadow-lg flex items-center gap-2">
@@ -516,7 +516,7 @@ Match the channel: SMS/DM = short and casual, Email = subject-worthy and structu
         ].map(k => {
           const Icon = k.icon;
           return (
-            <div key={k.label} className={`p-4 rounded-xl border ${isDark ? 'border-purple-900/30 bg-white/5' : 'border-gray-200 bg-white'}`}>
+            <div key={k.label} className={`p-4 rounded-xl border shadow-inner shadow-black/20 ${isDark ? 'border-cyan-500/10 bg-gradient-to-br from-[#0b1118] to-[#100d19]' : 'border-gray-200 bg-white'}`}>
               <div className="flex items-center justify-between">
                 <Icon className={`w-5 h-5 text-${k.color}-500`} />
                 <span className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>{k.value}</span>
@@ -550,11 +550,11 @@ Match the channel: SMS/DM = short and casual, Email = subject-worthy and structu
       }} />
 
       {/* Search */}
-      <div className={`p-3 rounded-xl border ${isDark ? 'border-purple-900/30 bg-white/5' : 'border-gray-200 bg-white'}`}>
+      <div className={`p-3 rounded-xl border ${isDark ? 'border-cyan-500/15 bg-[#080d12]' : 'border-gray-200 bg-white'}`}>
         <div className="relative">
           <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${isDark ? 'text-gray-500' : 'text-gray-400'}`} />
           <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search affiliates by name, email, tier, source..."
-            className={`w-full pl-10 pr-9 py-2 rounded-lg border ${isDark ? 'bg-white/5 border-purple-900/30 text-white placeholder-gray-500' : 'bg-gray-50 border-gray-200 text-gray-900'}`} />
+            className={`w-full pl-10 pr-9 py-2 rounded-lg border outline-none transition-colors ${isDark ? 'bg-[#05080d] border-white/10 text-white placeholder-slate-600 focus:border-cyan-500/40' : 'bg-gray-50 border-gray-200 text-gray-900'}`} />
           {searchQuery && <button onClick={() => setSearchQuery('')} className={`absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full ${isDark ? 'hover:bg-white/10 text-gray-400' : 'hover:bg-gray-200 text-gray-500'}`}><X className="w-4 h-4" /></button>}
         </div>
       </div>
@@ -562,7 +562,7 @@ Match the channel: SMS/DM = short and casual, Email = subject-worthy and structu
       {/* Main: list + detail */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* List */}
-        <div className={`lg:col-span-2 rounded-xl border ${isDark ? 'border-purple-900/30 bg-white/5' : 'border-gray-200 bg-white'}`}>
+        <div className={`lg:col-span-2 overflow-hidden rounded-xl border ${isDark ? 'border-cyan-500/15 bg-[#080d12]' : 'border-gray-200 bg-white'}`}>
           <div className={`p-4 border-b flex items-center justify-between ${isDark ? 'border-purple-900/30' : 'border-gray-200'}`}>
             <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>Affiliates ({filtered.length})</h3>
             <span className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>Click to open · track · interact</span>
@@ -619,7 +619,7 @@ Match the channel: SMS/DM = short and casual, Email = subject-worthy and structu
         </div>
 
         {/* Detail / interaction panel */}
-        <div className={`rounded-xl border ${isDark ? 'border-purple-900/30 bg-white/5' : 'border-gray-200 bg-white'}`}>
+        <div className={`overflow-hidden rounded-xl border ${isDark ? 'border-purple-500/20 bg-gradient-to-b from-[#0d1019] to-[#080b11]' : 'border-gray-200 bg-white'}`}>
           {selected ? (
             <div className="h-full flex flex-col">
               {/* Header */}
