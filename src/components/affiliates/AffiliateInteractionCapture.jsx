@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Mic, Search, ShieldCheck, Send, UserCheck, AlertTriangle, Clock3, ExternalLink } from 'lucide-react';
 import { API_URL } from '../../config';
 
@@ -45,14 +45,14 @@ function buildGhlFormUrl(form, contact) {
     'affiliate_id_/_promoter_id': contact.promoterId || (contact.matchSource === 'book' ? contact.id : '') || '',
     email: contact.email || '',
     full_name: contact.name || [contact.firstName, contact.lastName].filter(Boolean).join(' '),
-    single_dropdown_41tkt: channel,
-    multi_line_116bk6: form.rawNotes,
-    multi_line_1171z9: form.affiliateCommitments,
-    multi_line_118ks3: form.managerCommitments,
-    multi_line_119leh: form.blocker,
-    multi_line_120tlb: form.nextAction,
-    date_33v6m: formDate(form.followUpDate),
-    single_dropdown_42sol: form.sensitive ? 'Sensitive / Internal' : 'Standard CRM Note',
+    acc_interaction_channel: channel,
+    acc_interaction_summary: form.rawNotes,
+    acc_affiliate_commitments: form.affiliateCommitments,
+    acc_manager_commitments: form.managerCommitments,
+    acc_risk_or_blocker: form.blocker,
+    acc_next_action: form.nextAction,
+    'acc_follow-up_date': formDate(form.followUpDate),
+    acc_note_sensitivity: form.sensitive ? 'Sensitive / Internal' : 'Standard CRM Note',
     _acc_sync: String(Date.now()),
   });
   return `${GHL_FORM_URL}?${params.toString()}`;
@@ -67,6 +67,15 @@ export default function AffiliateInteractionCapture() {
   const [ghlFormSrc, setGhlFormSrc] = useState('');
   const note = useMemo(() => match ? formatNote(form, match) : '', [form, match]);
   const set = (key, value) => setForm(v => ({...v, [key]:value}));
+
+  useEffect(() => {
+    if (document.querySelector('script[data-ghl-form-embed]')) return;
+    const script = document.createElement('script');
+    script.src = 'https://link.msgsndr.com/js/form_embed.js';
+    script.async = true;
+    script.dataset.ghlFormEmbed = 'true';
+    document.body.appendChild(script);
+  }, []);
 
   async function findContact() {
     setMessage(''); setMatch(null); setState('matching');
@@ -151,7 +160,7 @@ export default function AffiliateInteractionCapture() {
     <div className="mt-4 flex flex-wrap gap-2"><button onClick={saveForReview} disabled={!match||!form.rawNotes.trim()} className="rounded-lg border border-purple-500/30 px-4 py-2 text-sm font-semibold text-purple-200 disabled:opacity-40">Submit for Review</button><button onClick={prepareGhlForm} disabled={!match||!form.rawNotes.trim()} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"><Send className="h-4 w-4"/>Add to HighLevel via Form</button><button onClick={reset} className="px-3 py-2 text-sm text-slate-500">Clear</button></div>
     {ghlFormSrc && <div id="jamaurs-notes-embed" className="mt-6 overflow-hidden rounded-xl border border-emerald-500/25 bg-white">
       <div className="flex items-center justify-between gap-3 bg-[#071217] px-4 py-3"><div><div className="text-sm font-semibold text-white">Jamaurs Notes · HighLevel</div><div className="text-xs text-slate-400">Fields are prefilled from the approved Command Center draft. Submit below to write the note.</div></div><a href={ghlFormSrc} target="_blank" rel="noopener noreferrer" className="inline-flex shrink-0 items-center gap-1.5 text-xs text-emerald-300"><ExternalLink className="h-3.5 w-3.5"/>Open form</a></div>
-      <iframe src={ghlFormSrc} title="Jamaurs Notes" allow="clipboard-read; clipboard-write" className="h-[1100px] w-full border-0 bg-white"/>
+      <iframe src={ghlFormSrc} id="inline-z8ukWRRZMqJuuB8XcM8z" data-layout='{"id":"INLINE"}' data-form-name="Jamaurs Notes" data-layout-iframe-id="inline-z8ukWRRZMqJuuB8XcM8z" data-form-id="z8ukWRRZMqJuuB8XcM8z" data-cookie-consent="true" data-cookie-consent-provider="auto" title="Jamaurs Notes" allow="clipboard-read; clipboard-write" className="h-[1100px] w-full border-0 bg-white"/>
     </div>}
   </section>;
 }
