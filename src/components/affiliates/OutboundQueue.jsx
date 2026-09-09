@@ -40,7 +40,7 @@ function channelOf(draft) {
   return hit || 'ghl';
 }
 
-export default function OutboundQueue({ isDark, onReuse }) {
+export default function OutboundQueue({ isDark = true, onReuse }) {
   const [drafts, setDrafts] = useState([]);
   const [stats, setStats] = useState({});
   const [loading, setLoading] = useState(false);
@@ -95,7 +95,7 @@ export default function OutboundQueue({ isDark, onReuse }) {
   });
 
   return (
-    <div className={`rounded-xl ${isDark ? 'bg-[#0a0a0f] border border-purple-900/30' : 'bg-white border border-gray-200'}`}>
+    <div className={`overflow-hidden rounded-xl ${isDark ? 'bg-[#080d12] border border-cyan-500/15 shadow-inner shadow-black/20' : 'bg-white border border-gray-200'}`}>
       {/* Header */}
       <button
         onClick={() => setCollapsed(!collapsed)}
