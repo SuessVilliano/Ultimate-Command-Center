@@ -1,0 +1,135 @@
+import React, { useEffect, useState } from 'react';
+import { Briefcase, ExternalLink, Target, Users, TrendingUp, CalendarDays, BookOpen, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
+import AffiliateHub from '../components/affiliates/AffiliateHub';
+import ReactivationPortfolio from '../components/affiliates/ReactivationPortfolio';
+import AffiliateInteractionCapture from '../components/affiliates/AffiliateInteractionCapture';
+import AffiliateOpsFields from '../components/affiliates/AffiliateOpsFields';
+
+const WORK_LINKS = [
+  ['Affiliate Command Center (ACC)','https://expand-command-center.vercel.app/leadership#home','Open the Affiliate Command Center for leadership, sessions and partner operations','🧭'],
+  ['My Book','https://docs.google.com/spreadsheets/d/1FhqNEO_K2yvd9RAieCbMR42Wc2Pa5RdE59uvVXqYuNs/edit?gid=2031531288#gid=2031531288','Jamaur’s assigned affiliate book with notes, status, forecasting and performance data','📊'],
+  ['Gamification','https://docs.google.com/spreadsheets/d/12RGwzP7YAkr0aBrl3Ra40Xk7BvwaBTb9oo5ljFgrnpU/edit?gid=1207811217#gid=1207811217','Xavier-provided gamification tracker for offers, performance, completion and payouts','🎯'],
+  ['Trials Goals','https://docs.google.com/spreadsheets/d/12RGwzP7YAkr0aBrl3Ra40Xk7BvwaBTb9oo5ljFgrnpU/edit?gid=1673541902#gid=1673541902','Trial-goal workspace for setting and tracking affiliate production goals','📈'],
+  ['Affiliate SOPs','https://docs.google.com/spreadsheets/d/1DnYn1NCarQFWd-2LCt2QGP4LmPBXCoVbDEG4GiEWSVg/edit?gid=1220225360#gid=1220225360','Affiliate team procedures, operating guidance and reference material','📚'],
+  ['First Promoters','https://firstpromoter.com/login','Affiliate tracking, referrals and payouts','🚀'],
+  ['HighLevel','https://app.gohighlevel.com/','Product / platform workspace','⚡'],
+  ['HQ','https://support.leadconnectorhq.com/login','LeadConnector / HighLevel HQ','🏢'],
+  ['Twilio','https://www.twilio.com/login?g=%2Fconsole-zen%2Fhttps%3A%2F%2Fconsole.twilio.com%2F&t=2d94b9e4c79e07a34a2fac4a2be87b4517b42f35aa88738462dfee82b084af25','Twilio Console','📞'],
+  ['Gemini','https://gemini.google.com/gem/a3f972a495f7','Google Gemini AI','🌟'],
+  ['ChatGPT','https://chatgpt.com/g/g-68b6f4f1844881918c4892febc6e9a44-highlevel-support-agent','HighLevel GPT workspace','🤖'],
+  ['Google Calendar','https://calendar.google.com/calendar/u/0/r?cid=jamaur.johnson@gohighlevel.com&pli=1','Partner calls, internal meetings and events','📅'],
+  ['Weekly Affiliate Q&A','https://speakwith.us/affiliate-qa-page752776','Share this registration page with affiliates for the weekly sessions','🎙️'],
+  ['BambooHR','https://gohighlevel.bamboohr.com/home','HR portal','🎋'],
+  ['Slack','https://app.slack.com/client/E098GV8SRC2/GMBP6HAPM','GHL Slack workspace','💬'],
+  ['Knowledgebase','https://help.gohighlevel.com/support/home','HighLevel Help Center','📚'],
+  ['ClickUp','https://app.clickup.com','Project management','✅'],
+  ['ADP','https://workforcenow.adp.com/theme/index.html#/home','Payroll / workforce','💰'],
+  ['Darwinbox','https://gohighlevel.darwinbox.com/','Darwinbox HR','📦'],
+  ['Nifty','https://niftypm.com/','Canonical Affiliate Career tasks and project execution','🗂️'],
+  ['Affiliate Follow-Up Log','https://docs.google.com/document/d/18zpSQcsZ-D6DxdwUulCusrXr-kPwYUKE36G6bLZoo34/edit','Shared interaction log connected to the Nifty and TaskMagic workflow','📝'],
+  ['TaskMagic','https://app.taskmagic.com/','Route approved affiliate follow-ups and external automations','🪄'],
+];
+
+const AFFILIATE_APP_URL = 'https://expand-command-center.vercel.app/leadership#home';
+
+const LEGACY_SUPPORT_LINKS = [
+  ['Senior Zoom','https://us02web.zoom.us/j/3297827881','Legacy senior support team Zoom room','🎥'],
+  ['Freshdesk','https://gohighlevelassist.freshdesk.com/a/dashboard/default','Legacy Freshdesk dashboard','🎫'],
+  ['Fresh Chat','https://highlevel-team.freshchat.com/a/309618592266199/inbox/3/0','Legacy Freshchat inbox','🆘'],
+  ['Support Dashboard','https://docs.google.com/spreadsheets/d/1oD_dS_A4b3lNW7cWEdv6QYeb3zJakV_PoKweyhFgaNs/edit?pli=1&gid=1182538947#gid=1182538947','Legacy support Google Sheet','📊'],
+];
+
+const STORAGE = {
+  workToolsOpen: 'liv8_ghl_work_tools_open',
+  legacyOpen: 'liv8_ghl_legacy_links_open',
+  affiliateHubOpen: 'liv8_ghl_affiliate_hub_open',
+  affiliateAppOpen: 'liv8_ghl_affiliate_app_open',
+};
+
+function loadOpenState(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw == null ? fallback : raw === 'true';
+  } catch { return fallback; }
+}
+
+function QuickLink({ item }) {
+  const [name, url, description, icon] = item;
+  return <button
+    onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}
+    className="text-left rounded-xl border border-cyan-500/10 bg-[#080d10] p-4 hover:border-cyan-500/30 hover:bg-[#0b1317] transition-colors shadow-inner shadow-black/30"
+  >
+    <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center gap-2 min-w-0"><span className="text-lg" aria-hidden="true">{icon}</span><div className="font-semibold text-gray-100 truncate">{name}</div></div>
+      <ExternalLink className="w-4 h-4 text-cyan-700 shrink-0"/>
+    </div>
+    <div className="text-xs text-slate-500 mt-2">{description}</div>
+  </button>;
+}
+
+function CollapsibleHeader({ title, subtitle, open, onToggle, accent = 'text-cyan-400', icon: Icon }) {
+  return <button onClick={onToggle} className="w-full flex items-center justify-between gap-3 text-left">
+    <div className="min-w-0">
+      <div className="text-sm font-semibold text-gray-100 flex items-center gap-2">{Icon ? <Icon className={`w-4 h-4 ${accent}`}/> : null}{title}</div>
+      {subtitle ? <div className="text-xs text-slate-500 mt-1">{subtitle}</div> : null}
+    </div>
+    {open ? <ChevronUp className="w-4 h-4 text-cyan-700 shrink-0"/> : <ChevronDown className="w-4 h-4 text-cyan-700 shrink-0"/>}
+  </button>;
+}
+
+export default function AffiliateManagerPage(){
+  const [workToolsOpen, setWorkToolsOpen] = useState(() => loadOpenState(STORAGE.workToolsOpen, true));
+  const [legacyOpen, setLegacyOpen] = useState(() => loadOpenState(STORAGE.legacyOpen, false));
+  const [affiliateHubOpen, setAffiliateHubOpen] = useState(() => loadOpenState(STORAGE.affiliateHubOpen, true));
+  const [affiliateAppOpen, setAffiliateAppOpen] = useState(() => loadOpenState(STORAGE.affiliateAppOpen, true));
+  const [affiliateAppKey, setAffiliateAppKey] = useState(0);
+
+  useEffect(() => { try { localStorage.setItem(STORAGE.workToolsOpen, String(workToolsOpen)); } catch {} }, [workToolsOpen]);
+  useEffect(() => { try { localStorage.setItem(STORAGE.legacyOpen, String(legacyOpen)); } catch {} }, [legacyOpen]);
+  useEffect(() => { try { localStorage.setItem(STORAGE.affiliateHubOpen, String(affiliateHubOpen)); } catch {} }, [affiliateHubOpen]);
+  useEffect(() => { try { localStorage.setItem(STORAGE.affiliateAppOpen, String(affiliateAppOpen)); } catch {} }, [affiliateAppOpen]);
+
+  return <div className="space-y-5">
+    <section className="rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-[#071217] via-[#080c11] to-[#120b1b] p-5 shadow-xl shadow-black/20">
+      <div className="flex items-center gap-3">
+        <div className="w-11 h-11 rounded-xl border border-cyan-500/20 bg-cyan-500/10 grid place-items-center"><Briefcase className="w-5 h-5 text-cyan-300"/></div>
+        <div><div className="text-xs uppercase tracking-[.18em] text-cyan-300">GoHighLevel career</div><h1 className="text-2xl font-bold text-gray-100">Affiliate Manager OS</h1><p className="text-sm text-slate-500 mt-1">Deliverables first: book read, outreach, relationship signals, forecasting, CRM hygiene, trials and gamification reporting.</p></div>
+      </div>
+      <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-5"><P icon={Target} t="Forecast" d="Know what is moving the book and why"/><P icon={Users} t="Portfolio" d="Prioritize affiliates and preserve handoff context"/><P icon={TrendingUp} t="Movement" d="Track trials, replies, meetings and commitments"/><P icon={CalendarDays} t="Cadence" d="Keep weekly notes and next actions current"/></div>
+    </section>
+
+    <section className="overflow-hidden rounded-2xl border border-purple-500/25 bg-[#07090d] shadow-xl shadow-black/20">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-purple-500/15 p-4">
+        <CollapsibleHeader title="Affiliate Command Center (ACC)" subtitle="Full affiliate workspace embedded inside the GHL tab." open={affiliateAppOpen} onToggle={() => setAffiliateAppOpen(v => !v)} accent="text-purple-300" icon={Briefcase}/>
+        {affiliateAppOpen && <div className="ml-auto flex gap-2">
+          <button onClick={() => setAffiliateAppKey(v => v + 1)} className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/5"><RefreshCw className="h-3.5 w-3.5"/>Refresh</button>
+          <a href={AFFILIATE_APP_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-purple-500/25 px-3 py-2 text-xs text-purple-200 hover:bg-purple-500/10"><ExternalLink className="h-3.5 w-3.5"/>Open separately</a>
+        </div>}
+      </div>
+      {affiliateAppOpen && <iframe key={affiliateAppKey} src={AFFILIATE_APP_URL} title="Affiliate EXPAND Command Center" allow="microphone; clipboard-read; clipboard-write" referrerPolicy="strict-origin-when-cross-origin" className="h-[78vh] min-h-[720px] w-full border-0 bg-[#030305]"/>}
+    </section>
+
+    <section className="rounded-2xl border border-[#173039] bg-[#070c0f] p-4">
+      <CollapsibleHeader title="GHL Work Tools" subtitle="Quick access to employee tools and recurring AFM deliverables." open={workToolsOpen} onToggle={() => setWorkToolsOpen(v => !v)} />
+      {workToolsOpen && <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 mt-4">{WORK_LINKS.map(item => <QuickLink key={item[0]} item={item}/>)}</div>}
+    </section>
+
+    <section className="rounded-2xl border border-amber-500/15 bg-[#0d0d09] p-4">
+      <CollapsibleHeader title="Legacy Support Links" subtitle="Accessible when needed; no active ticket queues, alerts, SLAs, schedules or support tasks." open={legacyOpen} onToggle={() => setLegacyOpen(v => !v)} accent="text-amber-300" icon={BookOpen} />
+      {legacyOpen && <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-3">{LEGACY_SUPPORT_LINKS.map(item => <QuickLink key={item[0]} item={item}/>)}</div>}
+    </section>
+
+    <ReactivationPortfolio />
+    <AffiliateOpsFields />
+    <AffiliateInteractionCapture />
+
+    <section className="rounded-2xl border border-[#173039] bg-[#070c0f] p-4">
+      <CollapsibleHeader title="Affiliate Hub" subtitle="Partner portfolio, enablement and affiliate-management workspace." open={affiliateHubOpen} onToggle={() => setAffiliateHubOpen(v => !v)} />
+      {affiliateHubOpen && <div className="mt-4"><AffiliateHub/></div>}
+    </section>
+  </div>;
+}
+
+function P({icon:Icon,t,d}){
+  return <div className="rounded-xl border border-cyan-500/10 bg-[#080d10] p-3"><Icon className="w-4 h-4 text-cyan-300"/><div className="font-semibold text-gray-100 text-sm mt-2">{t}</div><div className="text-xs text-slate-500 mt-1">{d}</div></div>;
+}
