@@ -37,23 +37,8 @@ const CHANNELS = [
   { id: 'ghl',       label: 'GHL Broadcast', icon: Send }
 ];
 
-// Sample roster so the console is alive before GHL / First Promoters is connected.
-const SAMPLE_AFFILIATES = [
-  { id: 's1', name: 'Marcus Bell', email: 'marcus@growthlabs.io', phone: '+13055551201', tier: 'Gold', stage: 'top', source: 'First Promoters', referrals: 42, subAffiliates: 9, revenue: 18400, conversions: 63, clicks: 2100, lastActivity: '2026-08-25', joined: '2025-11-02',
-    activity: [{ t: '2026-08-25', ch: 'email', dir: 'out', text: 'Sent Q3 bonus tier update.' }, { t: '2026-08-24', ch: 'sms', dir: 'in', text: 'Two of my recruits just went live 🎉' }] },
-  { id: 's2', name: 'Priya Nair', email: 'priya.nair@mail.com', phone: '+447700900123', tier: 'Silver', stage: 'growing', source: 'First Promoters', referrals: 18, subAffiliates: 4, revenue: 6200, conversions: 24, clicks: 890, lastActivity: '2026-08-23', joined: '2026-01-14',
-    activity: [{ t: '2026-08-23', ch: 'instagram', dir: 'in', text: 'Can I get more creatives for reels?' }] },
-  { id: 's3', name: 'Diego Ramos', email: 'diego@rampartners.co', phone: '+5215555550199', tier: 'Silver', stage: 'activated', source: 'First Promoters', referrals: 5, subAffiliates: 1, revenue: 1450, conversions: 6, clicks: 320, lastActivity: '2026-08-20', joined: '2026-05-30',
-    activity: [{ t: '2026-08-20', ch: 'email', dir: 'out', text: 'Shared the affiliate playbook + swipe file.' }] },
-  { id: 's4', name: 'Chloe Winters', email: 'chloe.w@creators.tv', phone: '+13105550147', tier: 'Bronze', stage: 'onboarding', source: 'First Promoters', referrals: 0, subAffiliates: 0, revenue: 0, conversions: 0, clicks: 40, lastActivity: '2026-08-24', joined: '2026-08-18',
-    activity: [{ t: '2026-08-24', ch: 'whatsapp', dir: 'out', text: 'Welcome! Here is your link + tracking guide.' }] },
-  { id: 's5', name: 'Sam Okoye', email: 'sam.okoye@ventures.africa', phone: '+2348030000000', tier: 'Bronze', stage: 'applied', source: 'First Promoters', referrals: 0, subAffiliates: 0, revenue: 0, conversions: 0, clicks: 0, lastActivity: '2026-08-26', joined: '2026-08-26',
-    activity: [{ t: '2026-08-26', ch: 'email', dir: 'in', text: 'Just applied — excited to promote!' }] },
-  { id: 's6', name: 'Hannah Lee', email: 'hannah@leemedia.com', phone: '+821000000000', tier: 'Gold', stage: 'at_risk', source: 'First Promoters', referrals: 27, subAffiliates: 6, revenue: 9100, conversions: 31, clicks: 1500, lastActivity: '2026-07-12', joined: '2025-09-10',
-    activity: [{ t: '2026-07-12', ch: 'sms', dir: 'out', text: 'Checking in — haven\'t seen activity in a few weeks.' }] },
-  { id: 's7', name: 'Tobias Fenn', email: 'tobias@fennreach.io', phone: '+491700000000', tier: 'Prospect', stage: 'prospect', source: 'Outreach', referrals: 0, subAffiliates: 0, revenue: 0, conversions: 0, clicks: 0, lastActivity: '2026-08-19', joined: '—',
-    activity: [{ t: '2026-08-19', ch: 'instagram', dir: 'out', text: 'DM\'d about the affiliate program.' }] }
-];
+const BOOK_STORAGE_KEY = 'liv8_ghl_reactivation_book_v1';
+const BOOK_UPDATED_EVENT = 'liv8:affiliate-book-updated';
 
 const TIER_COLORS = {
   Gold: 'text-yellow-400 bg-yellow-500/15',
@@ -73,6 +58,44 @@ function daysSince(dateStr) {
   const d = new Date(dateStr);
   if (isNaN(d)) return null;
   return Math.floor((Date.now() - d.getTime()) / 86400000);
+}
+
+function bookStage(row) {
+  const status = String(row.activeStatus || '').toLowerCase();
+  if (row.stopOutreach || /do not pursue|inactive|needs attention/.test(status)) return 'at_risk';
+  if (/reactivation/.test(status)) return 'prospect';
+  if ((row.currQ || 0) > 0 || (row.mtd || 0) > 0) return 'growing';
+  return 'activated';
+}
+
+function bookToAffiliate(row) {
+  const award = String(row.award || '');
+  const tier = /gold/i.test(award) ? 'Gold' : /silver/i.test(award) ? 'Silver' : /bronze/i.test(award) ? 'Bronze' : 'Prospect';
+  return {
+    id: row.id,
+    promoterId: row.id,
+    name: row.name || row.email || 'Unknown',
+    email: row.email || '', phone: '', tier,
+    stage: bookStage(row), source: 'My Book',
+    referrals: row.lifetime || 0,
+    subAffiliates: 0,
+    revenue: row.lastMrr || 0,
+    conversions: row.currQ || 0,
+    clicks: 0,
+    lastActivity: '', joined: '',
+    tags: [row.activeStatus, row.endorsement, row.niche].filter(Boolean),
+    activity: row.story ? [{ t: '', ch: 'ghl', dir: 'in', text: row.story }] : [],
+    book: row
+  };
+}
+
+function readMyBook() {
+  try {
+    const rows = JSON.parse(sessionStorage.getItem(BOOK_STORAGE_KEY) || '[]');
+    return Array.isArray(rows) ? rows.map(bookToAffiliate).filter(a => a.id) : [];
+  } catch {
+    return [];
+  }
 }
 
 // Map a GHL contact into our affiliate shape (best-effort; GHL schemas vary by account).
@@ -106,7 +129,7 @@ function contactToAffiliate(c) {
 
 export default function AffiliateHub({ isDark, currentUser, aiServerStatus, onOpenSettings }) {
   const [affiliates, setAffiliates] = useState([]);
-  const [usingSample, setUsingSample] = useState(false);
+  const [dataSource, setDataSource] = useState('none');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
@@ -135,10 +158,17 @@ export default function AffiliateHub({ isDark, currentUser, aiServerStatus, onOp
 
   const aiOnline = aiServerStatus === 'online';
 
-  // ── Load affiliates (GHL contacts → fallback sample) ──
+  // ── Load affiliates (the imported assigned book is authoritative) ──
   const loadAffiliates = async () => {
     setLoading(true);
     setError(null);
+    const book = readMyBook();
+    if (book.length > 0) {
+      setAffiliates(book);
+      setDataSource('book');
+      setLoading(false);
+      return;
+    }
     try {
       const res = await fetch(`${API_URL}/api/ghl/contacts?limit=100`);
       if (res.ok) {
@@ -147,23 +177,26 @@ export default function AffiliateHub({ isDark, currentUser, aiServerStatus, onOp
         const mapped = (raw || []).map(contactToAffiliate).filter(a => a.id);
         if (mapped.length > 0) {
           setAffiliates(mapped);
-          setUsingSample(false);
+          setDataSource('ghl');
           setLoading(false);
           return;
         }
       }
-      // No live data → sample roster.
-      setAffiliates(SAMPLE_AFFILIATES);
-      setUsingSample(true);
+      setAffiliates([]);
+      setDataSource('none');
     } catch (e) {
-      setAffiliates(SAMPLE_AFFILIATES);
-      setUsingSample(true);
+      setAffiliates([]);
+      setDataSource('none');
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { loadAffiliates(); }, []);
+  useEffect(() => {
+    loadAffiliates();
+    window.addEventListener(BOOK_UPDATED_EVENT, loadAffiliates);
+    return () => window.removeEventListener(BOOK_UPDATED_EVENT, loadAffiliates);
+  }, []);
   useEffect(() => { if (toast) { const t = setTimeout(() => setToast(''), 2500); return () => clearTimeout(t); } }, [toast]);
 
   const selected = affiliates.find(a => a.id === selectedId) || null;
@@ -397,9 +430,14 @@ Match the channel: SMS/DM = short and casual, Email = subject-worthy and structu
             <div className={`w-2 h-2 rounded-full ${aiOnline ? 'bg-green-500' : aiServerStatus === 'no-key' ? 'bg-yellow-500' : 'bg-red-500'}`} />
             {aiOnline ? 'AI Online' : aiServerStatus === 'no-key' ? 'No API Key' : 'AI Offline'}
           </div>
-          {usingSample && (
+          {dataSource === 'book' && (
             <span className={`text-xs px-3 py-1.5 rounded-lg ${isDark ? 'bg-purple-500/15 text-purple-300' : 'bg-purple-100 text-purple-700'}`}>
-              Sample roster — connect GHL / First Promoters in Settings
+              My Book — {affiliates.length} assigned affiliates
+            </span>
+          )}
+          {dataSource === 'none' && (
+            <span className={`text-xs px-3 py-1.5 rounded-lg ${isDark ? 'bg-yellow-500/15 text-yellow-300' : 'bg-yellow-100 text-yellow-800'}`}>
+              No portfolio loaded — import My Book above
             </span>
           )}
         </div>
