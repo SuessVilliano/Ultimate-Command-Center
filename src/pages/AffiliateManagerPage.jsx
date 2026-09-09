@@ -3,11 +3,14 @@ import { Briefcase, ExternalLink, Target, Users, TrendingUp, CalendarDays, BookO
 import AffiliateHub from '../components/affiliates/AffiliateHub';
 import ReactivationPortfolio from '../components/affiliates/ReactivationPortfolio';
 import AffiliateInteractionCapture from '../components/affiliates/AffiliateInteractionCapture';
+import AffiliateOpsFields from '../components/affiliates/AffiliateOpsFields';
 
 const WORK_LINKS = [
   ['Affiliate Command Center (ACC)','https://expand-command-center.vercel.app/leadership#home','Open the Affiliate Command Center for leadership, sessions and partner operations','🧭'],
   ['My Book','https://docs.google.com/spreadsheets/d/1FhqNEO_K2yvd9RAieCbMR42Wc2Pa5RdE59uvVXqYuNs/edit?gid=2031531288#gid=2031531288','Jamaur’s assigned affiliate book with notes, status, forecasting and performance data','📊'],
-  ['Affiliate SOPs','https://docs.google.com/spreadsheets/d/1DnYn1NCarQFWd-2LCt2QGP4LmPBXCoVbDEG4GiEWSVg/edit?gid=1220225360#gid=1220225360','Affiliate team procedures, operating guidance and reference material','📈'],
+  ['Gamification','https://docs.google.com/spreadsheets/d/12RGwzP7YAkr0aBrl3Ra40Xk7BvwaBTb9oo5ljFgrnpU/edit?gid=1207811217#gid=1207811217','Xavier-provided gamification tracker for offers, performance, completion and payouts','🎯'],
+  ['Trials Goals','https://docs.google.com/spreadsheets/d/12RGwzP7YAkr0aBrl3Ra40Xk7BvwaBTb9oo5ljFgrnpU/edit?gid=1673541902#gid=1673541902','Trial-goal workspace for setting and tracking affiliate production goals','📈'],
+  ['Affiliate SOPs','https://docs.google.com/spreadsheets/d/1DnYn1NCarQFWd-2LCt2QGP4LmPBXCoVbDEG4GiEWSVg/edit?gid=1220225360#gid=1220225360','Affiliate team procedures, operating guidance and reference material','📚'],
   ['First Promoters','https://firstpromoter.com/login','Affiliate tracking, referrals and payouts','🚀'],
   ['HighLevel','https://app.gohighlevel.com/','Product / platform workspace','⚡'],
   ['HQ','https://support.leadconnectorhq.com/login','LeadConnector / HighLevel HQ','🏢'],
@@ -90,38 +93,24 @@ export default function AffiliateManagerPage(){
     <section className="rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-[#071217] via-[#080c11] to-[#120b1b] p-5 shadow-xl shadow-black/20">
       <div className="flex items-center gap-3">
         <div className="w-11 h-11 rounded-xl border border-cyan-500/20 bg-cyan-500/10 grid place-items-center"><Briefcase className="w-5 h-5 text-cyan-300"/></div>
-        <div><div className="text-xs uppercase tracking-[.18em] text-cyan-300">GoHighLevel career</div><h1 className="text-2xl font-bold text-gray-100">Affiliate Manager OS</h1><p className="text-sm text-slate-500 mt-1">Partner growth, portfolio management, enablement, product mastery, reporting, events and relationship development.</p></div>
+        <div><div className="text-xs uppercase tracking-[.18em] text-cyan-300">GoHighLevel career</div><h1 className="text-2xl font-bold text-gray-100">Affiliate Manager OS</h1><p className="text-sm text-slate-500 mt-1">Deliverables first: book read, outreach, relationship signals, forecasting, CRM hygiene, trials and gamification reporting.</p></div>
       </div>
-      <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-5"><P icon={Target} t="Scorecard" d="Know the role metrics and promotion path"/><P icon={Users} t="Portfolio" d="Prioritize partners and next best actions"/><P icon={TrendingUp} t="Growth" d="Enable partners and grow referred revenue"/><P icon={CalendarDays} t="Cadence" d="Run outreach, reviews, follow-ups and events"/></div>
+      <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-5"><P icon={Target} t="Forecast" d="Know what is moving the book and why"/><P icon={Users} t="Portfolio" d="Prioritize affiliates and preserve handoff context"/><P icon={TrendingUp} t="Movement" d="Track trials, replies, meetings and commitments"/><P icon={CalendarDays} t="Cadence" d="Keep weekly notes and next actions current"/></div>
     </section>
 
     <section className="overflow-hidden rounded-2xl border border-purple-500/25 bg-[#07090d] shadow-xl shadow-black/20">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-purple-500/15 p-4">
-        <CollapsibleHeader
-          title="Affiliate Command Center (ACC)"
-          subtitle="Full affiliate workspace embedded inside the GHL tab."
-          open={affiliateAppOpen}
-          onToggle={() => setAffiliateAppOpen(v => !v)}
-          accent="text-purple-300"
-          icon={Briefcase}
-        />
+        <CollapsibleHeader title="Affiliate Command Center (ACC)" subtitle="Full affiliate workspace embedded inside the GHL tab." open={affiliateAppOpen} onToggle={() => setAffiliateAppOpen(v => !v)} accent="text-purple-300" icon={Briefcase}/>
         {affiliateAppOpen && <div className="ml-auto flex gap-2">
           <button onClick={() => setAffiliateAppKey(v => v + 1)} className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/5"><RefreshCw className="h-3.5 w-3.5"/>Refresh</button>
           <a href={AFFILIATE_APP_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-purple-500/25 px-3 py-2 text-xs text-purple-200 hover:bg-purple-500/10"><ExternalLink className="h-3.5 w-3.5"/>Open separately</a>
         </div>}
       </div>
-      {affiliateAppOpen && <iframe
-        key={affiliateAppKey}
-        src={AFFILIATE_APP_URL}
-        title="Affiliate EXPAND Command Center"
-        allow="microphone; clipboard-read; clipboard-write"
-        referrerPolicy="strict-origin-when-cross-origin"
-        className="h-[78vh] min-h-[720px] w-full border-0 bg-[#030305]"
-      />}
+      {affiliateAppOpen && <iframe key={affiliateAppKey} src={AFFILIATE_APP_URL} title="Affiliate EXPAND Command Center" allow="microphone; clipboard-read; clipboard-write" referrerPolicy="strict-origin-when-cross-origin" className="h-[78vh] min-h-[720px] w-full border-0 bg-[#030305]"/>}
     </section>
 
     <section className="rounded-2xl border border-[#173039] bg-[#070c0f] p-4">
-      <CollapsibleHeader title="GHL Work Tools" subtitle="Quick access to employee tools. Collapse this when you want a cleaner workspace." open={workToolsOpen} onToggle={() => setWorkToolsOpen(v => !v)} />
+      <CollapsibleHeader title="GHL Work Tools" subtitle="Quick access to employee tools and recurring AFM deliverables." open={workToolsOpen} onToggle={() => setWorkToolsOpen(v => !v)} />
       {workToolsOpen && <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 mt-4">{WORK_LINKS.map(item => <QuickLink key={item[0]} item={item}/>)}</div>}
     </section>
 
@@ -131,7 +120,7 @@ export default function AffiliateManagerPage(){
     </section>
 
     <ReactivationPortfolio />
-
+    <AffiliateOpsFields />
     <AffiliateInteractionCapture />
 
     <section className="rounded-2xl border border-[#173039] bg-[#070c0f] p-4">
