@@ -56,6 +56,9 @@ function AppContent() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try { return localStorage.getItem('liv8_sidebar_collapsed') === '1'; } catch { return false; }
   });
+  const [twinRailExpanded, setTwinRailExpanded] = useState(() => {
+    try { return localStorage.getItem('liv8_twin_expanded_v1') !== '0'; } catch { return true; }
+  });
   const [dictationOpen, setDictationOpen] = useState(false);
   const isDark = theme === 'dark';
 
@@ -133,8 +136,8 @@ function AppContent() {
       `}</style>
       <MobileMenuButton onClick={toggleSidebar} isDark={isDark} />
       <Sidebar activePage={activePage} setActivePage={setActivePage} isOpen={sidebarOpen} onToggle={toggleSidebar} collapsed={sidebarCollapsed} onCollapse={toggleSidebarCollapsed} />
-      <main className={`flex-1 ${sidebarCollapsed ? 'lg:ml-20' : 'lg:ml-64'} p-4 sm:p-6 lg:p-8 pt-20 lg:pt-8 min-h-screen xl:pr-[390px] transition-[margin] duration-300`}>{renderPage()}</main>
-      <GodViewRail activePage={activePage} onNavigate={handleNavigate} />
+      <main className={`flex-1 ${sidebarCollapsed ? 'lg:ml-20' : 'lg:ml-64'} p-4 sm:p-6 lg:p-8 pt-20 lg:pt-8 min-h-screen ${twinRailExpanded ? 'xl:pr-[390px]' : 'xl:pr-[96px]'} transition-all duration-300`}>{renderPage()}</main>
+      <GodViewRail activePage={activePage} onNavigate={handleNavigate} onExpandedChange={setTwinRailExpanded} />
       <ChatWidget onNavigate={handleNavigate} />
       <button onClick={() => setDictationOpen(true)} className={`fixed bottom-6 left-6 ${sidebarCollapsed ? 'lg:left-[104px]' : 'lg:left-[280px]'} z-[70] p-3.5 rounded-full shadow-xl transition-all hover:scale-110 bg-gradient-to-br from-green-500 to-cyan-500 text-white ring-1 ring-white/20 hover:shadow-green-500/30`} title="LIV8 Voice Router — speak once, send anywhere" aria-label="Open LIV8 Voice Router">
         <svg xmlns="http://www.w3.org/2000/svg" width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>

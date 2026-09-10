@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, Bell, BellRing, Brain, CalendarDays, ChevronDown, ChevronUp, Eye, EyeOff, Heart, RefreshCw, ShieldAlert, Sparkles, Target, TrendingUp, Zap } from 'lucide-react';
+import { Activity, Bell, BellRing, Brain, CalendarDays, ChevronLeft, ChevronRight, Eye, EyeOff, Heart, RefreshCw, ShieldAlert, Sparkles, Target, TrendingUp, Zap } from 'lucide-react';
 import { API_URL } from '../config';
 import * as hs from '../services/highestSelfService';
 import digitalTwinJamaur from '../assets/digitalTwinJamaurFull';
@@ -32,7 +32,7 @@ function Metric({ label, value, suffix = '', icon: Icon, score, source = 'Live d
   </div>;
 }
 
-export default function GodViewRail({ activePage, onNavigate }) {
+export default function GodViewRail({ activePage, onNavigate, onExpandedChange }) {
   const [oura, setOura] = useState(null);
   const [health, setHealth] = useState(null);
   const [intel, setIntel] = useState(null);
@@ -45,6 +45,10 @@ export default function GodViewRail({ activePage, onNavigate }) {
   const [twinExpanded, setTwinExpanded] = useState(() => {
     try { return localStorage.getItem(LS_TWIN_EXPANDED) !== '0'; } catch { return true; }
   });
+
+  useEffect(() => {
+    onExpandedChange?.(twinExpanded);
+  }, [twinExpanded, onExpandedChange]);
 
   const toggleTwin = () => {
     setTwinVisible(v => {
@@ -134,7 +138,7 @@ export default function GodViewRail({ activePage, onNavigate }) {
   const healthSource = health ? 'Health OS' : 'Health unavailable';
   const intelSource = intel ? 'Juno' : 'Juno unavailable';
 
-  return <aside data-testid="god-view-rail" className="hidden 2xl:flex fixed top-6 right-6 bottom-6 w-[360px] z-30 flex-col gap-3 overflow-y-auto overscroll-contain pr-1 pb-6">
+  return <aside data-testid="god-view-rail" data-expanded={twinExpanded ? 'true' : 'false'} className={`hidden 2xl:flex fixed top-6 right-6 bottom-6 z-30 flex-col gap-3 overflow-y-auto overscroll-contain pb-6 transition-[width] duration-300 ${twinExpanded ? 'w-[360px] pr-1' : 'w-[64px]'}`}>
     <style>{`
       @keyframes metaSvFloat { 0%,100% { transform: translate3d(0,0,0) scale(1); } 50% { transform: translate3d(0,-7px,0) scale(1.008); } }
       @keyframes metaSvGlow { 0%,100% { transform: scale(.94); opacity: .45; } 50% { transform: scale(1.07); opacity: 1; } }
@@ -144,22 +148,34 @@ export default function GodViewRail({ activePage, onNavigate }) {
       }
     `}</style>
 
-    <section className="rounded-2xl border border-purple-500/25 bg-[#0b0c13]/95 shadow-2xl shadow-purple-950/20 overflow-hidden backdrop-blur-xl">
-      <div className="p-4 flex items-center justify-between gap-2 border-b border-white/10">
-        <div>
-          <div className="text-[10px] uppercase tracking-[.18em] text-purple-300">Live Digital Twin</div>
-          <div className="font-semibold text-white">{TWIN_NAME}</div>
-          <div className="mt-0.5 text-[9px] uppercase tracking-[.16em] text-cyan-400/70">{liveState} • source-aware operator twin</div>
+    {!twinExpanded ? (
+      <button
+        onClick={toggleExpanded}
+        className="w-full rounded-2xl border border-purple-500/25 bg-[#0b0c13]/95 shadow-2xl shadow-purple-950/20 backdrop-blur-xl px-2 py-3 flex flex-col items-center gap-3 text-gray-300 hover:bg-white/[0.06] transition-colors"
+        title="Expand Digital Twin"
+        aria-label="Expand Digital Twin"
+      >
+        <ChevronLeft className="w-4 h-4 text-purple-300" />
+        <div className="w-9 h-9 rounded-xl border border-cyan-400/20 bg-cyan-400/[0.06] grid place-items-center text-[10px] font-semibold text-cyan-300">SV</div>
+        <div className={`w-2.5 h-2.5 rounded-full ${highCount ? 'bg-rose-400' : loading ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'}`} />
+        {momentum != null && <div className="text-xs font-bold text-white">{momentum}</div>}
+      </button>
+    ) : <>
+      <section className="rounded-2xl border border-purple-500/25 bg-[#0b0c13]/95 shadow-2xl shadow-purple-950/20 overflow-hidden backdrop-blur-xl">
+        <div className="p-4 flex items-center justify-between gap-2 border-b border-white/10">
+          <div>
+            <div className="text-[10px] uppercase tracking-[.18em] text-purple-300">Live Digital Twin</div>
+            <div className="font-semibold text-white">{TWIN_NAME}</div>
+            <div className="mt-0.5 text-[9px] uppercase tracking-[.16em] text-cyan-400/70">{liveState} • source-aware operator twin</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={toggleTwin} className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400" title={twinVisible ? 'Hide META SV avatar' : 'Show META SV avatar'} aria-label={twinVisible ? 'Hide META SV avatar' : 'Show META SV avatar'}>{twinVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}</button>
+            <button onClick={toggleExpanded} className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400" title="Collapse Digital Twin rail" aria-label="Collapse Digital Twin rail"><ChevronRight className="w-4 h-4" /></button>
+            <SyncAllButton compact />
+            <button onClick={() => refresh()} className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400" title="Refresh live view"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={toggleTwin} className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400" title={twinVisible ? 'Hide META SV avatar' : 'Show META SV avatar'} aria-label={twinVisible ? 'Hide META SV avatar' : 'Show META SV avatar'}>{twinVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}</button>
-          <button onClick={toggleExpanded} className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400" title={twinExpanded ? 'Minimize META SV' : 'Expand META SV'} aria-label={twinExpanded ? 'Minimize META SV' : 'Expand META SV'}>{twinExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}</button>
-          <SyncAllButton compact />
-          <button onClick={() => refresh()} className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400" title="Refresh live view"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button>
-        </div>
-      </div>
 
-      {twinExpanded && <>
         {twinVisible && <>
           <div className="relative h-[350px] min-h-[350px] bg-gradient-to-b from-cyan-950/10 via-[#070b14] to-black overflow-hidden">
             <div className="meta-sv-glow absolute left-1/2 bottom-7 -translate-x-1/2 w-56 h-20 rounded-[100%] blur-3xl bg-cyan-400/30 pointer-events-none" style={{ animation: `metaSvGlow ${motionDuration * .72}s ease-in-out infinite`, opacity: glowOpacity }} />
@@ -188,20 +204,20 @@ export default function GodViewRail({ activePage, onNavigate }) {
           <button onClick={() => onNavigate?.('health-os')} className="text-left p-3 rounded-xl border border-pink-500/15 bg-pink-500/[.04]"><div className="text-[9px] uppercase text-pink-300/70">Total cholesterol <span className="text-gray-600">• Health OS</span></div><div className="text-lg font-bold text-white">{labValue('total_cholesterol') ?? '—'} <span className="text-[9px] text-gray-500">mg/dL</span></div></button>
           <button onClick={() => onNavigate?.('health-os')} className="text-left p-3 rounded-xl border border-violet-500/15 bg-violet-500/[.04]"><div className="text-[9px] uppercase text-violet-300/70">LDL <span className="text-gray-600">• Health OS</span></div><div className="text-lg font-bold text-white">{labValue('ldl') ?? '—'} <span className="text-[9px] text-gray-500">mg/dL</span></div></button>
         </div>}
-      </>}
-    </section>
+      </section>
 
-    <section className="rounded-2xl border border-white/10 bg-[#0b0c13]/95 backdrop-blur-xl overflow-hidden">
-      <div className="p-4 flex items-center justify-between border-b border-white/10">
-        <div className="flex items-center gap-2"><BellRing className="w-4 h-4 text-amber-300" /><div><div className="font-semibold text-white text-sm">Signal Center</div><div className="text-[10px] text-gray-500">Everything changes here first.</div></div></div>
-        {permission !== 'granted' && permission !== 'unsupported' && <button onClick={allowNotifications} className="text-[10px] px-2 py-1 rounded-md border border-amber-500/20 text-amber-300 hover:bg-amber-500/10"><Bell className="w-3 h-3 inline mr-1" />Notify me</button>}
-      </div>
-      <div className="p-3 space-y-2 max-h-[310px] overflow-y-auto">
-        {!signals.length && <div className="p-4 text-center text-xs text-gray-500">No urgent signal right now. Juno is still watching.</div>}
-        {signals.map(s => <div key={signalKey(s)} className={`p-3 rounded-xl border ${s.severity === 'high' ? 'border-rose-500/20 bg-rose-500/[.05]' : s.severity === 'medium' ? 'border-amber-500/15 bg-amber-500/[.04]' : 'border-white/10 bg-white/[.025]'}`}>
-          <div className="flex gap-2"><div className="mt-0.5">{s.severity === 'high' ? <ShieldAlert className="w-4 h-4 text-rose-300" /> : s.type === 'opportunity' ? <Sparkles className="w-4 h-4 text-cyan-300" /> : <CalendarDays className="w-4 h-4 text-gray-400" />}</div><div className="text-xs leading-5 text-gray-300">{s.text}</div></div>
-        </div>)}
-      </div>
-    </section>
+      <section className="rounded-2xl border border-white/10 bg-[#0b0c13]/95 backdrop-blur-xl overflow-hidden">
+        <div className="p-4 flex items-center justify-between border-b border-white/10">
+          <div className="flex items-center gap-2"><BellRing className="w-4 h-4 text-amber-300" /><div><div className="font-semibold text-white text-sm">Signal Center</div><div className="text-[10px] text-gray-500">Everything changes here first.</div></div></div>
+          {permission !== 'granted' && permission !== 'unsupported' && <button onClick={allowNotifications} className="text-[10px] px-2 py-1 rounded-md border border-amber-500/20 text-amber-300 hover:bg-amber-500/10"><Bell className="w-3 h-3 inline mr-1" />Notify me</button>}
+        </div>
+        <div className="p-3 space-y-2 max-h-[310px] overflow-y-auto">
+          {!signals.length && <div className="p-4 text-center text-xs text-gray-500">No urgent signal right now. Juno is still watching.</div>}
+          {signals.map(s => <div key={signalKey(s)} className={`p-3 rounded-xl border ${s.severity === 'high' ? 'border-rose-500/20 bg-rose-500/[.05]' : s.severity === 'medium' ? 'border-amber-500/15 bg-amber-500/[.04]' : 'border-white/10 bg-white/[.025]'}`}>
+            <div className="flex gap-2"><div className="mt-0.5">{s.severity === 'high' ? <ShieldAlert className="w-4 h-4 text-rose-300" /> : s.type === 'opportunity' ? <Sparkles className="w-4 h-4 text-cyan-300" /> : <CalendarDays className="w-4 h-4 text-gray-400" />}</div><div className="text-xs leading-5 text-gray-300">{s.text}</div></div>
+          </div>)}
+        </div>
+      </section>
+    </>}
   </aside>;
 }
