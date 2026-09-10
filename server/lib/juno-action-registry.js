@@ -35,6 +35,46 @@ function parseTrade(message) {
   };
 }
 
+function parseClock(text, fallbackHour = 9) {
+  const m = text.match(/\b(1[0-2]|0?\d)(?::([0-5]\d))?\s*(am|pm)\b/i);
+  if (!m) return { hour: fallbackHour, minute: 0, matched: '' };
+  let hour = Number(m[1]) % 12;
+  if (m[3].toLowerCase() === 'pm') hour += 12;
+  return { hour, minute: Number(m[2] || 0), matched: m[0] };
+}
+
+function parseCalendar(message) {
+  const now = new Date();
+  let day = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (/\btomorrow\b/i.test(message)) day.setDate(day.getDate() + 1);
+  const isoDate = message.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/);
+  if (isoDate) day = new Date(Number(isoDate[1]), Number(isoDate[2]) - 1, Number(isoDate[3]));
+  const slashDate = message.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(20\d{2}|\d{2}))?\b/);
+  if (slashDate) {
+    const yearRaw = slashDate[3];
+    const year = yearRaw ? (yearRaw.length === 2 ? 2000 + Number(yearRaw) : Number(yearRaw)) : now.getFullYear();
+    day = new Date(year, Number(slashDate[1]) - 1, Number(slashDate[2]));
+  }
+  const times = [...message.matchAll(/\b(1[0-2]|0?\d)(?::([0-5]\d))?\s*(am|pm)\b/ig)];
+  const first = parseClock(message, 9);
+  const start = new Date(day); start.setHours(first.hour, first.minute, 0, 0);
+  let end = new Date(start.getTime() + 60 * 60 * 1000);
+  if (times.length > 1) {
+    const raw = times[1][0]; const second = parseClock(raw, first.hour + 1);
+    end = new Date(day); end.setHours(second.hour, second.minute, 0, 0);
+    if (end <= start) end.setDate(end.getDate() + 1);
+  }
+  const summary = clean(message
+    .replace(/^.*?\b(?:add|create|schedule|put)\b\s*/i, '')
+    .replace(/\b(?:to|on|in)\s+(?:my\s+)?(?:google\s+)?calendar\b/ig, '')
+    .replace(/\b(today|tomorrow)\b/ig, '')
+    .replace(/\b20\d{2}-\d{2}-\d{2}\b/g, '')
+    .replace(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/g, '')
+    .replace(/\b(?:from|at|until|to)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/ig, '')
+    .replace(/\s+/g, ' '), 240) || 'Command Center event';
+  return { summary, start: start.toISOString(), end: end.toISOString(), description: 'Created from LIV8 Command Center' };
+}
+
 export function resolveAction(message = '', requestedAction, requestedParams = {}) {
   const text = clean(message);
   if (requestedAction) return { name: clean(requestedAction, 120), params: requestedParams || {}, confidence: 1, explicit: true };
@@ -48,6 +88,9 @@ export function resolveAction(message = '', requestedAction, requestedParams = {
   if (/\b(?:add|create|make)\b.*\b(?:task|to-?do)\b/i.test(text)) {
     const title = restAfter(text, /^.*?\b(?:task|to-?do)\b/i).replace(/\s+(?:in|to)\s+(?:my\s+)?[\w -]+?\s+project\b.*$/i, '').trim();
     return { name: 'nifty.task.create', params: { title, projectId: requestedParams.projectId || null, projectName: projectFrom(text) }, confidence: .82 };
+  }
+  if (/\b(?:add|create|schedule|put)\b.*\b(?:calendar|event|appointment|meeting)\b/i.test(text)) {
+    return { name: 'calendar.create', params: { ...parseCalendar(text), ...requestedParams }, confidence: .91 };
   }
   if (/\b(?:start|begin)\b.*\b(?:obs\s+)?record/i.test(text)) return { name: 'obs.record.start', params: {}, confidence: .95 };
   if (/\b(?:stop|end)\b.*\b(?:obs\s+)?record/i.test(text)) return { name: 'obs.record.stop', params: {}, confidence: .95 };
@@ -104,8 +147,8 @@ const definitions = [
   { name: 'obs.record.start', policy: ACTION_POLICIES.AUTO_TASK_WRITE, execute: p => externalJson(process.env.OBS_BRIDGE_URL && `${process.env.OBS_BRIDGE_URL.replace(/\/$/, '')}/record/start`, p, process.env.OBS_BRIDGE_KEY ? { Authorization: `Bearer ${process.env.OBS_BRIDGE_KEY}` } : {}) },
   { name: 'obs.record.stop', policy: ACTION_POLICIES.AUTO_TASK_WRITE, execute: p => externalJson(process.env.OBS_BRIDGE_URL && `${process.env.OBS_BRIDGE_URL.replace(/\/$/, '')}/record/stop`, p, process.env.OBS_BRIDGE_KEY ? { Authorization: `Bearer ${process.env.OBS_BRIDGE_KEY}` } : {}) },
   { name: 'obs.scene.switch', policy: ACTION_POLICIES.AUTO_TASK_WRITE, required: ['sceneName'], execute: p => externalJson(process.env.OBS_BRIDGE_URL && `${process.env.OBS_BRIDGE_URL.replace(/\/$/, '')}/scene`, p, process.env.OBS_BRIDGE_KEY ? { Authorization: `Bearer ${process.env.OBS_BRIDGE_KEY}` } : {}) },
-  { name: 'calendar.create', policy: ACTION_POLICIES.CONFIRM, required: ['summary', 'start', 'end'], execute: p => externalJson(process.env.CALENDAR_WRITE_ADAPTER_URL, p, process.env.CALENDAR_WRITE_ADAPTER_KEY ? { Authorization: `Bearer ${process.env.CALENDAR_WRITE_ADAPTER_KEY}` } : {}) },
-  { name: 'gmail.send', policy: ACTION_POLICIES.CONFIRM, required: ['to', 'subject', 'body'], execute: p => externalJson(process.env.GMAIL_SEND_ADAPTER_URL, p, process.env.GMAIL_SEND_ADAPTER_KEY ? { Authorization: `Bearer ${process.env.GMAIL_SEND_ADAPTER_KEY}` } : {}) },
+  { name: 'calendar.create', policy: ACTION_POLICIES.CONFIRM, required: ['summary', 'start', 'end'], execute: p => localFetch('/api/connectors/calendar/events', { method: 'POST', body: p }) },
+  { name: 'gmail.send', policy: ACTION_POLICIES.CONFIRM, required: ['to', 'subject', 'body'], execute: p => localFetch('/api/connectors/gmail/send', { method: 'POST', body: p }) },
   { name: 'github.patch', policy: ACTION_POLICIES.REPORT_AFTER_WRITE, required: ['repository', 'patch'], execute: p => externalJson(process.env.GITHUB_WRITE_ADAPTER_URL, p, process.env.GITHUB_WRITE_ADAPTER_KEY ? { Authorization: `Bearer ${process.env.GITHUB_WRITE_ADAPTER_KEY}` } : {}) },
   { name: 'hybrid.trade.preview', policy: ACTION_POLICIES.AUTO_READ, execute: p => localFetch('/api/trading/hybrid-journal/order-preview', { method: 'POST', body: p }) },
   { name: 'hybrid.trade.paper', policy: ACTION_POLICIES.AUTO_TASK_WRITE, execute: p => localFetch('/api/trading/hybrid-journal/order-paper', { method: 'POST', body: { ...p, mode: 'paper' } }) },
