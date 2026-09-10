@@ -129,7 +129,7 @@ jobs:
 
           echo '--- Trading Guardian ---'
           curl -fsS http://127.0.0.1:3005/api/trading/guardian/status | tee /tmp/guardian-status.json
-          grep -q '"executionAllowed":false' /tmp/guardian-status.json
+          grep -q '"liveExecutionAllowed":false' /tmp/guardian-status.json
           curl -fsS -X POST http://127.0.0.1:3005/api/trading/guardian/evaluate -H 'Content-Type: application/json' -d '{"symbol":"MNQ","signalGrade":"A+","confidence":90,"qqeScore":12,"bias":"BUY","riskPct":0.4,"tradesToday":1,"consecutiveLosses":0,"enrich":false}' | tee /tmp/guardian-eval.json
           grep -q '"executionAllowed":false' /tmp/guardian-eval.json
 
