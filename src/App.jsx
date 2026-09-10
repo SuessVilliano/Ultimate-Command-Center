@@ -32,12 +32,27 @@ import BusinessOS from './pages/BusinessOS';
 import Today from './pages/Today';
 import Operations from './pages/Operations';
 
+const validPages = new Set([
+  'dashboard','projects','github','tickets','inbox','news','agent-team','integrations','operations',
+  'action-feed','actions','agents','voice-agents','domains','valuation','trading','api-builder','admin',
+  'content-engine','highest-self','life-map','health-os','memory-vault','trading-process','family-os',
+  'business-os','hs-today','glasses'
+]);
+
+function initialPage() {
+  if (window.location.hash.includes('access_token=')) return 'integrations';
+  const requested = new URLSearchParams(window.location.search).get('page');
+  return requested && validPages.has(requested) ? requested : 'dashboard';
+}
+
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
   const { theme } = useTheme();
-  // Dashboard is the stable home. OAuth callbacks still land on Integrations.
-  const [activePage, setActivePage] = useState(() => window.location.hash.includes('access_token=') ? 'integrations' : 'dashboard');
+  const [activePage, setActivePage] = useState(initialPage);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem('liv8_sidebar_collapsed') === '1'; } catch { return false; }
+  });
   const [dictationOpen, setDictationOpen] = useState(false);
   const isDark = theme === 'dark';
 
@@ -47,8 +62,21 @@ function AppContent() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  useEffect(() => {
+    try { localStorage.setItem('liv8_sidebar_collapsed', sidebarCollapsed ? '1' : '0'); } catch {}
+  }, [sidebarCollapsed]);
+
+  // OAuth integrations redirect back with ?page=integrations. Honor it and then keep
+  // client navigation clean without losing the provider success/error parameters.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const requested = params.get('page');
+    if (requested && validPages.has(requested)) setActivePage(requested);
+  }, []);
+
   const handleNavigate = (page) => setActivePage(page);
   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
+  const toggleSidebarCollapsed = () => setSidebarCollapsed(value => !value);
 
   if (isLoading) return <div className="min-h-screen bg-[#030305] flex items-center justify-center"><div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" /></div>;
   if (!isAuthenticated) return <VaultLogin />;
@@ -64,7 +92,6 @@ function AppContent() {
       case 'agent-team': return <AgentTeamLive />;
       case 'integrations': return <Integrations />;
       case 'operations': return <Operations onNavigate={setActivePage} />;
-      // Legacy routes stay alive while their UI is absorbed into the operating surfaces.
       case 'action-feed': return <Operations onNavigate={setActivePage} />;
       case 'actions': return <Operations onNavigate={setActivePage} />;
       case 'agents': return <Agents />;
@@ -91,15 +118,40 @@ function AppContent() {
   if (activePage === 'glasses') return <Glasses onExit={() => setActivePage('dashboard')} />;
 
   return (
-    <div className="flex min-h-screen bg-theme transition-colors duration-300">
+    <div className={`flex min-h-screen bg-theme transition-colors duration-300 ${isDark ? 'theme-dark' : 'theme-light'}`}>
+      <style>{`
+        /* META SV is part of the operating shell, not a 2XL-only accessory. */
+        @media (min-width: 1280px) {
+          [data-testid="god-view-rail"] { display: flex !important; }
+        }
+        /* Theme the twin rail along with the rest of Command Center. */
+        .theme-light [data-testid="god-view-rail"] > section {
+          background: rgba(255,255,255,.96) !important;
+          border-color: rgba(124,58,237,.18) !important;
+          box-shadow: 0 18px 48px rgba(15,23,42,.10) !important;
+        }
+        .theme-light [data-testid="god-view-rail"] .text-white { color: #111827 !important; }
+        .theme-light [data-testid="god-view-rail"] .text-gray-300 { color: #374151 !important; }
+        .theme-light [data-testid="god-view-rail"] .text-gray-400 { color: #4b5563 !important; }
+        .theme-light [data-testid="god-view-rail"] .text-gray-500 { color: #6b7280 !important; }
+        .theme-light [data-testid="god-view-rail"] .bg-black\/70,
+        .theme-light [data-testid="god-view-rail"] .bg-black\/60 { background: rgba(255,255,255,.82) !important; }
+      `}</style>
       <MobileMenuButton onClick={toggleSidebar} isDark={isDark} />
-      <Sidebar activePage={activePage} setActivePage={setActivePage} isOpen={sidebarOpen} onToggle={toggleSidebar} />
-      <main className="flex-1 lg:ml-64 p-4 sm:p-6 lg:p-8 pt-20 lg:pt-8 min-h-screen 2xl:pr-[405px]">{renderPage()}</main>
+      <Sidebar
+        activePage={activePage}
+        setActivePage={setActivePage}
+        isOpen={sidebarOpen}
+        onToggle={toggleSidebar}
+        collapsed={sidebarCollapsed}
+        onCollapse={toggleSidebarCollapsed}
+      />
+      <main className={`flex-1 ${sidebarCollapsed ? 'lg:ml-20' : 'lg:ml-64'} p-4 sm:p-6 lg:p-8 pt-20 lg:pt-8 min-h-screen xl:pr-[390px] transition-[margin] duration-300`}>{renderPage()}</main>
       <GodViewRail activePage={activePage} onNavigate={handleNavigate} />
       <ChatWidget onNavigate={handleNavigate} />
       <button
         onClick={() => setDictationOpen(true)}
-        className="fixed bottom-6 left-6 lg:left-[280px] z-[70] p-3.5 rounded-full shadow-xl transition-all hover:scale-110 bg-gradient-to-br from-green-500 to-cyan-500 text-white ring-1 ring-white/20 hover:shadow-green-500/30"
+        className={`fixed bottom-6 left-6 ${sidebarCollapsed ? 'lg:left-[104px]' : 'lg:left-[280px]'} z-[70] p-3.5 rounded-full shadow-xl transition-all hover:scale-110 bg-gradient-to-br from-green-500 to-cyan-500 text-white ring-1 ring-white/20 hover:shadow-green-500/30`}
         title="LIV8 Voice Router — speak once, send anywhere"
         aria-label="Open LIV8 Voice Router"
       >
