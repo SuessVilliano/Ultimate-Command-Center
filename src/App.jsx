@@ -6,6 +6,8 @@ import ChatWidget from './components/ChatWidget';
 import VoiceRouter from './components/VoiceRouter';
 import VaultLogin from './components/VaultLogin';
 import GodViewRail from './components/GodViewRail';
+import PersistentPanel from './components/PersistentPanel';
+import LifeCalendarPanel from './components/LifeCalendarPanel';
 import CommandDashboard from './pages/CommandDashboard';
 import Projects from './pages/Projects';
 import Agents from './pages/Agents';
@@ -107,7 +109,7 @@ function AppContent() {
       case 'health-os': return <HealthCommandCenter />;
       case 'memory-vault': return <MemoryVault />;
       case 'trading-process': return <TradingProcessLive />;
-      case 'family-os': return <FamilyOS />;
+      case 'family-os': return <div className="space-y-4"><PersistentPanel id="life-calendar" title="Life Calendar" subtitle="Real calendar + Family OS" defaultOpen><LifeCalendarPanel /></PersistentPanel><FamilyOS /></div>;
       case 'business-os': return <BusinessOS />;
       case 'hs-today': return <Today onNavigate={setActivePage} />;
       case 'glasses': return <Glasses onExit={() => setActivePage('dashboard')} />;
