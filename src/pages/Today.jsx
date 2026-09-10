@@ -25,6 +25,14 @@ const pill = {
   gray: 'border-white/10 bg-white/[.035] text-gray-400',
 };
 
+function hasImportedAffiliateBook() {
+  try {
+    const raw = sessionStorage.getItem('liv8_ghl_reactivation_book_v1');
+    const rows = raw ? JSON.parse(raw) : [];
+    return Array.isArray(rows) && rows.length > 0;
+  } catch { return false; }
+}
+
 export default function Today({ onNavigate }) {
   const date = new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
   const dayName = new Date().toLocaleDateString('en-US', { timeZone:'America/New_York', weekday: 'long' });
@@ -34,6 +42,7 @@ export default function Today({ onNavigate }) {
   const [mcp, setMcp] = useState(null);
   const [mcpError, setMcpError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [affiliateBookLoaded, setAffiliateBookLoaded] = useState(() => hasImportedAffiliateBook());
 
   const load = async () => {
     setLoading(true);
@@ -52,10 +61,16 @@ export default function Today({ onNavigate }) {
     setHealth(h.status === 'fulfilled' ? h.value : null);
     if (t.status === 'fulfilled') { setMcp(t.value); setMcpError(''); }
     else { setMcp(null); setMcpError(t.reason?.message || 'Unavailable'); }
+    setAffiliateBookLoaded(hasImportedAffiliateBook());
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, [date]);
+  useEffect(() => {
+    load();
+    const onBook = () => setAffiliateBookLoaded(hasImportedAffiliateBook());
+    window.addEventListener('liv8:affiliate-book-updated', onBook);
+    return () => window.removeEventListener('liv8:affiliate-book-updated', onBook);
+  }, [date]);
 
   const go = id => onNavigate?.(id);
   const [tradeMode, tradeNote, tradeTone] = DAY_TYPE[dayName] || DAY_TYPE.Monday;
@@ -79,7 +94,7 @@ export default function Today({ onNavigate }) {
     { label: 'Hybrid MCP', state: mcpConnected ? 'CONNECTED' : 'OFFLINE', tone: mcpConnected ? 'emerald' : 'rose', icon: TrendingUp, nav: 'trading-process' },
     { label: 'Gmail', state: 'BRIDGE REQUIRED', tone: 'amber', icon: Mail, nav: 'integrations' },
     { label: 'Calendar', state: 'BRIDGE REQUIRED', tone: 'amber', icon: CalendarDays, nav: 'integrations' },
-    { label: 'GHL', state: 'AUTH REQUIRED', tone: 'rose', icon: Briefcase, nav: 'tickets' },
+    { label: 'GHL', state: affiliateBookLoaded ? 'PORTFOLIO LOADED' : 'AUTH REQUIRED', tone: affiliateBookLoaded ? 'emerald' : 'rose', icon: Briefcase, nav: 'tickets' },
   ];
 
   const operatorNote = readiness != null
@@ -144,8 +159,8 @@ export default function Today({ onNavigate }) {
         <Priority text="Confirm role scorecard + success metrics" />
         <Priority text="Map affiliate portfolio + priority partners" />
         <Priority text="Build weekly partner operating cadence" />
-        <div className="mt-3"><Status tone="rose">GHL AUTH REQUIRED</Status></div>
-        <p className="text-[11px] text-gray-500 mt-2">CRM activity should not be treated as live until authorization is repaired.</p>
+        <div className="mt-3"><Status tone={affiliateBookLoaded ? 'emerald' : 'rose'}>{affiliateBookLoaded ? 'AFFILIATE DATA LOADED' : 'GHL AUTH REQUIRED'}</Status></div>
+        <p className="text-[11px] text-gray-500 mt-2">{affiliateBookLoaded ? 'Imported portfolio data is active. Direct CRM reads/writes still require the Command Center GHL bridge.' : 'CRM activity should not be treated as live until authorization is repaired.'}</p>
       </Card>
 
       <Card title="Build / business" icon={Zap} action="Nifty Tasks" onAction={() => go('actions')}>
