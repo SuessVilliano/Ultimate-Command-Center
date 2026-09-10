@@ -1,4 +1,6 @@
 import { registerOlivIngestRoutes } from './oliv-ingest-routes.js';
+import { registerLiv8ConnectRoutes } from './liv8-connect-routes.js';
+import { registerLiv8ConnectMcpRoutes } from './liv8-connect-mcp-routes.js';
 
 const API_BASE = 'https://services.leadconnectorhq.com';
 const SANDBOX_FORM_ID = process.env.GHL_AFFILIATE_SANDBOX_FORM_ID || 'TVI6Ch94dCiqvm94KpFN';
@@ -66,6 +68,8 @@ async function findExactContact({ identifier, email, promoterId }) {
 
 export function registerAffiliateCrmRoutes(app) {
   registerOlivIngestRoutes(app);
+  registerLiv8ConnectRoutes(app);
+  registerLiv8ConnectMcpRoutes(app);
 
   app.get('/api/affiliate/crm-note/status', (_req, res) => {
     const { pit, locationId } = config();
