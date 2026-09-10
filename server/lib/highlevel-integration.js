@@ -54,6 +54,14 @@ function toParams(values = {}) {
   return params;
 }
 
+function unwrapMessages(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.messages)) return payload.messages;
+  if (Array.isArray(payload?.data?.messages)) return payload.data.messages;
+  if (Array.isArray(payload?.data)) return payload.data;
+  return [];
+}
+
 export const highlevel = {
   getConfigStatus() {
     const cfg = readConfig();
@@ -146,7 +154,64 @@ export const highlevel = {
       startDate: options.startDate,
       endDate: options.endDate,
     });
-    return highLevelRequest(`/conversations/messages/export?${params.toString()}`);
+
+    try {
+      return await highLevelRequest(`/conversations/messages/export?${params.toString()}`);
+    } catch (exportError) {
+      // Some PITs/locations can search conversations but cannot use the bulk export
+      // endpoint. Fall back to per-conversation reads so the inbox does not appear empty.
+      const searchParams = toParams({
+        locationId,
+        limit: Math.min(Math.max(Number(options.limit || 100), 1), 100),
+        sort: 'desc',
+        status: 'all',
+      });
+      const search = await highLevelRequest(`/conversations/search?${searchParams.toString()}`).catch(() => null);
+      const conversations = Array.isArray(search?.conversations) ? search.conversations : [];
+      if (!conversations.length) throw exportError;
+
+      const channelNeedle = String(options.channel || '').toLowerCase();
+      const selected = conversations
+        .filter(c => {
+          if (!channelNeedle) return true;
+          const raw = String(c.lastMessageType || c.type || c.channel || '').toLowerCase();
+          return !raw || raw.includes(channelNeedle === 'whatsapp' ? 'whatsapp' : 'sms');
+        })
+        .slice(0, Math.min(conversations.length, 40));
+
+      const results = await Promise.allSettled(selected.map(async conversation => {
+        const messageParams = toParams({ limit: 100 });
+        const payload = await highLevelRequest(`/conversations/${encodeURIComponent(conversation.id)}/messages?${messageParams.toString()}`);
+        return unwrapMessages(payload).map(message => ({
+          ...message,
+          conversationId: message.conversationId || conversation.id,
+          contactId: message.contactId || conversation.contactId,
+        }));
+      }));
+
+      const messages = results.flatMap(result => result.status === 'fulfilled' ? result.value : []);
+      if (messages.length) return { messages, fallback: 'conversation-messages' };
+
+      // Last resort: surface the latest message embedded on conversation search rows.
+      // This still gives the operator real phone/WhatsApp thread visibility instead of 0.
+      const summaries = selected.map(conversation => ({
+        id: conversation.lastMessageId || `conversation-${conversation.id}`,
+        conversationId: conversation.id,
+        contactId: conversation.contactId,
+        messageType: conversation.lastMessageType || conversation.type || '',
+        type: conversation.lastMessageType || conversation.type || '',
+        body: conversation.lastMessageBody || conversation.lastMessage || conversation.lastMessageText || '',
+        direction: conversation.lastMessageDirection || '',
+        dateAdded: conversation.lastMessageDate || conversation.lastMessageAt || conversation.updatedAt || conversation.dateUpdated || '',
+        createdAt: conversation.lastMessageDate || conversation.lastMessageAt || conversation.updatedAt || conversation.dateUpdated || '',
+        status: conversation.status || '',
+        from: conversation.from || '',
+        to: conversation.to || '',
+      })).filter(message => message.body || message.messageType);
+
+      if (summaries.length) return { messages: summaries, fallback: 'conversation-search' };
+      throw exportError;
+    }
   },
 
   async getConversationMessages(conversationId, options = {}) {

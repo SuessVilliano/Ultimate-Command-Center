@@ -27,7 +27,7 @@
   --bg-card: rgba(255, 255, 255, 0.95);
   --text-primary: #1e293b;
   --text-secondary: #475569;
-  --text-muted: #94a3b8;
+  --text-muted: #64748b;
   --border-color: rgba(148, 163, 184, 0.3);
   --border-hover: rgba(139, 92, 246, 0.4);
 }
@@ -45,20 +45,17 @@ body {
   transition: background-color 0.3s, color 0.3s;
 }
 
-/* Dark mode body */
 .dark body,
 body:not(.light) {
   background: linear-gradient(135deg, #0a0a0f 0%, #0f0f1a 50%, #0a0a0f 100%);
   color: #e2e8f0;
 }
 
-/* Light mode body */
 .light body {
   background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 50%, #f8fafc 100%);
   color: #1e293b;
 }
 
-/* Theme background utility */
 .bg-theme {
   background: var(--bg-primary);
 }
@@ -71,7 +68,6 @@ body:not(.light) {
   background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 50%, #f8fafc 100%);
 }
 
-/* Scrollbar - Dark */
 .dark ::-webkit-scrollbar,
 :not(.light) ::-webkit-scrollbar {
   width: 6px;
@@ -89,7 +85,6 @@ body:not(.light) {
   border-radius: 3px;
 }
 
-/* Scrollbar - Light */
 .light ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -104,20 +99,10 @@ body:not(.light) {
   border-radius: 3px;
 }
 
-/* Glow effects */
-.glow-purple {
-  box-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
-}
+.glow-purple { box-shadow: 0 0 20px rgba(139, 92, 246, 0.3); }
+.glow-blue { box-shadow: 0 0 20px rgba(6, 182, 212, 0.3); }
+.glow-green { box-shadow: 0 0 20px rgba(16, 185, 129, 0.3); }
 
-.glow-blue {
-  box-shadow: 0 0 20px rgba(6, 182, 212, 0.3);
-}
-
-.glow-green {
-  box-shadow: 0 0 20px rgba(16, 185, 129, 0.3);
-}
-
-/* Card styles - Dark */
 .dark .card,
 :not(.light) .card {
   background: rgba(15, 15, 25, 0.8);
@@ -133,7 +118,6 @@ body:not(.light) {
   box-shadow: 0 0 30px rgba(139, 92, 246, 0.1);
 }
 
-/* Card styles - Light */
 .light .card {
   background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(10px);
@@ -148,7 +132,6 @@ body:not(.light) {
   box-shadow: 0 4px 12px rgba(139, 92, 246, 0.15);
 }
 
-/* Status indicators */
 .status-complete {
   color: #10b981;
   background: rgba(16, 185, 129, 0.1);
@@ -173,28 +156,40 @@ body:not(.light) {
   border: 1px solid rgba(239, 68, 68, 0.3);
 }
 
-/* Light mode text colors */
-.light .text-white {
-  color: #1e293b;
+/* Light-mode defaults for genuinely light surfaces. */
+.light .text-white { color: #1e293b; }
+.light .text-gray-300 { color: #475569; }
+.light .text-gray-400 { color: #475569; }
+.light .text-gray-500 { color: #64748b; }
+.light .text-gray-600 { color: #64748b; }
+
+/* Dark command surfaces remain dark in light mode. Keep their text readable.
+   Attribute selectors intentionally cover arbitrary Tailwind dark backgrounds
+   used throughout GHL, Dashboard, Operations and embedded command panels. */
+.light :is([class*="bg-[#0"], [class*="bg-black"], [class*="bg-gray-9"], [class*="bg-slate-9"], [class*="bg-zinc-9"], [class*="bg-neutral-9"]) .text-white,
+.light :is([class*="bg-[#0"], [class*="bg-black"], [class*="bg-gray-9"], [class*="bg-slate-9"], [class*="bg-zinc-9"], [class*="bg-neutral-9"]).text-white {
+  color: #f8fafc !important;
 }
 
-.light .text-gray-400 {
-  color: #64748b;
+.light :is([class*="bg-[#0"], [class*="bg-black"], [class*="bg-gray-9"], [class*="bg-slate-9"], [class*="bg-zinc-9"], [class*="bg-neutral-9"]) .text-gray-300 {
+  color: #cbd5e1 !important;
 }
 
-.light .text-gray-500 {
-  color: #94a3b8;
+.light :is([class*="bg-[#0"], [class*="bg-black"], [class*="bg-gray-9"], [class*="bg-slate-9"], [class*="bg-zinc-9"], [class*="bg-neutral-9"]) .text-gray-400 {
+  color: #94a3b8 !important;
 }
 
-/* Morning Command intentionally keeps dark command surfaces in light mode.
-   Preserve high-contrast headings instead of allowing the global light-mode
-   .text-white override to turn them slate on top of the dark panels. */
+.light :is([class*="bg-[#0"], [class*="bg-black"], [class*="bg-gray-9"], [class*="bg-slate-9"], [class*="bg-zinc-9"], [class*="bg-neutral-9"]) .text-gray-500,
+.light :is([class*="bg-[#0"], [class*="bg-black"], [class*="bg-gray-9"], [class*="bg-slate-9"], [class*="bg-zinc-9"], [class*="bg-neutral-9"]) .text-gray-600 {
+  color: #94a3b8 !important;
+}
+
+/* Morning Command intentionally keeps dark command surfaces in light mode. */
 .light [data-testid="morning-command"] h1,
 .light [data-testid="morning-command"] h2 {
   color: #f8fafc;
 }
 
-/* Animations */
 @keyframes pulse-glow {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
@@ -205,15 +200,9 @@ body:not(.light) {
   to { opacity: 1; transform: translateY(0); }
 }
 
-.animate-pulse-glow {
-  animation: pulse-glow 2s ease-in-out infinite;
-}
+.animate-pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
+.animate-slide-in { animation: slide-in 0.3s ease-out forwards; }
 
-.animate-slide-in {
-  animation: slide-in 0.3s ease-out forwards;
-}
-
-/* Grid pattern background - Dark */
 .dark .grid-pattern,
 :not(.light) .grid-pattern {
   background-image:
@@ -222,7 +211,6 @@ body:not(.light) {
   background-size: 50px 50px;
 }
 
-/* Grid pattern background - Light */
 .light .grid-pattern {
   background-image:
     linear-gradient(rgba(139, 92, 246, 0.05) 1px, transparent 1px),
@@ -230,7 +218,6 @@ body:not(.light) {
   background-size: 50px 50px;
 }
 
-/* Sidebar theming */
 .dark .sidebar-bg,
 :not(.light) .sidebar-bg {
   background: #050508;
