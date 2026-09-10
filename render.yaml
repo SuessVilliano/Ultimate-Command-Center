@@ -98,6 +98,8 @@ services:
         sync: false
       - key: GHL_LOCATION_ID
         sync: false
+      - key: GHL_PRIMARY_PHONE_NUMBER
+        sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY
