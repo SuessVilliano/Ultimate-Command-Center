@@ -13,6 +13,15 @@ test('resolves an OBS recording command', () => {
   assert.equal(resolveAction('Open OBS and start recording').name, 'obs.record.start');
 });
 
+test('resolves explicit calendar commands with concrete times', () => {
+  const action = resolveAction('Add affiliate strategy call to my calendar tomorrow from 3pm to 4pm');
+  assert.equal(action.name, 'calendar.create');
+  assert.match(action.params.summary, /affiliate strategy call/i);
+  assert.ok(action.params.start);
+  assert.ok(action.params.end);
+  assert.equal(getAction(action.name).policy, 'confirm');
+});
+
 test('live trades require the dedicated confirmation policy', () => {
   const action = resolveAction('Place a live buy order for 3 MNQ contracts');
   assert.equal(action.name, 'hybrid.trade.execute');
