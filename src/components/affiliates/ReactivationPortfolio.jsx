@@ -49,10 +49,10 @@ function mapRow(headers, values) {
     id: first(raw, 'Promoter ID', 'PROMOTER ID'),
     name: first(raw, 'Promoter Full Name', 'AFFILIATE', 'Promoter Email', 'EMAIL') || 'Unknown',
     email: first(raw, 'Promoter Email', 'EMAIL'),
-    previousAfm: raw.AFM,
-    newAfm: raw['NEW AFM'],
-    priority: raw.PRIORITY,
-    dormantBand: raw['DORMANT BAND'],
+    previousAfm: first(raw, 'AFM'),
+    newAfm: first(raw, 'NEW AFM'),
+    priority: first(raw, 'PRIORITY'),
+    dormantBand: first(raw, 'DORMANT BAND'),
     lifetime: num(first(raw, 'Lifetime', 'LIFETIME')),
     prevQ: num(first(raw, 'Prev Q', 'PREV Q')),
     currQ: num(first(raw, 'Curr Q', 'QTD')),
@@ -62,25 +62,25 @@ function mapRow(headers, values) {
     activeStatus: first(raw, 'ACTIVE STATUS', 'STATUS'),
     lastMrr: num(raw['Last MRR']),
     endorsement: first(raw, 'Endorsement', 'ENDORSEMENT'),
-    award: raw.Award,
-    country: raw.Country,
+    award: first(raw, 'Award', 'AWARD'),
+    country: first(raw, 'Country', 'COUNTRY'),
     niche: first(raw, 'Niche', 'NICHE'),
     story: first(raw, 'The story · last note', 'LAST NOTE'),
-    promoterProfile: raw['PROMOTER PROFILE'],
-    youtube: raw.YOUTUBE,
-    instagram: raw.INSTAGRAM,
-    endorsementWorkbook: raw['ENDORSEMENT WORKBOOK'],
-    forecasting: raw.FORECASTING,
-    affiliateDoc: raw['AFFILIATE DOC'],
-    highlevelContact: raw['HIGHLEVEL CONTACT'],
+    promoterProfile: first(raw, 'PROMOTER PROFILE'),
+    youtube: first(raw, 'YOUTUBE'),
+    instagram: first(raw, 'INSTAGRAM'),
+    endorsementWorkbook: first(raw, 'ENDORSEMENT WORKBOOK'),
+    forecasting: first(raw, 'FORECASTING'),
+    affiliateDoc: first(raw, 'AFFILIATE DOC'),
+    highlevelContact: first(raw, 'HIGHLEVEL CONTACT'),
     touches: num(raw.TOUCHES),
-    valueGiven: raw['VALUE GIVEN?'],
-    replied: raw['REPLIED?'],
-    dnc: raw['DO NOT CONTACT'],
-    exhausted: raw['EXHAUSTED?'],
-    outcome: raw.OUTCOME,
-    owner: raw.OWNER,
-    nextMove: raw['NEXT MOVE + DATE'],
+    valueGiven: first(raw, 'VALUE GIVEN?'),
+    replied: first(raw, 'REPLIED?'),
+    dnc: first(raw, 'DO NOT CONTACT'),
+    exhausted: first(raw, 'EXHAUSTED?'),
+    outcome: first(raw, 'OUTCOME'),
+    owner: first(raw, 'OWNER'),
+    nextMove: first(raw, 'NEXT MOVE + DATE'),
     source: raw.AFFILIATE ? 'Affiliate EXPAND · Book View' : 'Affiliate EXPAND · Reactivation',
   };
   row.stopOutreach = hasStopInstruction(row);
@@ -100,7 +100,7 @@ function importAssignedBook(text) {
   const mapped = rows.slice(headerIndex + 1)
     .filter(r => r.some(Boolean))
     .map(r => mapRow(headers, r))
-    .filter(r => (isBookView || r.newAfm.toLowerCase() === 'jamaur johnson') && r.id);
+    .filter(r => (isBookView || String(r.newAfm || '').toLowerCase() === 'jamaur johnson') && r.id);
   if (!mapped.length) throw new Error('No affiliates were found in this assigned book export.');
   return mapped;
 }
@@ -143,25 +143,26 @@ export default function ReactivationPortfolio() {
     lifetime: book.reduce((s, a) => s + a.lifetime, 0),
     prevQ: book.reduce((s, a) => s + a.prevQ, 0),
     currQ: book.reduce((s, a) => s + a.currQ, 0),
-    personal: book.filter(a => a.priority.startsWith('1')).length,
-    ladder: book.filter(a => a.priority.startsWith('2')).length,
-    sequence: book.filter(a => a.priority.startsWith('3')).length,
+    personal: book.filter(a => String(a.priority || '').startsWith('1')).length,
+    ladder: book.filter(a => String(a.priority || '').startsWith('2')).length,
+    sequence: book.filter(a => String(a.priority || '').startsWith('3')).length,
     mtd: book.reduce((s, a) => s + a.mtd, 0),
     projectedMonth: book.reduce((s, a) => s + a.mtd, 0) * 4,
     qoqPacing: book.reduce((s, a) => s + a.prevQ, 0) ? Math.round(book.reduce((s, a) => s + a.currQ, 0) / book.reduce((s, a) => s + a.prevQ, 0) * 100) : 0,
-    active: book.filter(a => /reactivation|needs attention|active/i.test(a.activeStatus) && !/inactive/i.test(a.activeStatus)).length,
-    needsAttention: book.filter(a => /needs attention/i.test(a.activeStatus)).length,
-    reactivation: book.filter(a => /reactivation/i.test(a.activeStatus)).length,
-    doNotPursue: book.filter(a => /do not pursue/i.test(a.activeStatus)).length,
+    active: book.filter(a => /reactivation|needs attention|active/i.test(a.activeStatus || '') && !/inactive/i.test(a.activeStatus || '')).length,
+    needsAttention: book.filter(a => /needs attention/i.test(a.activeStatus || '')).length,
+    reactivation: book.filter(a => /reactivation/i.test(a.activeStatus || '')).length,
+    doNotPursue: book.filter(a => /do not pursue/i.test(a.activeStatus || '')).length,
   }), [book]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return book.filter(a => {
       if (band !== 'all' && bandKey(a.dormantBand) !== band) return false;
-      if (priority !== 'all' && !a.priority.startsWith(priority)) return false;
+      if (priority !== 'all' && !String(a.priority || '').startsWith(priority)) return false;
       if (!q) return true;
       return [a.name, a.email, a.country, a.niche, a.story, a.previousAfm, a.award, a.activeStatus, a.endorsement]
+        .map(v => String(v || ''))
         .join(' ').toLowerCase().includes(q);
     }).sort((a, b) => (b.currQ - a.currQ) || (b.prevQ - a.prevQ) || (b.lifetime - a.lifetime));
   }, [book, query, band, priority]);
@@ -171,11 +172,18 @@ export default function ReactivationPortfolio() {
     setError('');
     try {
       const imported = importAssignedBook(await file.text());
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify(imported));
+      try {
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify(imported));
+      } catch (storageError) {
+        console.warn('Portfolio import could not be cached in sessionStorage:', storageError);
+      }
       setBook(imported);
       window.dispatchEvent(new CustomEvent(BOOK_UPDATED_EVENT));
       setSelectedId(imported[0]?.id || null);
-    } catch (e) { setError(e.message); }
+    } catch (e) {
+      console.error('Affiliate CSV import failed:', e);
+      setError(e?.message || 'The CSV could not be imported.');
+    }
     if (fileRef.current) fileRef.current.value = '';
   }
 
@@ -190,7 +198,8 @@ export default function ReactivationPortfolio() {
     if (!selected) return;
     const next = { ...research, [selected.id]: { ...selectedResearch, [field]: value } };
     setResearch(next);
-    sessionStorage.setItem(RESEARCH_KEY, JSON.stringify(next));
+    try { sessionStorage.setItem(RESEARCH_KEY, JSON.stringify(next)); }
+    catch (e) { console.warn('Research notes could not be cached:', e); }
   }
 
   if (!book.length) return <section className="rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-[#071217] to-[#100a18] p-5">
@@ -267,7 +276,7 @@ export default function ReactivationPortfolio() {
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-semibold text-white">{a.name}</span>
-                  {a.priority && <span className={`rounded px-2 py-0.5 text-[10px] ${a.priority.startsWith('1') ? 'bg-purple-500/15 text-purple-300' : a.priority.startsWith('2') ? 'bg-cyan-500/15 text-cyan-300' : 'bg-white/5 text-slate-400'}`}>{a.priority}</span>}
+                  {a.priority && <span className={`rounded px-2 py-0.5 text-[10px] ${String(a.priority).startsWith('1') ? 'bg-purple-500/15 text-purple-300' : String(a.priority).startsWith('2') ? 'bg-cyan-500/15 text-cyan-300' : 'bg-white/5 text-slate-400'}`}>{a.priority}</span>}
                   {a.activeStatus && <span className={`rounded px-2 py-0.5 text-[10px] ${/needs attention/i.test(a.activeStatus) ? 'bg-amber-500/15 text-amber-300' : /reactivation/i.test(a.activeStatus) ? 'bg-rose-500/15 text-rose-300' : /do not pursue/i.test(a.activeStatus) ? 'bg-slate-500/20 text-slate-400' : 'bg-emerald-500/15 text-emerald-300'}`}>{a.activeStatus}</span>}
                   {a.stopOutreach && <span className="rounded bg-red-500/15 px-2 py-0.5 text-[10px] text-red-300">HOLD OUTREACH</span>}
                 </div>
