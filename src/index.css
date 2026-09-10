@@ -186,6 +186,14 @@ body:not(.light) {
   color: #94a3b8;
 }
 
+/* Morning Command intentionally keeps dark command surfaces in light mode.
+   Preserve high-contrast headings instead of allowing the global light-mode
+   .text-white override to turn them slate on top of the dark panels. */
+.light [data-testid="morning-command"] h1,
+.light [data-testid="morning-command"] h2 {
+  color: #f8fafc;
+}
+
 /* Animations */
 @keyframes pulse-glow {
   0%, 100% { opacity: 1; }
