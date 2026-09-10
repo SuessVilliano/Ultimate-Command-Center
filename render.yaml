@@ -20,7 +20,6 @@ services:
         value: "3005"
       - key: DB_DATA_DIR
         value: /var/data
-      # Production Juno can reach the Mac Mini through an authenticated HTTPS tunnel.
       - key: MAC_AI_BRIDGE_URL
         sync: false
       - key: LIV8_MAC_BRIDGE_TOKEN
@@ -47,6 +46,36 @@ services:
         sync: false
       - key: TASKMAGIC_MCP_TOKEN
         sync: false
+      - key: CONNECTOR_BRIDGE_URL
+        sync: false
+      - key: CONNECTOR_BRIDGE_KEY
+        sync: false
+      - key: CONNECTOR_MCP_URL
+        sync: false
+      - key: CONNECTOR_MCP_TOKEN
+        sync: false
+      - key: CONNECTOR_MCP_HEADERS_JSON
+        sync: false
+      - key: CONNECTOR_GMAIL_LIST_TOOL
+        sync: false
+      - key: CONNECTOR_GMAIL_SEND_TOOL
+        sync: false
+      - key: CONNECTOR_CALENDAR_LIST_TOOL
+        sync: false
+      - key: CONNECTOR_CALENDAR_CREATE_TOOL
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_PHONE_NUMBER
+        sync: false
+      - key: TWILIO_WHATSAPP_NUMBER
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CALENDAR_EMAIL
+        sync: false
       - key: NIFTY_CLIENT_ID
         sync: false
       - key: NIFTY_CLIENT_SECRET
@@ -64,6 +93,8 @@ services:
       - key: BENZINGA_API_KEY
         sync: false
       - key: GHL_API_KEY
+        sync: false
+      - key: GHL_PRIVATE_INTEGRATION_TOKEN
         sync: false
       - key: GHL_LOCATION_ID
         sync: false
@@ -115,6 +146,10 @@ services:
         sync: false
       - key: OURA_ACCESS_TOKEN
         sync: false
+      - key: JUNO_GATEWAY_KEY
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_JUNO_CHAT_ID
@@ -125,8 +160,6 @@ services:
         sync: false
       - key: TELEGRAM_COMMUNITY_CHAT_ID
         sync: false
-      # Juno Hybrid Autopilot broker adapters. Demo adapters can route orders;
-      # live accounts are registry/status-only in this build.
       - key: KRAKEN_FUTURES_DEMO_ENABLED
         value: "false"
       - key: KRAKEN_FUTURES_DEMO_API_KEY
@@ -169,8 +202,6 @@ services:
         sync: false
       - key: DXTRADE_LIVE_ACCESS_TOKEN
         sync: false
-      # DX Futures / Hybrid Funding. The prop provider decides whether direct API
-      # order access is exposed. Public account tracking/import can work without it.
       - key: DX_FUTURES_HF_ENABLED
         value: "false"
       - key: DX_FUTURES_HF_ENVIRONMENT
@@ -193,7 +224,6 @@ services:
         value: generic
       - key: DX_FUTURES_HF_PUBLIC_URL
         sync: false
-      # Contract mapping + quantity examples. Set only when verified for the account.
       - key: JUNO_SYMBOL_MNQ
         sync: false
       - key: JUNO_SIZE_MNQ

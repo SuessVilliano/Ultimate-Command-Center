@@ -11,6 +11,7 @@ import { registerLocalWorkspaceMcpRoutes } from './local-workspace-mcp-routes.js
 import { registerTradingGuardianRoutes } from './trading-guardian-routes.js';
 import { registerVerticalReadinessRoutes } from './vertical-readiness-routes.js';
 import { registerAffiliateCrmRoutes } from './affiliate-crm-routes.js';
+import { registerConnectedOpsRoutes } from './connected-ops-routes.js';
 
 const ACTIVE_PORTFOLIO_ID = process.env.NIFTY_ACTIVE_PORTFOLIO_ID || 'u45ydW04vO';
 
@@ -35,6 +36,7 @@ export function registerNiftyRoutes(app) {
   registerTradingGuardianRoutes(app);
   registerVerticalReadinessRoutes(app);
   registerAffiliateCrmRoutes(app);
+  registerConnectedOpsRoutes(app);
 
   app.get('/api/nifty/auth/url', (req, res) => { try { res.json({ url: nifty.getAuthorizationUrl() }); } catch (error) { res.status(500).json({ error: error.message }); } });
   app.get('/api/nifty/callback', async (req, res) => {
@@ -66,7 +68,7 @@ export function registerNiftyRoutes(app) {
   app.get('/api/nifty/time-entries', async (req, res) => { try { const { projectId, taskId, startDate, endDate } = req.query; res.json(await nifty.getTimeEntries({ projectId, taskId, startDate, endDate })); } catch (error) { res.status(500).json({ error: error.message }); } });
   app.post('/api/nifty/time-entries', async (req, res) => { try { const { taskId, duration, ...data } = req.body; res.json(await nifty.createTimeEntry(taskId, duration, data)); } catch (error) { res.status(500).json({ error: error.message }); } });
 
-  console.log('Nifty + Affiliate CRM sandbox + Hybrid Journal MCP + Apple Health + Local/Bridged Ollama AI + Juno Operator + Time Intelligence + Mac Workspace MCP + Trading Guardian + Vertical Readiness routes registered');
+  console.log('Nifty + Connected Ops + Affiliate CRM sandbox + Hybrid Journal MCP + Apple Health + Local/Bridged Ollama AI + Juno Operator + Time Intelligence + Mac Workspace MCP + Trading Guardian + Vertical Readiness routes registered');
 }
 
 export default registerNiftyRoutes;

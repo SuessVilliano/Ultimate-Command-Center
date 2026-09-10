@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle, Bot, Calendar, CheckCircle2, ExternalLink, FolderKanban,
-  Mail, Plug, RefreshCw, ShieldCheck, XCircle, Zap
+  Mail, MessageCircle, Plug, RefreshCw, ShieldCheck, Smartphone, XCircle, Zap
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { API_URL } from '../config';
@@ -46,6 +46,7 @@ export default function Integrations() {
   const [taskadeWorkspaces, setTaskadeWorkspaces] = useState([]);
   const [taskmagicStatus, setTaskmagicStatus] = useState({ configured: false, connected: false });
   const [syncStatus, setSyncStatus] = useState(null);
+  const [connectedOps, setConnectedOps] = useState({ connector: {}, twilio: {} });
   const [connectionNotice, setConnectionNotice] = useState('');
 
   const fetchWithTimeout = useCallback(async (url, options = {}, timeoutMs = 6000) => {
@@ -91,6 +92,11 @@ export default function Integrations() {
     catch (e) { console.warn('Sync status unavailable:', e?.message); }
   }, [fetchWithTimeout]);
 
+  const loadConnectedOps = useCallback(async () => {
+    try { const r = await fetchWithTimeout(`${API_URL}/api/connectors/status`); if (r.ok) setConnectedOps(await safeJson(r)); }
+    catch (e) { console.warn('Connected Ops status unavailable:', e?.message); }
+  }, [fetchWithTimeout]);
+
   const loadAll = useCallback(async () => {
     setLoading(true); setError('');
     try {
@@ -98,12 +104,12 @@ export default function Integrations() {
       try { const r = await fetchWithTimeout(`${API_URL}/api/integrations/status`); if (r.ok) status = await safeJson(r); }
       catch (e) { console.warn('Integration status endpoint unavailable:', e?.message); }
       setIntegrationStatus(status || {});
-      await Promise.allSettled([loadGoogle(), loadNifty(), loadTaskade(), loadTaskmagic(), loadSync()]);
+      await Promise.allSettled([loadGoogle(), loadNifty(), loadTaskade(), loadTaskmagic(), loadSync(), loadConnectedOps()]);
     } catch (e) {
       console.error('Integrations page load failed:', e);
       setError('Some integration statuses could not be loaded. The page is staying available so you can retry safely.');
     } finally { setLoading(false); }
-  }, [fetchWithTimeout, loadGoogle, loadNifty, loadTaskade, loadTaskmagic, loadSync]);
+  }, [fetchWithTimeout, loadGoogle, loadNifty, loadTaskade, loadTaskmagic, loadSync, loadConnectedOps]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -144,6 +150,8 @@ export default function Integrations() {
 
   const totalProjects = useMemo(() => niftyProjects.length, [niftyProjects]);
   const cardText = isDark ? 'text-gray-400' : 'text-gray-600';
+  const connectorReady = !!connectedOps?.connector?.configured;
+  const twilioReady = !!connectedOps?.twilio?.configured;
 
   return <div className="space-y-6 animate-slide-in">
     <div className="flex flex-wrap items-center justify-between gap-3"><div><h1 className={`text-3xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Integrations</h1><p className={`mt-1 text-sm ${cardText}`}>Connection health for Command Center services. Connected sources feed LIV8; they do not replace it.</p></div><button onClick={loadAll} disabled={loading} className="inline-flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`}/>Refresh all</button></div>
@@ -152,8 +160,20 @@ export default function Integrations() {
     {error && <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">{error}</div>}
 
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-      <Card isDark={isDark} title="Google Workspace" subtitle="Gmail + Google Calendar" icon={Mail} status={<StatusBadge connected={!!googleStatus?.connected} configured={!!googleStatus?.configured}/>}> 
-        {googleStatus?.connected ? <div className="space-y-2 text-sm text-emerald-400"><div className="flex items-center gap-2"><Mail className="h-4 w-4"/>Gmail connected</div><div className="flex items-center gap-2"><Calendar className="h-4 w-4"/>Calendar connected</div>{googleStatus?.email && <p className="text-xs text-gray-500">{googleStatus.email}</p>}<button onClick={connectGoogle} className="mt-2 w-full rounded-lg border border-cyan-500/30 px-3 py-2 text-xs font-semibold text-cyan-400 hover:bg-cyan-500/10">Connect / switch Google account</button></div> : <div className="space-y-3"><p className={`text-sm ${cardText}`}>Authorize Google for Gmail and Calendar. This is the source layer for meetings, affiliate context, and life scheduling.</p>{!googleStatus?.configured && <p className="text-xs text-amber-400">Google OAuth client is not configured on the deployed API yet.</p>}<button onClick={connectGoogle} className="w-full rounded-lg bg-cyan-600 px-3 py-2 text-sm font-semibold text-white hover:bg-cyan-700"><ExternalLink className="mr-2 inline h-4 w-4"/>Connect Google</button></div>}
+      <Card isDark={isDark} title="Connector Gateway" subtitle="Composio / TaskMagic / any MCP bridge" icon={Plug} status={<StatusBadge connected={connectorReady} configured={connectorReady}/>}> 
+        <div className={`space-y-2 text-sm ${cardText}`}>
+          <p>{connectorReady ? `Gateway mode: ${connectedOps.connector.mode}. Gmail and Calendar can now be fetched/written through the connector layer.` : 'Add either a bridge URL or MCP server URL on the backend. Once configured, Gmail and Calendar feed Conversations and Life Calendar automatically.'}</p>
+          <div className="grid grid-cols-2 gap-2 text-xs"><div className={`rounded-lg border px-2 py-2 ${connectedOps?.connector?.gmail?'border-emerald-500/20 text-emerald-400':'border-white/10 text-gray-500'}`}><Mail className="mr-1 inline h-3.5 w-3.5"/>Gmail {connectedOps?.connector?.gmail?'ready':'waiting'}</div><div className={`rounded-lg border px-2 py-2 ${connectedOps?.connector?.calendar?'border-emerald-500/20 text-emerald-400':'border-white/10 text-gray-500'}`}><Calendar className="mr-1 inline h-3.5 w-3.5"/>Calendar {connectedOps?.connector?.calendar?'ready':'waiting'}</div></div>
+          {!connectorReady && <p className="text-xs text-amber-400">Backend vars: CONNECTOR_BRIDGE_URL or CONNECTOR_MCP_URL, optional token, plus Gmail/Calendar tool names for direct MCP mode.</p>}
+        </div>
+      </Card>
+
+      <Card isDark={isDark} title="Twilio Messaging" subtitle="SMS + WhatsApp conversations" icon={MessageCircle} status={<StatusBadge connected={twilioReady} configured={twilioReady}/>}> 
+        <div className={`space-y-2 text-sm ${cardText}`}><p>{twilioReady ? 'Twilio API credentials are configured. The Conversations tab can fetch and send messages.' : 'Configure the Twilio account credentials on the backend to activate live SMS/WhatsApp threads.'}</p><div className="grid grid-cols-2 gap-2 text-xs"><div className={`rounded-lg border px-2 py-2 ${connectedOps?.twilio?.sms?'border-emerald-500/20 text-emerald-400':'border-white/10 text-gray-500'}`}><Smartphone className="mr-1 inline h-3.5 w-3.5"/>SMS {connectedOps?.twilio?.sms?'ready':'waiting'}</div><div className={`rounded-lg border px-2 py-2 ${connectedOps?.twilio?.whatsapp?'border-emerald-500/20 text-emerald-400':'border-white/10 text-gray-500'}`}><MessageCircle className="mr-1 inline h-3.5 w-3.5"/>WhatsApp {connectedOps?.twilio?.whatsapp?'ready':'waiting'}</div></div></div>
+      </Card>
+
+      <Card isDark={isDark} title="Google Workspace" subtitle="Direct Google OAuth fallback" icon={Mail} status={<StatusBadge connected={!!googleStatus?.connected} configured={!!googleStatus?.configured}/>}> 
+        {googleStatus?.connected ? <div className="space-y-2 text-sm text-emerald-400"><div className="flex items-center gap-2"><Mail className="h-4 w-4"/>Gmail connected</div><div className="flex items-center gap-2"><Calendar className="h-4 w-4"/>Calendar connected</div>{googleStatus?.email && <p className="text-xs text-gray-500">{googleStatus.email}</p>}<button onClick={connectGoogle} className="mt-2 w-full rounded-lg border border-cyan-500/30 px-3 py-2 text-xs font-semibold text-cyan-400 hover:bg-cyan-500/10">Connect / switch Google account</button></div> : <div className="space-y-3"><p className={`text-sm ${cardText}`}>Optional direct OAuth path if you are not using the connector gateway for Google.</p>{!googleStatus?.configured && <p className="text-xs text-amber-400">Google OAuth client is not configured on the deployed API yet.</p>}<button onClick={connectGoogle} className="w-full rounded-lg bg-cyan-600 px-3 py-2 text-sm font-semibold text-white hover:bg-cyan-700"><ExternalLink className="mr-2 inline h-4 w-4"/>Connect Google</button></div>}
       </Card>
 
       <Card isDark={isDark} title="Nifty PM" subtitle="Work + task source of truth" icon={FolderKanban} status={<StatusBadge connected={!!niftyStatus?.authenticated} configured={!!integrationStatus?.nifty?.configured || !!niftyStatus?.hasAccessToken}/>}> 
@@ -161,7 +181,7 @@ export default function Integrations() {
       </Card>
 
       <Card isDark={isDark} title="Taskade" subtitle="Legacy project connection" icon={Plug} status={<StatusBadge connected={taskadeWorkspaces.length > 0} configured={!!integrationStatus?.taskade?.configured}/>}> <p className={`text-sm ${cardText}`}>{taskadeWorkspaces.length ? `${taskadeWorkspaces.length} workspace${taskadeWorkspaces.length === 1 ? '' : 's'} found.` : 'No Taskade workspaces returned.'}</p></Card>
-      <Card isDark={isDark} title="TaskMagic" subtitle="Automation / MCP" icon={Bot} status={<StatusBadge connected={taskmagicStatus.connected} configured={taskmagicStatus.configured}/>}> <p className={`text-sm ${cardText}`}>{taskmagicStatus.connected ? 'TaskMagic MCP is responding.' : 'TaskMagic MCP is not currently responding.'}</p></Card>
+      <Card isDark={isDark} title="TaskMagic" subtitle="Existing automation / webhook status" icon={Bot} status={<StatusBadge connected={taskmagicStatus.connected} configured={taskmagicStatus.configured}/>}> <p className={`text-sm ${cardText}`}>{taskmagicStatus.connected ? 'TaskMagic integration is configured.' : 'TaskMagic integration is not currently configured.'}</p></Card>
       <Card isDark={isDark} title="Sync Engine" subtitle="Cross-tool synchronization" icon={Zap} status={<StatusBadge connected={!!(syncStatus?.connected || syncStatus?.healthy || syncStatus?.status === 'ok')} configured={!!syncStatus}/>}> <p className={`text-sm ${cardText}`}>{syncStatus ? 'Sync status endpoint is available.' : 'Sync status is unavailable right now.'}</p></Card>
       <Card isDark={isDark} title="Page Guard" subtitle="Crash protection" icon={ShieldCheck} status={<StatusBadge connected label="Active"/>}> <p className={`text-sm ${cardText}`}>Malformed integration payloads are normalized to safe arrays and failed requests are isolated instead of blanking the app.</p></Card>
     </div>

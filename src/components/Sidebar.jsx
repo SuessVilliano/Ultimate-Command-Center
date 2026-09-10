@@ -19,17 +19,13 @@ const highestSelfItems = [
   { id: 'business-os', label: 'Business & Creation', icon: Briefcase, flag: 'BUSINESS' },
 ].filter((item) => FEATURES.HIGHEST_SELF?.[item.flag]);
 
-// Keep the permanent sidebar reserved for daily operating surfaces.
-// Voice Agents + Agent Config live under Agent Team. Domains + Valuation live under Business OS.
-// Action Feed + Action Items are unified under Operations. Nifty owns project-management truth,
-// so legacy Projects remains routable but is no longer a permanent nav item.
 const mainItems = [
   { id: 'tickets', label: 'GHL', icon: Ticket },
   { id: 'content-engine', label: 'Content Engine', icon: TrendingUp },
   { id: 'trading', label: 'Trading Hub', icon: BarChart3 },
   { id: 'api-builder', label: 'API / MCP Builder', icon: Terminal },
   { id: 'agent-team', label: 'Agent Team', icon: Bot },
-  { id: 'inbox', label: 'Team Inbox', icon: MessageSquare },
+  { id: 'inbox', label: 'Conversations', icon: MessageSquare },
   { id: 'github', label: 'GitHub', icon: Github },
   { id: 'integrations', label: 'Integrations', icon: Plug },
   { id: 'glasses', label: 'Glasses Mode', icon: Glasses },
