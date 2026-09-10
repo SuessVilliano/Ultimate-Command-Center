@@ -14,6 +14,7 @@ import Valuation from './pages/Valuation';
 import GitHub from './pages/GitHub';
 import AffiliateManagerPage from './pages/AffiliateManagerPage';
 import Inbox from './pages/Inbox';
+import UnifiedConversations from './pages/UnifiedConversations';
 import AdminPanel from './pages/AdminPanel';
 import Trading from './pages/Trading';
 import AgentTeamLive from './pages/AgentTeamLive';
@@ -33,7 +34,7 @@ import Today from './pages/Today';
 import Operations from './pages/Operations';
 
 const validPages = new Set([
-  'dashboard','projects','github','tickets','inbox','news','agent-team','integrations','operations',
+  'dashboard','projects','github','tickets','inbox','team-inbox','news','agent-team','integrations','operations',
   'action-feed','actions','agents','voice-agents','domains','valuation','trading','api-builder','admin',
   'content-engine','highest-self','life-map','health-os','memory-vault','trading-process','family-os',
   'business-os','hs-today','glasses'
@@ -66,8 +67,6 @@ function AppContent() {
     try { localStorage.setItem('liv8_sidebar_collapsed', sidebarCollapsed ? '1' : '0'); } catch {}
   }, [sidebarCollapsed]);
 
-  // OAuth integrations redirect back with ?page=integrations. Honor it and then keep
-  // client navigation clean without losing the provider success/error parameters.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const requested = params.get('page');
@@ -87,7 +86,8 @@ function AppContent() {
       case 'projects': return <Projects />;
       case 'github': return <GitHub />;
       case 'tickets': return <AffiliateManagerPage />;
-      case 'inbox': return <Inbox />;
+      case 'inbox': return <UnifiedConversations />;
+      case 'team-inbox': return <Inbox />;
       case 'news': return <Trading />;
       case 'agent-team': return <AgentTeamLive />;
       case 'integrations': return <Integrations />;
@@ -120,16 +120,8 @@ function AppContent() {
   return (
     <div className={`flex min-h-screen bg-theme transition-colors duration-300 ${isDark ? 'theme-dark' : 'theme-light'}`}>
       <style>{`
-        /* META SV is part of the operating shell, not a 2XL-only accessory. */
-        @media (min-width: 1280px) {
-          [data-testid="god-view-rail"] { display: flex !important; }
-        }
-        /* Theme the twin rail along with the rest of Command Center. */
-        .theme-light [data-testid="god-view-rail"] > section {
-          background: rgba(255,255,255,.96) !important;
-          border-color: rgba(124,58,237,.18) !important;
-          box-shadow: 0 18px 48px rgba(15,23,42,.10) !important;
-        }
+        @media (min-width: 1280px) { [data-testid="god-view-rail"] { display: flex !important; } }
+        .theme-light [data-testid="god-view-rail"] > section { background: rgba(255,255,255,.96) !important; border-color: rgba(124,58,237,.18) !important; box-shadow: 0 18px 48px rgba(15,23,42,.10) !important; }
         .theme-light [data-testid="god-view-rail"] .text-white { color: #111827 !important; }
         .theme-light [data-testid="god-view-rail"] .text-gray-300 { color: #374151 !important; }
         .theme-light [data-testid="god-view-rail"] .text-gray-400 { color: #4b5563 !important; }
@@ -138,23 +130,11 @@ function AppContent() {
         .theme-light [data-testid="god-view-rail"] .bg-black\/60 { background: rgba(255,255,255,.82) !important; }
       `}</style>
       <MobileMenuButton onClick={toggleSidebar} isDark={isDark} />
-      <Sidebar
-        activePage={activePage}
-        setActivePage={setActivePage}
-        isOpen={sidebarOpen}
-        onToggle={toggleSidebar}
-        collapsed={sidebarCollapsed}
-        onCollapse={toggleSidebarCollapsed}
-      />
+      <Sidebar activePage={activePage} setActivePage={setActivePage} isOpen={sidebarOpen} onToggle={toggleSidebar} collapsed={sidebarCollapsed} onCollapse={toggleSidebarCollapsed} />
       <main className={`flex-1 ${sidebarCollapsed ? 'lg:ml-20' : 'lg:ml-64'} p-4 sm:p-6 lg:p-8 pt-20 lg:pt-8 min-h-screen xl:pr-[390px] transition-[margin] duration-300`}>{renderPage()}</main>
       <GodViewRail activePage={activePage} onNavigate={handleNavigate} />
       <ChatWidget onNavigate={handleNavigate} />
-      <button
-        onClick={() => setDictationOpen(true)}
-        className={`fixed bottom-6 left-6 ${sidebarCollapsed ? 'lg:left-[104px]' : 'lg:left-[280px]'} z-[70] p-3.5 rounded-full shadow-xl transition-all hover:scale-110 bg-gradient-to-br from-green-500 to-cyan-500 text-white ring-1 ring-white/20 hover:shadow-green-500/30`}
-        title="LIV8 Voice Router — speak once, send anywhere"
-        aria-label="Open LIV8 Voice Router"
-      >
+      <button onClick={() => setDictationOpen(true)} className={`fixed bottom-6 left-6 ${sidebarCollapsed ? 'lg:left-[104px]' : 'lg:left-[280px]'} z-[70] p-3.5 rounded-full shadow-xl transition-all hover:scale-110 bg-gradient-to-br from-green-500 to-cyan-500 text-white ring-1 ring-white/20 hover:shadow-green-500/30`} title="LIV8 Voice Router — speak once, send anywhere" aria-label="Open LIV8 Voice Router">
         <svg xmlns="http://www.w3.org/2000/svg" width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
       </button>
       <VoiceRouter isOpen={dictationOpen} onClose={() => setDictationOpen(false)} onNavigate={handleNavigate} />
@@ -162,8 +142,5 @@ function AppContent() {
   );
 }
 
-function App() {
-  return <ThemeProvider><AuthProvider><AppContent /></AuthProvider></ThemeProvider>;
-}
-
+function App() { return <ThemeProvider><AuthProvider><AppContent /></AuthProvider></ThemeProvider>; }
 export default App;
