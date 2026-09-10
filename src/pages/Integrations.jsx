@@ -1,897 +1,248 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Plug,
-  CheckCircle2,
-  XCircle,
-  RefreshCw,
-  ExternalLink,
-  FolderKanban,
-  ListTodo,
-  Zap,
-  Users,
-  Calendar,
-  Clock,
-  ChevronDown,
-  ChevronRight,
-  AlertCircle,
-  Settings,
-  Bot,
-  Play,
-  Copy,
-  ArrowRightLeft,
-  Send
+  AlertCircle, Bot, Calendar, CheckCircle2, ExternalLink, FolderKanban,
+  Mail, Plug, RefreshCw, ShieldCheck, XCircle, Zap
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { API_URL } from '../config';
 
-function Integrations() {
+const asArray = (value) => {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.items)) return value.items;
+  if (Array.isArray(value?.projects)) return value.projects;
+  if (Array.isArray(value?.data)) return value.data;
+  if (Array.isArray(value?.data?.items)) return value.data.items;
+  if (Array.isArray(value?.data?.projects)) return value.data.projects;
+  return [];
+};
+
+const safeJson = async (response) => {
+  try { return await response.json(); } catch { return {}; }
+};
+
+function StatusBadge({ connected, configured, label }) {
+  if (connected) {
+    return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-1 text-xs text-emerald-400"><CheckCircle2 className="h-3 w-3"/>{label || 'Connected'}</span>;
+  }
+  if (configured) {
+    return <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-1 text-xs text-amber-400"><AlertCircle className="h-3 w-3"/>Configured</span>;
+  }
+  return <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/15 px-2 py-1 text-xs text-rose-400"><XCircle className="h-3 w-3"/>Not connected</span>;
+}
+
+function Card({ title, subtitle, icon: Icon, status, children, isDark }) {
+  return <section className={`rounded-xl border p-5 ${isDark ? 'border-white/10 bg-[#0a0a0f]' : 'border-gray-200 bg-white shadow-sm'}`}>
+    <div className="mb-4 flex items-start justify-between gap-3">
+      <div className="flex items-center gap-3">
+        <div className="rounded-lg bg-cyan-500/10 p-2"><Icon className="h-5 w-5 text-cyan-400"/></div>
+        <div>
+          <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>{title}</h3>
+          {subtitle && <p className="text-xs text-gray-500">{subtitle}</p>}
+        </div>
+      </div>
+      {status}
+    </div>
+    {children}
+  </section>;
+}
+
+export default function Integrations() {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
-
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState({});
+  const [error, setError] = useState('');
   const [integrationStatus, setIntegrationStatus] = useState({});
   const [googleStatus, setGoogleStatus] = useState({ configured: false, connected: false });
-
-  // Taskade State
-  const [taskadeWorkspaces, setTaskadeWorkspaces] = useState([]);
-  const [taskadeProjects, setTaskadeProjects] = useState({});
-  const [expandedWorkspace, setExpandedWorkspace] = useState(null);
-  const [loadingProjects, setLoadingProjects] = useState({});
-
-  // Nifty State
   const [niftyStatus, setNiftyStatus] = useState({ authenticated: false });
   const [niftyProjects, setNiftyProjects] = useState([]);
-  const [niftyAuthUrl, setNiftyAuthUrl] = useState('');
-
-  // TaskMagic State
-  const [taskmagicWebhook, setTaskmagicWebhook] = useState({ configured: false });
-  const [taskmagicMCP, setTaskmagicMCP] = useState({ configured: false, connected: false });
-  const [taskmagicBots, setTaskmagicBots] = useState([]);
-
-  // Unified Task State
-  const [unifiedCommand, setUnifiedCommand] = useState('');
-  const [commandResult, setCommandResult] = useState(null);
-  const [executingCommand, setExecutingCommand] = useState(false);
-
-  // Sync State
+  const [taskadeWorkspaces, setTaskadeWorkspaces] = useState([]);
+  const [taskmagicStatus, setTaskmagicStatus] = useState({ configured: false, connected: false });
   const [syncStatus, setSyncStatus] = useState(null);
-  const [syncHistory, setSyncHistory] = useState([]);
-  const [syncLoading, setSyncLoading] = useState(false);
-  const [selectedSourceProject, setSelectedSourceProject] = useState(null);
-  const [selectedTargetProject, setSelectedTargetProject] = useState(null);
-  const [syncing, setSyncing] = useState(false);
 
-  // Browser-side API key state
-  const [taskadeKeyInput, setTaskadeKeyInput] = useState(localStorage.getItem('liv8_taskade_api_key') || '');
-  const [taskadeKeySaved, setTaskadeKeySaved] = useState(!!localStorage.getItem('liv8_taskade_api_key'));
-
-  useEffect(() => {
-    loadIntegrationStatus();
-    loadSyncStatus();
-    loadGoogleStatus();
-    const hash = new URLSearchParams(window.location.hash.replace(/^#/,''));
-    const accessToken = hash.get('access_token');
-    if (accessToken) {
-      fetch(`${API_URL}/api/google/connect-token`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({accessToken}) })
-        .then(r=>r.json()).then(data=>{ if(data.connected)setGoogleStatus(data); window.history.replaceState({},'',window.location.pathname+window.location.search); });
+  const fetchWithTimeout = useCallback(async (url, options = {}, timeoutMs = 6000) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
     }
   }, []);
 
-  const loadGoogleStatus = async () => { try { const r=await fetch(`${API_URL}/api/google/status`); if(r.ok)setGoogleStatus(await r.json()); } catch {} };
-  const connectGoogle = async () => {
-    const redirectUri = `${window.location.origin}${window.location.pathname}`;
-    const r = await fetch(`${API_URL}/api/calendar/oauth-url?redirect_uri=${encodeURIComponent(redirectUri)}`);
-    const data = await r.json().catch(()=>({}));
-    if (!r.ok || !data.url) return alert(data.error || 'Google OAuth is not configured on the Command Center API.');
-    window.location.assign(data.url);
-  };
-
-  // ============================================
-  // SYNC FUNCTIONS
-  // ============================================
-
-  const loadSyncStatus = async () => {
+  const loadGoogle = useCallback(async () => {
     try {
-      const [statusRes, historyRes] = await Promise.all([
-        fetch(`${API_URL}/api/sync/status`),
-        fetch(`${API_URL}/api/sync/history?limit=10`)
-      ]);
-
-      if (statusRes.ok) {
-        const data = await statusRes.json();
-        setSyncStatus(data);
-      }
-      if (historyRes.ok) {
-        const data = await historyRes.json();
-        setSyncHistory(data.history || []);
-      }
-    } catch (error) {
-      console.error('Failed to load sync status:', error);
+      const r = await fetchWithTimeout(`${API_URL}/api/google/status`);
+      if (r.ok) setGoogleStatus(await safeJson(r));
+    } catch (e) {
+      console.warn('Google status unavailable:', e?.message);
     }
-  };
+  }, [fetchWithTimeout]);
 
-  const performProjectSync = async () => {
-    if (!selectedSourceProject || !selectedTargetProject) {
-      alert('Please select both source and target projects');
-      return;
-    }
-
-    setSyncing(true);
+  const loadNifty = useCallback(async () => {
     try {
-      const response = await fetch(`${API_URL}/api/sync/projects`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sourcePlatform: selectedSourceProject.platform,
-          sourceProjectId: selectedSourceProject.id,
-          targetPlatform: selectedTargetProject.platform,
-          targetProjectId: selectedTargetProject.id
-        })
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        alert(`Sync complete! Created: ${result.created?.length || 0}, Skipped: ${result.skipped?.length || 0}`);
-        loadSyncStatus();
-      } else {
-        const error = await response.json();
-        alert(`Sync failed: ${error.error}`);
-      }
-    } catch (error) {
-      alert(`Sync failed: ${error.message}`);
-    }
-    setSyncing(false);
-  };
-
-  const getAllProjects = () => {
-    const projects = [];
-
-    // Taskade projects
-    Object.entries(taskadeProjects).forEach(([workspaceId, prjs]) => {
-      prjs.forEach(p => {
-        const workspace = taskadeWorkspaces.find(w => w.id === workspaceId);
-        projects.push({
-          id: p.id,
-          name: `${workspace?.name || 'Workspace'} / ${p.name}`,
-          platform: 'taskade'
-        });
-      });
-    });
-
-    // Nifty projects
-    niftyProjects.forEach(p => {
-      projects.push({
-        id: p.id,
-        name: p.name,
-        platform: 'nifty'
-      });
-    });
-
-    return projects;
-  };
-
-  const loadIntegrationStatus = async () => {
-    setLoading(true);
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
-      const response = await fetch(`${API_URL}/api/integrations/status`, { signal: controller.signal });
-      clearTimeout(timeout);
-      if (response.ok) {
-        const data = await response.json();
-        setIntegrationStatus(data);
-
-        // Load Taskade if configured
-        if (data.taskade?.configured) {
-          loadTaskadeWorkspaces();
-        }
-
-        // Check Nifty auth status
-        loadNiftyStatus();
-
-        // Check TaskMagic status - handle both old and new format
-        if (data.taskmagic?.webhook || data.taskmagic?.configured) {
-          setTaskmagicWebhook({
-            configured: data.taskmagic?.webhook?.configured || data.taskmagic?.configured,
-            connected: data.taskmagic?.webhook?.connected || data.taskmagic?.configured
-          });
-        }
-        if (data.taskmagic?.mcp?.configured) {
-          setTaskmagicMCP(data.taskmagic.mcp);
-          loadTaskmagicBots();
-        } else {
-          // Check MCP status separately
-          loadTaskmagicMCPStatus();
-        }
-        setLoading(false);
+      const statusRes = await fetchWithTimeout(`${API_URL}/api/nifty/auth/status`);
+      const status = statusRes.ok ? await safeJson(statusRes) : { authenticated: false };
+      setNiftyStatus(status || { authenticated: false });
+      if (!status?.authenticated) {
+        setNiftyProjects([]);
         return;
       }
-    } catch (error) {
-      console.warn('Backend unavailable:', error.message);
+      const projectsRes = await fetchWithTimeout(`${API_URL}/api/nifty/projects`);
+      if (projectsRes.ok) {
+        const payload = await safeJson(projectsRes);
+        setNiftyProjects(asArray(payload));
+      } else setNiftyProjects([]);
+    } catch (e) {
+      console.warn('Nifty status unavailable:', e?.message);
+      setNiftyProjects([]);
     }
-    // Fallback: Try loading Taskade with browser-side key
-    const storedTaskadeKey = localStorage.getItem('liv8_taskade_api_key');
-    if (storedTaskadeKey) {
-      setIntegrationStatus(prev => ({ ...prev, taskade: { configured: true } }));
-      loadTaskadeWorkspaces();
-    }
-    setLoading(false);
-  };
+  }, [fetchWithTimeout]);
 
-  // ============================================
-  // TASKADE FUNCTIONS
-  // ============================================
-
-  const loadTaskadeWorkspaces = async () => {
-    setRefreshing(prev => ({ ...prev, taskade: true }));
-    // Try server first
+  const loadTaskade = useCallback(async () => {
     try {
-      const response = await fetch(`${API_URL}/api/taskade/workspaces`);
-      if (response.ok) {
-        const data = await response.json();
-        const items = data.items || [];
-        if (items.length > 0) {
-          setTaskadeWorkspaces(items);
-          setRefreshing(prev => ({ ...prev, taskade: false }));
-          return;
-        }
-      }
-    } catch (error) {
-      console.warn('Server unavailable for Taskade:', error.message);
+      const r = await fetchWithTimeout(`${API_URL}/api/taskade/workspaces`);
+      if (r.ok) setTaskadeWorkspaces(asArray(await safeJson(r)));
+      else setTaskadeWorkspaces([]);
+    } catch (e) {
+      console.warn('Taskade status unavailable:', e?.message);
+      setTaskadeWorkspaces([]);
     }
-    // Try browser-side with stored API key
-    const storedKey = localStorage.getItem('liv8_taskade_api_key');
-    if (storedKey) {
-      try {
-        const response = await fetch('https://www.taskade.com/api/v1/workspaces', {
-          headers: { 'Authorization': `Bearer ${storedKey}` }
+  }, [fetchWithTimeout]);
+
+  const loadTaskmagic = useCallback(async () => {
+    try {
+      const r = await fetchWithTimeout(`${API_URL}/api/taskmagic/mcp/status`);
+      if (r.ok) {
+        const payload = await safeJson(r);
+        setTaskmagicStatus({
+          configured: !!payload?.configured,
+          connected: !!payload?.connected,
         });
-        if (response.ok) {
-          const data = await response.json();
-          setTaskadeWorkspaces(data.items || []);
-          setTaskadeKeySaved(true);
-        }
+      }
+    } catch (e) {
+      console.warn('TaskMagic status unavailable:', e?.message);
+    }
+  }, [fetchWithTimeout]);
+
+  const loadSync = useCallback(async () => {
+    try {
+      const r = await fetchWithTimeout(`${API_URL}/api/sync/status`);
+      if (r.ok) setSyncStatus(await safeJson(r));
+    } catch (e) {
+      console.warn('Sync status unavailable:', e?.message);
+    }
+  }, [fetchWithTimeout]);
+
+  const loadAll = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      let status = {};
+      try {
+        const r = await fetchWithTimeout(`${API_URL}/api/integrations/status`);
+        if (r.ok) status = await safeJson(r);
       } catch (e) {
-        console.warn('Browser-side Taskade fetch failed:', e);
+        console.warn('Integration status endpoint unavailable:', e?.message);
       }
+      setIntegrationStatus(status || {});
+      await Promise.allSettled([loadGoogle(), loadNifty(), loadTaskade(), loadTaskmagic(), loadSync()]);
+    } catch (e) {
+      console.error('Integrations page load failed:', e);
+      setError('Some integration statuses could not be loaded. The page is staying available so you can retry safely.');
+    } finally {
+      setLoading(false);
     }
-    setRefreshing(prev => ({ ...prev, taskade: false }));
-  };
+  }, [fetchWithTimeout, loadGoogle, loadNifty, loadTaskade, loadTaskmagic, loadSync]);
 
-  const loadTaskadeProjects = async (workspaceId) => {
-    if (taskadeProjects[workspaceId]) {
-      setExpandedWorkspace(expandedWorkspace === workspaceId ? null : workspaceId);
-      return;
-    }
+  useEffect(() => { loadAll(); }, [loadAll]);
 
-    setLoadingProjects(prev => ({ ...prev, [workspaceId]: true }));
+  useEffect(() => {
+    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    const accessToken = hash.get('access_token');
+    if (!accessToken) return;
+    fetch(`${API_URL}/api/google/connect-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accessToken }),
+    }).then(safeJson).then(data => {
+      if (data?.connected) setGoogleStatus(data);
+      window.history.replaceState({}, '', window.location.pathname + window.location.search);
+    }).catch(e => console.warn('Google token exchange failed:', e?.message));
+  }, []);
+
+  const connectGoogle = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/taskade/workspaces/${workspaceId}/projects`);
-      if (response.ok) {
-        const data = await response.json();
-        setTaskadeProjects(prev => ({ ...prev, [workspaceId]: data.items || [] }));
-        setExpandedWorkspace(workspaceId);
+      const redirectUri = `${window.location.origin}${window.location.pathname}`;
+      const r = await fetchWithTimeout(`${API_URL}/api/calendar/oauth-url?redirect_uri=${encodeURIComponent(redirectUri)}`);
+      const data = await safeJson(r);
+      if (!r.ok || !data?.url) {
+        alert(data?.error || 'Google OAuth is not configured on the Command Center API.');
+        return;
       }
-    } catch (error) {
-      console.error('Failed to load Taskade projects:', error);
-    }
-    setLoadingProjects(prev => ({ ...prev, [workspaceId]: false }));
-  };
-
-  // ============================================
-  // NIFTY FUNCTIONS
-  // ============================================
-
-  const loadNiftyStatus = async () => {
-    try {
-      const response = await fetch(`${API_URL}/api/nifty/auth/status`);
-      if (response.ok) {
-        const data = await response.json();
-        setNiftyStatus(data);
-
-        if (data.authenticated) {
-          loadNiftyProjects();
-        } else {
-          const urlResponse = await fetch(`${API_URL}/api/nifty/auth/url`);
-          if (urlResponse.ok) {
-            const urlData = await urlResponse.json();
-            setNiftyAuthUrl(urlData.url);
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Failed to load Nifty status:', error);
+      window.location.assign(data.url);
+    } catch (e) {
+      alert(`Google connection could not start: ${e?.message || 'Unknown error'}`);
     }
   };
 
-  const loadNiftyProjects = async () => {
-    setRefreshing(prev => ({ ...prev, nifty: true }));
-    try {
-      const response = await fetch(`${API_URL}/api/nifty/projects`);
-      if (response.ok) {
-        const data = await response.json();
-        setNiftyProjects(data.projects || data || []);
-      }
-    } catch (error) {
-      console.error('Failed to load Nifty projects:', error);
-    }
-    setRefreshing(prev => ({ ...prev, nifty: false }));
-  };
+  const totalProjects = useMemo(() => niftyProjects.length, [niftyProjects]);
+  const cardText = isDark ? 'text-gray-400' : 'text-gray-600';
 
-  const handleNiftyAuth = () => {
-    if (niftyAuthUrl) {
-      window.open(niftyAuthUrl, '_blank');
-    }
-  };
-
-  // ============================================
-  // TASKMAGIC MCP FUNCTIONS
-  // ============================================
-
-  const loadTaskmagicMCPStatus = async () => {
-    try {
-      const response = await fetch(`${API_URL}/api/taskmagic/mcp/status`);
-      if (response.ok) {
-        const data = await response.json();
-        setTaskmagicMCP(data);
-        if (data.configured && data.connected) {
-          loadTaskmagicBots();
-        }
-      }
-    } catch (error) {
-      console.error('Failed to load TaskMagic MCP status:', error);
-    }
-  };
-
-  const loadTaskmagicBots = async () => {
-    setRefreshing(prev => ({ ...prev, taskmagic: true }));
-    try {
-      const response = await fetch(`${API_URL}/api/taskmagic/mcp/bots`);
-      if (response.ok) {
-        const data = await response.json();
-        setTaskmagicBots(data.bots || []);
-      }
-    } catch (error) {
-      console.error('Failed to load TaskMagic bots:', error);
-    }
-    setRefreshing(prev => ({ ...prev, taskmagic: false }));
-  };
-
-  const runBot = async (botId) => {
-    try {
-      const response = await fetch(`${API_URL}/api/taskmagic/mcp/bots/${botId}/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
-      });
-      if (response.ok) {
-        alert('Bot started successfully!');
-      }
-    } catch (error) {
-      console.error('Failed to run bot:', error);
-    }
-  };
-
-  // ============================================
-  // UNIFIED TASK FUNCTIONS
-  // ============================================
-
-  const executeUnifiedCommand = async () => {
-    if (!unifiedCommand.trim()) return;
-
-    setExecutingCommand(true);
-    setCommandResult(null);
-    try {
-      const response = await fetch(`${API_URL}/api/unified/command`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: unifiedCommand })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setCommandResult(data);
-      } else {
-        setCommandResult({ error: 'Command failed' });
-      }
-    } catch (error) {
-      setCommandResult({ error: error.message });
-    }
-    setExecutingCommand(false);
-  };
-
-  // ============================================
-  // RENDER HELPERS
-  // ============================================
-
-  const StatusBadge = ({ connected, configured }) => {
-    if (connected) {
-      return (
-        <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-green-500/20 text-green-400 text-xs">
-          <CheckCircle2 className="w-3 h-3" />
-          Connected
-        </span>
-      );
-    }
-    if (configured) {
-      return (
-        <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-yellow-500/20 text-yellow-400 text-xs">
-          <AlertCircle className="w-3 h-3" />
-          Configured
-        </span>
-      );
-    }
-    return (
-      <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-red-500/20 text-red-400 text-xs">
-        <XCircle className="w-3 h-3" />
-        Not Connected
-      </span>
-    );
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <RefreshCw className="w-8 h-8 text-purple-500 animate-spin" />
+  return <div className="space-y-6 animate-slide-in">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h1 className={`text-3xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Integrations</h1>
+        <p className={`mt-1 text-sm ${cardText}`}>Connection health for Command Center services. A failed API response will no longer crash the whole app.</p>
       </div>
-    );
-  }
-
-  return (
-    <div className="space-y-8 animate-slide-in">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className={`text-3xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-            Integrations
-          </h1>
-          <p className={isDark ? 'text-gray-400' : 'text-gray-600'}>
-            Connect and manage your productivity tools
-          </p>
-        </div>
-        <button
-          onClick={loadIntegrationStatus}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-            isDark
-              ? 'bg-purple-600/20 text-purple-400 hover:bg-purple-600/30'
-              : 'bg-purple-100 text-purple-600 hover:bg-purple-200'
-          }`}
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Refresh All
-        </button>
-      </div>
-
-      {/* Unified Command Bar */}
-      <div className={`rounded-xl border p-4 ${
-        isDark ? 'bg-[#0a0a0f] border-purple-900/30' : 'bg-white border-gray-200 shadow-sm'
-      }`}>
-        <div className="flex items-center gap-2 mb-3">
-          <ArrowRightLeft className="w-5 h-5 text-purple-400" />
-          <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-            Unified Task Command
-          </h3>
-        </div>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={unifiedCommand}
-            onChange={(e) => setUnifiedCommand(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && executeUnifiedCommand()}
-            placeholder='Try: "List all tasks", "Show Taskade projects", "Trigger automation deploy-bot"'
-            className={`flex-1 px-4 py-2 rounded-lg border ${
-              isDark
-                ? 'bg-black/50 border-purple-900/30 text-white placeholder-gray-500'
-                : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400'
-            }`}
-          />
-          <button
-            onClick={executeUnifiedCommand}
-            disabled={executingCommand}
-            className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50"
-          >
-            {executingCommand ? (
-              <RefreshCw className="w-4 h-4 animate-spin" />
-            ) : (
-              <Send className="w-4 h-4" />
-            )}
-            Execute
-          </button>
-        </div>
-        {commandResult && (
-          <div className={`mt-3 p-3 rounded-lg text-sm ${
-            commandResult.error
-              ? 'bg-red-500/10 text-red-400'
-              : isDark ? 'bg-white/5 text-gray-300' : 'bg-gray-100 text-gray-700'
-          }`}>
-            <pre className="whitespace-pre-wrap overflow-x-auto">
-              {JSON.stringify(commandResult, null, 2)}
-            </pre>
-          </div>
-        )}
-      </div>
-
-      {/* Integration Cards Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-
-        {/* GOOGLE WORKSPACE CARD */}
-        <div className={`rounded-xl border p-6 ${isDark ? 'bg-[#0a0a0f] border-cyan-900/30' : 'bg-white border-gray-200 shadow-sm'}`}>
-          <div className="flex items-center justify-between mb-4"><div className="flex items-center gap-3"><div className="p-2 rounded-lg bg-cyan-500/20"><Mail className="w-6 h-6 text-cyan-400" /></div><div><h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>Google Workspace</h3><p className="text-xs text-gray-500">Gmail + Google Calendar</p></div></div><StatusBadge connected={googleStatus.connected} configured={googleStatus.configured} /></div>
-          {googleStatus.connected?<div className="space-y-3"><div className="flex items-center gap-2 text-sm text-emerald-400"><CheckCircle2 className="w-4 h-4"/>Gmail connected</div><div className="flex items-center gap-2 text-sm text-emerald-400"><Calendar className="w-4 h-4"/>Calendar connected</div><p className="text-xs text-gray-500">{googleStatus.email}</p></div>:<div><p className="text-sm text-gray-400 mb-3">Connect once to authorize both services.</p><button onClick={connectGoogle} disabled={!googleStatus.configured} className="w-full px-4 py-2 rounded-lg bg-cyan-600 text-white disabled:opacity-40"><ExternalLink className="w-4 h-4 inline mr-2"/>Connect Google</button>{!googleStatus.configured&&<p className="text-xs text-amber-400 mt-2">GOOGLE_CLIENT_ID must be added to the API service.</p>}</div>}
-        </div>
-
-        {/* TASKADE CARD */}
-        <div className={`rounded-xl border p-6 ${
-          isDark ? 'bg-[#0a0a0f] border-purple-900/30' : 'bg-white border-gray-200 shadow-sm'
-        }`}>
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-blue-500/20">
-                <FolderKanban className="w-6 h-6 text-blue-400" />
-              </div>
-              <div>
-                <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>Taskade</h3>
-                <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>Project Management</p>
-              </div>
-            </div>
-            <StatusBadge connected={taskadeWorkspaces.length > 0} configured={integrationStatus.taskade?.configured} />
-          </div>
-
-          {taskadeWorkspaces.length > 0 ? (
-            <div className="space-y-2 max-h-64 overflow-y-auto">
-              <div className="flex items-center justify-between mb-2">
-                <span className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>{taskadeWorkspaces.length} Workspaces</span>
-                <button onClick={loadTaskadeWorkspaces} disabled={refreshing.taskade} className={`p-1 rounded ${isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}>
-                  <RefreshCw className={`w-4 h-4 ${refreshing.taskade ? 'animate-spin' : ''} ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />
-                </button>
-              </div>
-              {taskadeWorkspaces.map((workspace) => (
-                <div key={workspace.id} className={`rounded-lg border ${isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-gray-50'}`}>
-                  <button onClick={() => loadTaskadeProjects(workspace.id)} className={`w-full flex items-center justify-between p-3 text-left ${isDark ? 'hover:bg-white/5' : 'hover:bg-gray-100'}`}>
-                    <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{workspace.name}</span>
-                    {loadingProjects[workspace.id] ? <RefreshCw className="w-4 h-4 animate-spin text-purple-400" /> : expandedWorkspace === workspace.id ? <ChevronDown className={`w-4 h-4 ${isDark ? 'text-gray-400' : 'text-gray-500'}`} /> : <ChevronRight className={`w-4 h-4 ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />}
-                  </button>
-                  {expandedWorkspace === workspace.id && taskadeProjects[workspace.id] && (
-                    <div className={`border-t px-3 pb-3 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
-                      {taskadeProjects[workspace.id].length === 0 ? (
-                        <p className={`text-xs py-2 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>No projects found</p>
-                      ) : (
-                        taskadeProjects[workspace.id].map((project) => (
-                          <div key={project.id} className={`flex items-center gap-2 py-2 text-sm ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                            <ListTodo className="w-3 h-3 text-blue-400" />
-                            {project.name}
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {taskadeKeySaved && (
-                <div className="flex items-center gap-2 text-xs text-green-400">
-                  <CheckCircle2 className="w-3 h-3" />
-                  <span>API key saved locally</span>
-                </div>
-              )}
-              <div className="space-y-2">
-                <input
-                  type="password"
-                  value={taskadeKeyInput}
-                  onChange={(e) => setTaskadeKeyInput(e.target.value)}
-                  placeholder="Enter Taskade API Key"
-                  className={`w-full px-3 py-2 rounded-lg border text-sm ${
-                    isDark ? 'bg-black/30 border-white/10 text-white placeholder-gray-600' : 'bg-gray-50 border-gray-200'
-                  }`}
-                />
-                <button
-                  onClick={() => {
-                    localStorage.setItem('liv8_taskade_api_key', taskadeKeyInput);
-                    setTaskadeKeySaved(true);
-                    loadTaskadeWorkspaces();
-                  }}
-                  disabled={!taskadeKeyInput}
-                  className="w-full px-3 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
-                >
-                  Save & Connect
-                </button>
-              </div>
-              <p className={`text-xs ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>
-                Get your API key from Taskade Settings → API
-              </p>
-            </div>
-          )}
-        </div>
-
-        {/* NIFTY PM CARD */}
-        <div className={`rounded-xl border p-6 ${isDark ? 'bg-[#0a0a0f] border-purple-900/30' : 'bg-white border-gray-200 shadow-sm'}`}>
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-green-500/20">
-                <Calendar className="w-6 h-6 text-green-400" />
-              </div>
-              <div>
-                <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>Nifty PM</h3>
-                <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>Project Management</p>
-              </div>
-            </div>
-            <StatusBadge connected={niftyStatus.authenticated} configured={integrationStatus.nifty?.configured} />
-          </div>
-
-          {niftyStatus.authenticated ? (
-            <div className="space-y-2 max-h-64 overflow-y-auto">
-              <div className="flex items-center justify-between mb-2">
-                <span className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>{niftyProjects.length} Projects</span>
-                <button onClick={loadNiftyProjects} disabled={refreshing.nifty} className={`p-1 rounded ${isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}>
-                  <RefreshCw className={`w-4 h-4 ${refreshing.nifty ? 'animate-spin' : ''} ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />
-                </button>
-              </div>
-              {niftyProjects.map((project) => (
-                <div key={project.id} className={`flex items-center justify-between p-3 rounded-lg border ${isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-gray-50'}`}>
-                  <div className="flex items-center gap-2">
-                    <FolderKanban className="w-4 h-4 text-green-400" />
-                    <span className={`text-sm ${isDark ? 'text-white' : 'text-gray-900'}`}>{project.name}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : integrationStatus.nifty?.configured ? (
-            <div className="text-center py-4">
-              <p className={`text-sm mb-3 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>OAuth authentication required</p>
-              <button onClick={handleNiftyAuth} className="flex items-center gap-2 mx-auto px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors">
-                <ExternalLink className="w-4 h-4" />
-                Connect Nifty
-              </button>
-            </div>
-          ) : (
-            <div className={`text-center py-4 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-              <p className="text-sm">OAuth credentials not configured</p>
-              <p className="text-xs mt-1">Set NIFTY_CLIENT_ID and NIFTY_CLIENT_SECRET</p>
-            </div>
-          )}
-        </div>
-
-        {/* TASKMAGIC CARD */}
-        <div className={`rounded-xl border p-6 ${isDark ? 'bg-[#0a0a0f] border-purple-900/30' : 'bg-white border-gray-200 shadow-sm'}`}>
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-purple-500/20">
-                <Zap className="w-6 h-6 text-purple-400" />
-              </div>
-              <div>
-                <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>TaskMagic</h3>
-                <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>Automation Platform</p>
-              </div>
-            </div>
-            <StatusBadge connected={taskmagicMCP.connected || taskmagicWebhook.connected} configured={taskmagicMCP.configured || taskmagicWebhook.configured} />
-          </div>
-
-          <div className="space-y-3">
-            {/* Webhook Status */}
-            <div className={`p-3 rounded-lg border ${isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-gray-50'}`}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Plug className="w-4 h-4 text-purple-400" />
-                  <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Webhook</span>
-                </div>
-                <StatusBadge connected={taskmagicWebhook.connected} configured={taskmagicWebhook.configured} />
-              </div>
-            </div>
-
-            {/* MCP Status */}
-            <div className={`p-3 rounded-lg border ${isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-gray-50'}`}>
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <Bot className="w-4 h-4 text-cyan-400" />
-                  <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>MCP Control</span>
-                </div>
-                <StatusBadge connected={taskmagicMCP.connected} configured={taskmagicMCP.configured} />
-              </div>
-
-              {taskmagicMCP.connected && taskmagicBots.length > 0 ? (
-                <div className="space-y-2 mt-3">
-                  <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>{taskmagicBots.length} Bots Available</p>
-                  {taskmagicBots.slice(0, 3).map((bot) => (
-                    <div key={bot.id} className="flex items-center justify-between">
-                      <span className={`text-xs ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>{bot.name}</span>
-                      <button
-                        onClick={() => runBot(bot.id)}
-                        className="p-1 rounded bg-purple-500/20 text-purple-400 hover:bg-purple-500/30"
-                      >
-                        <Play className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : taskmagicMCP.configured ? (
-                <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>Connecting to MCP...</p>
-              ) : (
-                <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>Set TASKMAGIC_MCP_TOKEN for full control</p>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Integration Summary */}
-      <div className={`rounded-xl border p-6 ${isDark ? 'bg-[#0a0a0f] border-purple-900/30' : 'bg-white border-gray-200 shadow-sm'}`}>
-        <h3 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>Integration Status Summary</h3>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <div className={`p-4 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
-            <p className={`text-2xl font-bold ${taskadeWorkspaces.length > 0 ? 'text-green-400' : isDark ? 'text-gray-500' : 'text-gray-400'}`}>{taskadeWorkspaces.length}</p>
-            <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Taskade Workspaces</p>
-          </div>
-          <div className={`p-4 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
-            <p className={`text-2xl font-bold ${niftyProjects.length > 0 ? 'text-green-400' : isDark ? 'text-gray-500' : 'text-gray-400'}`}>{niftyProjects.length}</p>
-            <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Nifty Projects</p>
-          </div>
-          <div className={`p-4 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
-            <p className={`text-2xl font-bold ${taskmagicWebhook.configured ? 'text-green-400' : isDark ? 'text-gray-500' : 'text-gray-400'}`}>{taskmagicWebhook.configured ? '1' : '0'}</p>
-            <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>TaskMagic Webhooks</p>
-          </div>
-          <div className={`p-4 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
-            <p className={`text-2xl font-bold ${taskmagicBots.length > 0 ? 'text-cyan-400' : isDark ? 'text-gray-500' : 'text-gray-400'}`}>{taskmagicBots.length}</p>
-            <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>TaskMagic Bots</p>
-          </div>
-          <div className={`p-4 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
-            <p className="text-2xl font-bold text-purple-400">
-              {[integrationStatus.taskade?.configured, integrationStatus.nifty?.configured, taskmagicWebhook.configured, taskmagicMCP.configured].filter(Boolean).length}
-            </p>
-            <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Total Configured</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Cross-Platform Sync */}
-      <div className={`rounded-xl border p-6 ${isDark ? 'bg-[#0a0a0f] border-cyan-900/30' : 'bg-white border-cyan-200 shadow-sm'}`}>
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-cyan-500/20">
-              <ArrowRightLeft className="w-6 h-6 text-cyan-400" />
-            </div>
-            <div>
-              <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>Cross-Platform Task Sync</h3>
-              <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Sync tasks between Taskade and Nifty automatically</p>
-            </div>
-          </div>
-          <button
-            onClick={loadSyncStatus}
-            className={`p-2 rounded-lg ${isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}
-          >
-            <RefreshCw className={`w-4 h-4 ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />
-          </button>
-        </div>
-
-        {/* Sync Status */}
-        {syncStatus && (
-          <div className="grid grid-cols-3 gap-4 mb-6">
-            <div className={`p-3 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
-              <p className="text-xl font-bold text-cyan-400">{syncStatus.mappings || 0}</p>
-              <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Task Mappings</p>
-            </div>
-            <div className={`p-3 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
-              <p className="text-xl font-bold text-purple-400">{syncStatus.activeConfigs || 0}</p>
-              <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Active Sync Rules</p>
-            </div>
-            <div className={`p-3 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
-              <p className="text-xl font-bold text-green-400">
-                {Object.values(syncStatus.platforms || {}).filter(Boolean).length}
-              </p>
-              <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Platforms Connected</p>
-            </div>
-          </div>
-        )}
-
-        {/* Sync Setup */}
-        <div className={`p-4 rounded-lg border mb-4 ${isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-gray-50'}`}>
-          <h4 className={`font-medium mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>Set Up Project Sync</h4>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className={`block text-xs mb-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Source Project</label>
-              <select
-                value={selectedSourceProject ? `${selectedSourceProject.platform}:${selectedSourceProject.id}` : ''}
-                onChange={(e) => {
-                  const [platform, id] = e.target.value.split(':');
-                  const proj = getAllProjects().find(p => p.platform === platform && p.id === id);
-                  setSelectedSourceProject(proj || null);
-                }}
-                className={`w-full px-3 py-2 rounded-lg border text-sm ${
-                  isDark
-                    ? 'bg-black/50 border-purple-900/30 text-white'
-                    : 'bg-white border-gray-200 text-gray-900'
-                }`}
-              >
-                <option value="">Select source...</option>
-                {getAllProjects().map((p) => (
-                  <option key={`${p.platform}:${p.id}`} value={`${p.platform}:${p.id}`}>
-                    [{p.platform.toUpperCase()}] {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className={`block text-xs mb-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Target Project</label>
-              <select
-                value={selectedTargetProject ? `${selectedTargetProject.platform}:${selectedTargetProject.id}` : ''}
-                onChange={(e) => {
-                  const [platform, id] = e.target.value.split(':');
-                  const proj = getAllProjects().find(p => p.platform === platform && p.id === id);
-                  setSelectedTargetProject(proj || null);
-                }}
-                className={`w-full px-3 py-2 rounded-lg border text-sm ${
-                  isDark
-                    ? 'bg-black/50 border-purple-900/30 text-white'
-                    : 'bg-white border-gray-200 text-gray-900'
-                }`}
-              >
-                <option value="">Select target...</option>
-                {getAllProjects().filter(p =>
-                  !selectedSourceProject || p.platform !== selectedSourceProject.platform || p.id !== selectedSourceProject.id
-                ).map((p) => (
-                  <option key={`${p.platform}:${p.id}`} value={`${p.platform}:${p.id}`}>
-                    [{p.platform.toUpperCase()}] {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <button
-            onClick={performProjectSync}
-            disabled={syncing || !selectedSourceProject || !selectedTargetProject}
-            className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {syncing ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                Syncing...
-              </>
-            ) : (
-              <>
-                <ArrowRightLeft className="w-4 h-4" />
-                Sync Projects
-              </>
-            )}
-          </button>
-          <p className={`text-xs mt-2 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-            This will copy all tasks from source to target and enable auto-sync for future changes
-          </p>
-        </div>
-
-        {/* Recent Sync History */}
-        {syncHistory.length > 0 && (
-          <div>
-            <h4 className={`font-medium mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>Recent Sync Activity</h4>
-            <div className="space-y-2 max-h-40 overflow-y-auto">
-              {syncHistory.map((item, index) => (
-                <div
-                  key={index}
-                  className={`flex items-center justify-between p-2 rounded text-sm ${
-                    isDark ? 'bg-white/5' : 'bg-gray-50'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className={`w-2 h-2 rounded-full ${
-                      item.status === 'success' ? 'bg-green-400' :
-                      item.status === 'error' ? 'bg-red-400' : 'bg-yellow-400'
-                    }`} />
-                    <span className={isDark ? 'text-gray-300' : 'text-gray-700'}>
-                      {item.action}: {item.task_title || item.source_platform} → {item.target_platform}
-                    </span>
-                  </div>
-                  <span className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                    {new Date(item.created_at).toLocaleTimeString()}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
+      <button onClick={loadAll} disabled={loading} className="inline-flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50">
+        <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`}/>Refresh all
+      </button>
     </div>
-  );
-}
 
-export default Integrations;
+    {error && <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">{error}</div>}
+
+    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <Card isDark={isDark} title="Google Workspace" subtitle="Gmail + Google Calendar" icon={Mail}
+        status={<StatusBadge connected={!!googleStatus?.connected} configured={!!googleStatus?.configured}/>}> 
+        {googleStatus?.connected ? <div className="space-y-2 text-sm text-emerald-400">
+          <div className="flex items-center gap-2"><Mail className="h-4 w-4"/>Gmail connected</div>
+          <div className="flex items-center gap-2"><Calendar className="h-4 w-4"/>Calendar connected</div>
+          {googleStatus?.email && <p className="text-xs text-gray-500">{googleStatus.email}</p>}
+        </div> : <div className="space-y-3">
+          <p className={`text-sm ${cardText}`}>Authorize Google once for both Gmail and Calendar.</p>
+          <button onClick={connectGoogle} className="w-full rounded-lg bg-cyan-600 px-3 py-2 text-sm font-semibold text-white hover:bg-cyan-700"><ExternalLink className="mr-2 inline h-4 w-4"/>Connect Google</button>
+        </div>}
+      </Card>
+
+      <Card isDark={isDark} title="Nifty PM" subtitle="Project management" icon={FolderKanban}
+        status={<StatusBadge connected={!!niftyStatus?.authenticated} configured={!!integrationStatus?.nifty?.configured}/>}> 
+        {niftyStatus?.authenticated ? <div>
+          <p className={`text-sm ${cardText}`}>{totalProjects} project{totalProjects === 1 ? '' : 's'} available</p>
+          <div className="mt-3 max-h-48 space-y-2 overflow-y-auto">
+            {niftyProjects.slice(0, 12).map((project, i) => <div key={project?.id || `nifty-${i}`} className={`rounded-lg border px-3 py-2 text-sm ${isDark ? 'border-white/10 bg-white/5 text-gray-300' : 'border-gray-200 bg-gray-50 text-gray-700'}`}>{project?.name || project?.title || 'Untitled project'}</div>)}
+          </div>
+        </div> : <p className={`text-sm ${cardText}`}>Nifty is not currently authenticated with this Command Center session.</p>}
+      </Card>
+
+      <Card isDark={isDark} title="Taskade" subtitle="Legacy project connection" icon={Plug}
+        status={<StatusBadge connected={taskadeWorkspaces.length > 0} configured={!!integrationStatus?.taskade?.configured}/>}> 
+        <p className={`text-sm ${cardText}`}>{taskadeWorkspaces.length ? `${taskadeWorkspaces.length} workspace${taskadeWorkspaces.length === 1 ? '' : 's'} found.` : 'No Taskade workspaces returned.'}</p>
+      </Card>
+
+      <Card isDark={isDark} title="TaskMagic" subtitle="Automation / MCP" icon={Bot}
+        status={<StatusBadge connected={taskmagicStatus.connected} configured={taskmagicStatus.configured}/>}> 
+        <p className={`text-sm ${cardText}`}>{taskmagicStatus.connected ? 'TaskMagic MCP is responding.' : 'TaskMagic MCP is not currently responding.'}</p>
+      </Card>
+
+      <Card isDark={isDark} title="Sync Engine" subtitle="Cross-tool synchronization" icon={Zap}
+        status={<StatusBadge connected={!!(syncStatus?.connected || syncStatus?.healthy || syncStatus?.status === 'ok')} configured={!!syncStatus}/>}> 
+        <p className={`text-sm ${cardText}`}>{syncStatus ? 'Sync status endpoint is available.' : 'Sync status is unavailable right now.'}</p>
+      </Card>
+
+      <Card isDark={isDark} title="Page Guard" subtitle="Crash protection" icon={ShieldCheck}
+        status={<StatusBadge connected label="Active"/>}> 
+        <p className={`text-sm ${cardText}`}>Malformed integration payloads are normalized to safe arrays and failed requests are isolated instead of blanking the app.</p>
+      </Card>
+    </div>
+  </div>;
+}
