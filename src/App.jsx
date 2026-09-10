@@ -6,22 +6,19 @@ import ChatWidget from './components/ChatWidget';
 import VoiceRouter from './components/VoiceRouter';
 import VaultLogin from './components/VaultLogin';
 import GodViewRail from './components/GodViewRail';
-import Dashboard from './pages/Dashboard';
 import CommandDashboard from './pages/CommandDashboard';
 import Projects from './pages/Projects';
 import Agents from './pages/Agents';
-import NiftyTasks from './pages/NiftyTasks';
 import Domains from './pages/Domains';
 import Valuation from './pages/Valuation';
 import GitHub from './pages/GitHub';
 import AffiliateManagerPage from './pages/AffiliateManagerPage';
 import Inbox from './pages/Inbox';
 import AdminPanel from './pages/AdminPanel';
-import News from './pages/News';
+import Trading from './pages/Trading';
 import AgentTeamLive from './pages/AgentTeamLive';
 import Integrations from './pages/Integrations';
-import ActionFeed from './pages/ActionFeed';
-import Trading from './pages/Trading';
+import TradingProcessLive from './pages/TradingProcessLive';
 import VoiceAgents from './pages/VoiceAgents';
 import APIBuilder from './pages/APIBuilder';
 import Glasses from './pages/Glasses';
@@ -30,17 +27,16 @@ import LifeMap from './pages/LifeMap';
 import HighestSelf from './pages/HighestSelf';
 import HealthCommandCenter from './pages/HealthCommandCenter';
 import MemoryVault from './pages/MemoryVault';
-import TradingProcessLive from './pages/TradingProcessLive';
 import FamilyOS from './pages/FamilyOS';
 import BusinessOS from './pages/BusinessOS';
 import Today from './pages/Today';
+import Operations from './pages/Operations';
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
   const { theme } = useTheme();
-  // Every fresh Command Center session starts at Morning Command.
-  // Navigation still persists during the session; a reload intentionally returns to the operating brief.
-  const [activePage, setActivePage] = useState(() => window.location.hash.includes('access_token=') ? 'integrations' : 'hs-today');
+  // Dashboard is the stable home. OAuth callbacks still land on Integrations.
+  const [activePage, setActivePage] = useState(() => window.location.hash.includes('access_token=') ? 'integrations' : 'dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [dictationOpen, setDictationOpen] = useState(false);
   const isDark = theme === 'dark';
@@ -61,19 +57,21 @@ function AppContent() {
     switch (activePage) {
       case 'dashboard': return <CommandDashboard />;
       case 'projects': return <Projects />;
-      case 'agents': return <Agents />;
-      case 'actions': return <NiftyTasks />;
-      case 'domains': return <Domains />;
-      case 'valuation': return <Valuation />;
       case 'github': return <GitHub />;
       case 'tickets': return <AffiliateManagerPage />;
       case 'inbox': return <Inbox />;
       case 'news': return <Trading />;
       case 'agent-team': return <AgentTeamLive />;
       case 'integrations': return <Integrations />;
-      case 'action-feed': return <ActionFeed />;
-      case 'trading': return <TradingProcessLive />;
+      case 'operations': return <Operations onNavigate={setActivePage} />;
+      // Legacy routes stay alive while their UI is absorbed into the operating surfaces.
+      case 'action-feed': return <Operations onNavigate={setActivePage} />;
+      case 'actions': return <Operations onNavigate={setActivePage} />;
+      case 'agents': return <Agents />;
       case 'voice-agents': return <VoiceAgents />;
+      case 'domains': return <Domains />;
+      case 'valuation': return <Valuation />;
+      case 'trading': return <TradingProcessLive />;
       case 'api-builder': return <APIBuilder />;
       case 'admin': return <AdminPanel />;
       case 'content-engine': return <CreatorControlRoomLive />;
@@ -86,7 +84,7 @@ function AppContent() {
       case 'business-os': return <BusinessOS />;
       case 'hs-today': return <Today onNavigate={setActivePage} />;
       case 'glasses': return <Glasses onExit={() => setActivePage('dashboard')} />;
-      default: return <Today onNavigate={setActivePage} />;
+      default: return <CommandDashboard />;
     }
   };
 
