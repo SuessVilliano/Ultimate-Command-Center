@@ -1,3 +1,5 @@
+import { registerOlivIngestRoutes } from './oliv-ingest-routes.js';
+
 const API_BASE = 'https://services.leadconnectorhq.com';
 const SANDBOX_FORM_ID = process.env.GHL_AFFILIATE_SANDBOX_FORM_ID || 'TVI6Ch94dCiqvm94KpFN';
 
@@ -63,6 +65,8 @@ async function findExactContact({ identifier, email, promoterId }) {
 }
 
 export function registerAffiliateCrmRoutes(app) {
+  registerOlivIngestRoutes(app);
+
   app.get('/api/affiliate/crm-note/status', (_req, res) => {
     const { pit, locationId } = config();
     res.json({
