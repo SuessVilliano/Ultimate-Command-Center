@@ -1,6 +1,7 @@
 import * as ollama from '../lib/ollama-provider.js';
 import { getCommanderPrompt } from '../lib/system-prompt.js';
 import { CAPABILITIES, SOURCE_OF_TRUTH } from '../lib/capability-registry.js';
+import { executeAction, resolveAction } from '../lib/juno-action-registry.js';
 import { registerJunoGatewayRoutes } from './juno-gateway-routes.js';
 
 const PORT = () => process.env.PORT || 3005;
@@ -10,18 +11,16 @@ const DOMAIN_PATTERNS = {
   health: /\b(health|oura|apple health|heart|bpm|heart rate|hrv|sleep|readiness|recovery|stress|steps|activity|exercise|workout|spo2|oxygen|respiratory|weight|body fat)\b/i,
   trading: /\b(trad(e|ing)|signal|mnq|nq|nasdaq|qqe|regime|market cause|broker|position|pnl|performance|journal|setup|stop loss|take profit|ctrader)\b/i,
   nifty: /\b(nifty|project|projects|task|tasks|team|teammate|inbox|blocker|blocked|owner|ownership|message|messages|conversation)\b/i,
-  calendar: /\b(calendar|schedule|meeting|appointment|availability|free time|today's events|today events|commitment)\b/i,
+  calendar: /\b(calendar|schedule|meeting|appointment|availability|free time|today's events|today events|commitment|event)\b/i,
   ghl: /\b(ghl|gohighlevel|highlevel|crm|contact|contacts|pipeline|opportunity|opportunities|affiliate|partner|workflow)\b/i,
   github: /\b(github|repo|repository|code|pull request|\bpr\b|branch|commit|deploy|deployment|ci)\b/i,
 };
 
-const WRITE_RE = /\b(send|reply|post|publish|delete|archive|remove|move|assign|complete|close|cancel|schedule|book|create|update|edit|enroll|merge|deploy|place|execute|modify)\b/i;
+const WRITE_RE = /\b(send|reply|post|publish|delete|archive|remove|move|assign|complete|close|cancel|schedule|book|create|update|edit|enroll|merge|deploy|place|execute|modify|add|put)\b/i;
 const READ_RE = /\b(check|show|tell|what|how|summarize|summary|review|analyze|analyse|compare|find|read|look|status|latest|current|today|why)\b/i;
 
 function detectDomains(message = '') {
-  return Object.entries(DOMAIN_PATTERNS)
-    .filter(([, re]) => re.test(message))
-    .map(([domain]) => domain);
+  return Object.entries(DOMAIN_PATTERNS).filter(([, re]) => re.test(message)).map(([domain]) => domain);
 }
 
 function looksLikeExternalWrite(message = '') {
@@ -42,10 +41,8 @@ function clip(value, max = 6000) {
 
 async function internal(path, { method = 'GET', body } = {}) {
   const res = await fetch(`http://127.0.0.1:${PORT()}${path}`, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(20000),
+    method, headers: { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(20000),
   });
   let data;
   try { data = await res.json(); } catch { data = { text: await res.text().catch(() => '') }; }
@@ -55,12 +52,8 @@ async function internal(path, { method = 'GET', body } = {}) {
 
 async function tool(name, fn) {
   const started = Date.now();
-  try {
-    const data = await fn();
-    return { name, ok: true, ms: Date.now() - started, data };
-  } catch (error) {
-    return { name, ok: false, ms: Date.now() - started, error: error?.message || 'Tool failed' };
-  }
+  try { return { name, ok: true, ms: Date.now() - started, data: await fn() }; }
+  catch (error) { return { name, ok: false, ms: Date.now() - started, error: error?.message || 'Tool failed' }; }
 }
 
 async function collectHealth() {
@@ -75,22 +68,11 @@ async function collectHealth() {
 
 async function collectTrading(message) {
   const symbol = symbolFrom(message);
-  const jobs = [
-    tool('hybrid_journal.status', () => internal('/api/trading/hybrid-journal/status')),
-  ];
-
-  if (/\b(signal|trade|position|latest|sync|journal)\b/i.test(message)) {
-    jobs.push(tool('hybrid_journal.snapshot', () => internal('/api/trading/hybrid-journal/snapshot?limit=100')));
-  }
-  if (/\b(qqe|brief|briefing|setup|trade plan)\b/i.test(message)) {
-    jobs.push(tool('hybrid_journal.qqe', () => internal('/api/trading/hybrid-journal/briefing', { method: 'POST', body: { symbol, use_bible: true } })));
-  }
-  if (/\b(regime|market cause|driving|why.*market|market.*why)\b/i.test(message)) {
-    jobs.push(tool('hybrid_journal.regime', () => internal('/api/trading/hybrid-journal/regime', { method: 'POST', body: { symbol, action: 'analyze' } })));
-  }
-  if (/\b(performance|weekly|history|last .*trade|compare.*trade|analy[sz]e.*trade)\b/i.test(message)) {
-    jobs.push(tool('hybrid_journal.performance', () => internal('/api/trading/hybrid-journal/analyze', { method: 'POST', body: { analysisType: 'weekly_summary' } })));
-  }
+  const jobs = [tool('hybrid_journal.status', () => internal('/api/trading/hybrid-journal/status'))];
+  if (/\b(signal|trade|position|latest|sync|journal)\b/i.test(message)) jobs.push(tool('hybrid_journal.snapshot', () => internal('/api/trading/hybrid-journal/snapshot?limit=100')));
+  if (/\b(qqe|brief|briefing|setup|trade plan)\b/i.test(message)) jobs.push(tool('hybrid_journal.qqe', () => internal('/api/trading/hybrid-journal/briefing', { method: 'POST', body: { symbol, use_bible: true } })));
+  if (/\b(regime|market cause|driving|why.*market|market.*why)\b/i.test(message)) jobs.push(tool('hybrid_journal.regime', () => internal('/api/trading/hybrid-journal/regime', { method: 'POST', body: { symbol, action: 'analyze' } })));
+  if (/\b(performance|weekly|history|last .*trade|compare.*trade|analy[sz]e.*trade)\b/i.test(message)) jobs.push(tool('hybrid_journal.performance', () => internal('/api/trading/hybrid-journal/analyze', { method: 'POST', body: { analysisType: 'weekly_summary' } })));
   return Promise.all(jobs);
 }
 
@@ -100,20 +82,17 @@ async function collectNifty(message) {
     tool('nifty.chats', () => internal('/api/nifty/mcp/chats?limit=12')),
     tool('nifty.projects', () => internal('/api/nifty/projects')),
   ]);
-
   const chatsResult = out.find(x => x.name === 'nifty.chats' && x.ok)?.data;
   const chats = chatsResult?.chats || [];
   if (/\b(team|message|messages|conversation|inbox|said|reply)\b/i.test(message) && chats.length) {
-    const messageReads = chats.slice(0, 4).map(c =>
-      tool(`nifty.chat.${c.id}`, () => internal(`/api/nifty/mcp/chats/${encodeURIComponent(c.id)}/messages?limit=20`))
-    );
-    out.push(...await Promise.all(messageReads));
+    out.push(...await Promise.all(chats.slice(0, 4).map(c => tool(`nifty.chat.${c.id}`, () => internal(`/api/nifty/mcp/chats/${encodeURIComponent(c.id)}/messages?limit=20`)))));
   }
   return out;
 }
 
 async function collectCalendar() {
   return Promise.all([
+    tool('calendar.connected', () => internal('/api/connectors/calendar/events?limit=50')),
     tool('calendar.today', () => internal('/api/calendar/today')),
     tool('calendar.upcoming', () => internal('/api/calendar/upcoming?hours=48')),
   ]);
@@ -131,9 +110,7 @@ async function collectGhl(message) {
 
 async function collectGithub(message) {
   const repoMatch = message.match(/(?:repo|repository)\s+([A-Za-z0-9_.-]+)/i);
-  if (repoMatch?.[1]) {
-    return [tool('github.repo_focus', () => internal('/api/intent', { method: 'POST', body: { intent: 'repo_focus', params: { repo: repoMatch[1] } } }))];
-  }
+  if (repoMatch?.[1]) return [tool('github.repo_focus', () => internal('/api/intent', { method: 'POST', body: { intent: 'repo_focus', params: { repo: repoMatch[1] } } }))];
   return [tool('github.capability', async () => ({ note: 'GitHub is available to the DevOps agent. Name a repository for a live repo-focused read.' }))];
 }
 
@@ -145,24 +122,18 @@ async function collectTools(message, domains) {
   if (domains.includes('calendar')) groups.push(collectCalendar());
   if (domains.includes('ghl')) groups.push(collectGhl(message));
   if (domains.includes('github')) groups.push(collectGithub(message));
-  const nested = await Promise.all(groups);
-  return nested.flat();
+  return (await Promise.all(groups)).flat();
 }
 
 function toolContext(results) {
-  const blocks = results.map(r => r.ok
-    ? `TOOL ${r.name} (confirmed result):\n${clip(r.data)}`
-    : `TOOL ${r.name} (unavailable): ${r.error}`);
-  return blocks.join('\n\n').slice(0, MAX_TOOL_CONTEXT);
+  return results.map(r => r.ok ? `TOOL ${r.name} (confirmed result):\n${clip(r.data)}` : `TOOL ${r.name} (unavailable): ${r.error}`).join('\n\n').slice(0, MAX_TOOL_CONTEXT);
 }
 
 async function synthesize(message, domains, results) {
-  const context = toolContext(results);
-  const prompt = getCommanderPrompt(`\nREAL TOOL RESULTS FOR THIS REQUEST:\n${context}`);
+  const prompt = getCommanderPrompt(`\nREAL TOOL RESULTS FOR THIS REQUEST:\n${toolContext(results)}`);
   const result = await ollama.chat([{ role: 'user', content: message }], {
     systemPrompt: `${prompt}\n\nOPERATOR RESPONSE RULES:\n- Answer from confirmed tool results above.\n- Say which source you checked naturally when useful.\n- If a tool failed or is not configured, say that clearly.\n- Never imply a write occurred.\n- Keep the answer operational: what matters, what needs attention, and the best next move.`,
-    maxTokens: 1000,
-    temperature: 0.35,
+    maxTokens: 1000, temperature: 0.35,
   });
   return { response: result.text, provider: result.provider, model: result.model, domains };
 }
@@ -172,8 +143,7 @@ function approvalResponse(message, domains) {
     response: `I understand the action you want. I’m holding the external write for approval rather than acting silently. I can still inspect the source system first, show you exactly what will change, then execute through its gated route.`,
     approvalRequired: true,
     proposedAction: { request: message, domains, policy: domains.includes('trading') ? 'live trading uses the dedicated confirmation gate' : 'external write requires explicit confirmation' },
-    toolsUsed: [],
-    provider: 'operator',
+    toolsUsed: [], provider: 'operator',
   };
 }
 
@@ -181,15 +151,29 @@ export async function operate(message) {
   const domains = detectDomains(message);
   if (!domains.length) return null;
 
+  // An explicit "add/create/schedule/put ... calendar/event" command in the Command Center
+  // is itself the user's instruction to write the event. Route it through the real connected
+  // calendar adapter and only report success after the connector confirms it.
+  const explicitAction = resolveAction(message);
+  if (explicitAction?.name === 'calendar.create') {
+    const executed = await executeAction(explicitAction, { source: 'command_center_chat', explicitUserInstruction: true });
+    return {
+      response: `Added “${explicitAction.params.summary}” to your connected calendar.`,
+      operated: true,
+      executionConfirmed: true,
+      action: explicitAction,
+      toolsUsed: [{ name: 'calendar.create', ok: true, ms: executed.ms }],
+      result: executed.data,
+      provider: 'operator',
+      domains: ['calendar'],
+    };
+  }
+
   if (looksLikeExternalWrite(message)) return approvalResponse(message, domains);
 
   const results = await collectTools(message, domains);
   const synthesized = await synthesize(message, domains, results);
-  return {
-    ...synthesized,
-    operated: true,
-    toolsUsed: results.map(r => ({ name: r.name, ok: r.ok, ms: r.ms, error: r.error || null })),
-  };
+  return { ...synthesized, operated: true, toolsUsed: results.map(r => ({ name: r.name, ok: r.ok, ms: r.ms, error: r.error || null })) };
 }
 
 function findRoute(app, path) {
@@ -203,7 +187,6 @@ function patchChatRoute(app, path) {
   const layer = route.stack[0];
   if (layer.handle?.__liv8OperatorWrapped) return true;
   const original = layer.handle;
-
   const wrapped = async function liv8OperatorChat(req, res, next) {
     const message = req.body?.message || req.body?.prompt || '';
     if (!message) return original(req, res, next);
@@ -225,13 +208,9 @@ export function registerOperatorRoutes(app) {
   app.get('/api/commander/tools/status', async (req, res) => {
     const local = await ollama.status();
     res.json({
-      ok: true,
-      localAI: local,
-      sourceOfTruth: SOURCE_OF_TRUTH,
-      capabilities: CAPABILITIES,
-      chatInterception: ['/api/chat', '/api/commander/chat'],
-      gateway: '/api/juno/gateway/command',
-      policy: { safeReads: 'automatic', writes: 'approval_gated', liveTrading: 'dedicated_confirmation_gate' },
+      ok: true, localAI: local, sourceOfTruth: SOURCE_OF_TRUTH, capabilities: CAPABILITIES,
+      chatInterception: ['/api/chat', '/api/commander/chat'], gateway: '/api/juno/gateway/command',
+      policy: { safeReads: 'automatic', explicitCalendarWrites: 'automatic after explicit user command', otherWrites: 'approval_gated', liveTrading: 'dedicated_confirmation_gate' },
     });
   });
 
@@ -245,9 +224,7 @@ export function registerOperatorRoutes(app) {
         return res.json({ response: ai.text, provider: ai.provider, model: ai.model, operated: false, toolsUsed: [] });
       }
       res.json(result);
-    } catch (error) {
-      res.status(500).json({ error: error?.message || 'Operator failed' });
-    }
+    } catch (error) { res.status(500).json({ error: error?.message || 'Operator failed' }); }
   });
 
   registerJunoGatewayRoutes(app, operate);
