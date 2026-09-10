@@ -1,9 +1,9 @@
 import React from 'react';
 import {
-  LayoutDashboard, FolderKanban, Bot, Zap, ExternalLink, Github, Ticket,
+  LayoutDashboard, Bot, Zap, ExternalLink, Github, Ticket,
   Sun, Moon, Users, LogOut, Shield, MessageSquare, TrendingUp, Plug, Inbox,
   X, Menu, BarChart3, Terminal, Glasses, Network, Heart, Target, Sparkles,
-  Briefcase, Sunrise, ChevronDown, ChevronRight
+  Briefcase, Sunrise, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -21,7 +21,8 @@ const highestSelfItems = [
 
 // Keep the permanent sidebar reserved for daily operating surfaces.
 // Voice Agents + Agent Config live under Agent Team. Domains + Valuation live under Business OS.
-// Action Feed + Action Items are unified under Operations.
+// Action Feed + Action Items are unified under Operations. Nifty owns project-management truth,
+// so legacy Projects remains routable but is no longer a permanent nav item.
 const mainItems = [
   { id: 'tickets', label: 'GHL', icon: Ticket },
   { id: 'content-engine', label: 'Content Engine', icon: TrendingUp },
@@ -29,7 +30,6 @@ const mainItems = [
   { id: 'api-builder', label: 'API / MCP Builder', icon: Terminal },
   { id: 'agent-team', label: 'Agent Team', icon: Bot },
   { id: 'inbox', label: 'Team Inbox', icon: MessageSquare },
-  { id: 'projects', label: 'Projects', icon: FolderKanban },
   { id: 'github', label: 'GitHub', icon: Github },
   { id: 'integrations', label: 'Integrations', icon: Plug },
   { id: 'glasses', label: 'Glasses Mode', icon: Glasses },
@@ -44,7 +44,7 @@ const quickLinks = [
   { label: 'GitHub', url: 'https://github.com/SuessVilliano' },
 ];
 
-function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
+function Sidebar({ activePage, setActivePage, isOpen, onToggle, collapsed = false, onCollapse }) {
   const { theme, toggleTheme } = useTheme();
   const { currentUser, logout, isAdmin } = useAuth();
   const isDark = theme === 'dark';
@@ -52,7 +52,7 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
   const [hsOpen, setHsOpen] = React.useState(() => {
     try { return localStorage.getItem('hs_group_open') === '1'; } catch { return false; }
   });
-  const showHsItems = hsOpen || hsActive;
+  const showHsItems = !collapsed && (hsOpen || hsActive);
 
   const handleNavClick = (pageId) => {
     setActivePage(pageId);
@@ -60,17 +60,21 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
   };
 
   const toggleHs = () => {
+    if (collapsed) {
+      onCollapse?.();
+      setHsOpen(true);
+      try { localStorage.setItem('hs_group_open', '1'); } catch {}
+      return;
+    }
     const next = !hsOpen;
     setHsOpen(next);
     try { localStorage.setItem('hs_group_open', next ? '1' : '0'); } catch {}
   };
 
   const navClass = (active, accent = 'purple') => {
-    if (active) {
-      return accent === 'teal'
-        ? 'bg-teal-600/20 text-teal-400 border border-teal-500/30'
-        : 'bg-purple-600/20 text-purple-400 border border-purple-500/30';
-    }
+    if (active) return accent === 'teal'
+      ? 'bg-teal-600/20 text-teal-400 border border-teal-500/30'
+      : 'bg-purple-600/20 text-purple-400 border border-purple-500/30';
     return isDark
       ? 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
       : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100 border border-transparent';
@@ -78,99 +82,53 @@ function Sidebar({ activePage, setActivePage, isOpen, onToggle }) {
 
   const userLabel = currentUser?.name || currentUser?.email || currentUser?.username || 'SV';
   const userSub = currentUser?.email || currentUser?.role || 'Command Center';
+  const itemLayout = collapsed ? 'justify-center px-2' : 'gap-3 px-3';
 
   return (
     <>
       {isOpen && <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={onToggle} />}
-
-      <aside className={`fixed left-0 top-0 h-screen w-64 flex flex-col border-r transition-all duration-300 z-50 ${
-        isDark ? 'bg-[#050508] border-purple-900/30' : 'bg-white border-gray-200'
-      } ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
-        <div className={`p-5 border-b ${isDark ? 'border-purple-900/30' : 'border-gray-200'}`}>
-          <div className="flex items-center justify-between">
-            <button onClick={() => handleNavClick('dashboard')} className="flex items-center gap-3 text-left">
-              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-purple-600 to-cyan-500 flex items-center justify-center">
-                <Zap className="w-6 h-6 text-white" />
-              </div>
-              <div>
-                <h1 className={`text-lg font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>LIV8</h1>
-                <p className="text-xs text-gray-500">Command Center</p>
-              </div>
+      <aside className={`fixed left-0 top-0 h-screen flex flex-col border-r transition-[width,transform,background-color] duration-300 z-50 ${collapsed ? 'w-20' : 'w-64'} ${isDark ? 'bg-[#050508] border-purple-900/30' : 'bg-white border-gray-200'} ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+        <div className={`p-3 border-b ${isDark ? 'border-purple-900/30' : 'border-gray-200'}`}>
+          <div className={`flex items-center ${collapsed ? 'flex-col gap-2' : 'justify-between'}`}>
+            <button onClick={() => handleNavClick('dashboard')} className={`flex items-center text-left ${collapsed ? 'justify-center' : 'gap-3'}`} title="Dashboard">
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-purple-600 to-cyan-500 flex items-center justify-center shrink-0"><Zap className="w-6 h-6 text-white" /></div>
+              {!collapsed && <div><h1 className={`text-lg font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>LIV8</h1><p className="text-xs text-gray-500">Command Center</p></div>}
             </button>
-            <div className="flex items-center gap-1">
-              <button onClick={toggleTheme} className={`p-2 rounded-lg ${isDark ? 'hover:bg-white/10 text-gray-400' : 'hover:bg-gray-100 text-gray-600'}`} title={`Switch to ${isDark ? 'light' : 'dark'} mode`}>
-                {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-              </button>
-              <button onClick={onToggle} className={`p-2 rounded-lg lg:hidden ${isDark ? 'hover:bg-white/10 text-gray-400' : 'hover:bg-gray-100 text-gray-600'}`}>
-                <X className="w-5 h-5" />
-              </button>
+            <div className={`flex items-center gap-1 ${collapsed ? 'flex-col' : ''}`}>
+              <button onClick={toggleTheme} className={`p-2 rounded-lg ${isDark ? 'hover:bg-white/10 text-gray-400' : 'hover:bg-gray-100 text-gray-600'}`} title={`Switch to ${isDark ? 'light' : 'dark'} mode`}>{isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}</button>
+              <button onClick={onCollapse} className={`hidden lg:block p-2 rounded-lg ${isDark ? 'hover:bg-white/10 text-gray-400' : 'hover:bg-gray-100 text-gray-600'}`} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>{collapsed ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}</button>
+              <button onClick={onToggle} className={`p-2 rounded-lg lg:hidden ${isDark ? 'hover:bg-white/10 text-gray-400' : 'hover:bg-gray-100 text-gray-600'}`}><X className="w-5 h-5" /></button>
             </div>
           </div>
         </div>
 
         <nav className="flex-1 overflow-y-auto p-3">
-          <button onClick={() => handleNavClick('dashboard')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all ${navClass(activePage === 'dashboard')}`}>
-            <LayoutDashboard className="w-4 h-4" />
-            <span className="font-medium">Dashboard</span>
-          </button>
+          <button title="Dashboard" onClick={() => handleNavClick('dashboard')} className={`w-full flex items-center ${itemLayout} py-2.5 rounded-lg text-sm transition-all ${navClass(activePage === 'dashboard')}`}><LayoutDashboard className="w-4 h-4 shrink-0" />{!collapsed && <span className="font-medium">Dashboard</span>}</button>
 
-          {highestSelfItems.length > 0 && (
-            <div className="mt-1 mb-1">
-              <button onClick={toggleHs} className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-all ${
-                hsActive ? 'text-teal-400 bg-teal-500/5' : isDark ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:bg-gray-100'
-              }`}>
-                <span className="flex items-center gap-3"><Sparkles className="w-4 h-4"/><span className="font-medium">Highest Self OS</span></span>
-                <span className="flex items-center gap-1 text-[10px] opacity-70">{!showHsItems && `${highestSelfItems.length} tabs`}{showHsItems ? <ChevronDown className="w-4 h-4"/> : <ChevronRight className="w-4 h-4"/>}</span>
-              </button>
-              {showHsItems && (
-                <div className={`ml-4 mt-1 pl-2 border-l ${isDark ? 'border-teal-500/20' : 'border-teal-200'}`}>
-                  {highestSelfItems.map((item) => {
-                    const Icon = item.icon;
-                    return <button key={item.id} onClick={() => handleNavClick(item.id)} className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition-all ${navClass(activePage === item.id, 'teal')}`}>
-                      <Icon className="w-3.5 h-3.5"/><span className="font-medium">{item.label}</span>
-                    </button>;
-                  })}
-                </div>
-              )}
-            </div>
-          )}
+          {highestSelfItems.length > 0 && <div className="mt-1 mb-1">
+            <button title="Highest Self OS" onClick={toggleHs} className={`w-full flex items-center ${collapsed ? 'justify-center px-2' : 'justify-between px-3'} py-2.5 rounded-lg text-sm transition-all ${hsActive ? 'text-teal-400 bg-teal-500/5' : isDark ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:bg-gray-100'}`}>
+              <span className={`flex items-center ${collapsed ? '' : 'gap-3'}`}><Sparkles className="w-4 h-4 shrink-0"/>{!collapsed && <span className="font-medium">Highest Self OS</span>}</span>
+              {!collapsed && <span className="flex items-center gap-1 text-[10px] opacity-70">{!showHsItems && `${highestSelfItems.length} tabs`}{showHsItems ? <ChevronDown className="w-4 h-4"/> : <ChevronRight className="w-4 h-4"/>}</span>}
+            </button>
+            {showHsItems && <div className={`ml-4 mt-1 pl-2 border-l ${isDark ? 'border-teal-500/20' : 'border-teal-200'}`}>
+              {highestSelfItems.map((item) => { const Icon = item.icon; return <button key={item.id} onClick={() => handleNavClick(item.id)} className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition-all ${navClass(activePage === item.id, 'teal')}`}><Icon className="w-3.5 h-3.5"/><span className="font-medium">{item.label}</span></button>; })}
+            </div>}
+          </div>}
 
-          <div className="mt-1 space-y-1">
-            {mainItems.map((item) => {
-              const Icon = item.icon;
-              return <button key={item.id} onClick={() => handleNavClick(item.id)} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all ${navClass(activePage === item.id)}`}>
-                <Icon className="w-4 h-4"/><span className="font-medium">{item.label}</span>
-              </button>;
-            })}
-          </div>
+          <div className="mt-1 space-y-1">{mainItems.map((item) => { const Icon = item.icon; return <button title={item.label} key={item.id} onClick={() => handleNavClick(item.id)} className={`w-full flex items-center ${itemLayout} py-2.5 rounded-lg text-sm transition-all ${navClass(activePage === item.id)}`}><Icon className="w-4 h-4 shrink-0"/>{!collapsed && <span className="font-medium">{item.label}</span>}</button>; })}</div>
 
-          {isAdmin && (
-            <div className="mt-5">
-              <div className={`px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>Admin</div>
-              <button onClick={() => handleNavClick('admin')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all ${navClass(activePage === 'admin')}`}>
-                <Users className="w-4 h-4"/><span className="font-medium">Team Management</span>
-              </button>
-            </div>
-          )}
+          {isAdmin && <div className="mt-5">
+            {!collapsed && <div className={`px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>Admin</div>}
+            <button title="Team Management" onClick={() => handleNavClick('admin')} className={`w-full flex items-center ${itemLayout} py-2.5 rounded-lg text-sm transition-all ${navClass(activePage === 'admin')}`}><Users className="w-4 h-4 shrink-0"/>{!collapsed && <span className="font-medium">Team Management</span>}</button>
+          </div>}
 
-          <div className="mt-5">
-            <div className={`px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>Quick Links</div>
-            <div className="space-y-0.5">
-              {quickLinks.map((link) => <a key={link.label} href={link.url} target="_blank" rel="noopener noreferrer" className={`flex items-center gap-2 px-3 py-1.5 rounded text-[11px] ${isDark ? 'text-gray-600 hover:text-gray-300 hover:bg-white/5' : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100'}`}>
-                <ExternalLink className="w-3 h-3"/><span>{link.label}</span>
-              </a>)}
-            </div>
-          </div>
+          {!collapsed && <div className="mt-5"><div className={`px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>Quick Links</div><div className="space-y-0.5">{quickLinks.map((link) => <a key={link.label} href={link.url} target="_blank" rel="noopener noreferrer" className={`flex items-center gap-2 px-3 py-1.5 rounded text-[11px] ${isDark ? 'text-gray-600 hover:text-gray-300 hover:bg-white/5' : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100'}`}><ExternalLink className="w-3 h-3"/><span>{link.label}</span></a>)}</div></div>}
         </nav>
 
         <div className={`p-3 border-t ${isDark ? 'border-purple-900/30' : 'border-gray-200'}`}>
           <div className={`rounded-lg border p-2.5 ${isDark ? 'border-purple-500/30 bg-purple-500/5' : 'border-purple-200 bg-purple-50'}`}>
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-cyan-500 text-white text-xs font-bold flex items-center justify-center shrink-0">{String(userLabel).charAt(0).toUpperCase()}</div>
-              <div className="min-w-0 flex-1"><div className={`text-xs font-semibold truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>{userLabel}</div><div className="text-[9px] text-gray-500 truncate">{userSub}</div></div>
-              {isAdmin && <Shield className="w-3.5 h-3.5 text-purple-400"/>}
-            </div>
-            <button onClick={logout} className={`mt-2 w-full flex items-center justify-center gap-2 py-1.5 rounded text-[10px] ${isDark ? 'text-gray-400 hover:bg-white/5 hover:text-white' : 'text-gray-600 hover:bg-white'}`}><LogOut className="w-3 h-3"/>Sign Out</button>
+            <div className={`flex items-center ${collapsed ? 'justify-center' : 'gap-2 min-w-0'}`}><div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-cyan-500 text-white text-xs font-bold flex items-center justify-center shrink-0">{String(userLabel).charAt(0).toUpperCase()}</div>{!collapsed && <><div className="min-w-0 flex-1"><div className={`text-xs font-semibold truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>{userLabel}</div><div className="text-[9px] text-gray-500 truncate">{userSub}</div></div>{isAdmin && <Shield className="w-3.5 h-3.5 text-purple-400"/>}</>}</div>
+            <button title="Sign Out" onClick={logout} className={`mt-2 w-full flex items-center justify-center gap-2 py-1.5 rounded text-[10px] ${isDark ? 'text-gray-400 hover:bg-white/5 hover:text-white' : 'text-gray-600 hover:bg-white'}`}><LogOut className="w-3 h-3"/>{!collapsed && 'Sign Out'}</button>
           </div>
         </div>
       </aside>
