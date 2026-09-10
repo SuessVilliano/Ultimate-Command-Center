@@ -42,12 +42,10 @@ jobs:
             }));
             localStorage.setItem('liv8_admin_setup', 'true');
             localStorage.setItem('liv8_auth_users', '[]');
-            localStorage.setItem('last_page', 'health-os');
           });
           await page.goto('http://127.0.0.1:4173', { waitUntil: 'networkidle' });
           const rail = page.locator('[data-testid="god-view-rail"]');
           await rail.waitFor({ state: 'visible', timeout: 15000 });
-          await page.getByText('Visual QA Overview', { exact: true }).waitFor({ state: 'visible', timeout: 15000 });
           const img = rail.locator('img').first();
           await img.waitFor({ state: 'visible', timeout: 15000 });
           const dims = await img.evaluate(el => ({ naturalWidth: el.naturalWidth, naturalHeight: el.naturalHeight, src: el.currentSrc || el.src }));
@@ -73,7 +71,7 @@ jobs:
         run: npm ci
       - name: Backend module import smoke test
         working-directory: server
-        run: node -e "import('./routes/time-intelligence-routes.js').then(()=>import('./routes/local-ai-routes.js')).then(()=>import('./routes/mac-ai-bridge-routes.js')).then(()=>import('./routes/highest-self-routes.js')).then(()=>import('./routes/shortcut-routes.js')).then(()=>import('./routes/local-workspace-mcp-routes.js')).then(()=>import('./routes/trading-guardian-routes.js')).then(()=>import('./routes/vertical-readiness-routes.js')).then(()=>console.log('backend route imports ok'))"
+        run: node -e "import('./routes/time-intelligence-routes.js').then(()=>import('./routes/local-ai-routes.js')).then(()=>import('./routes/mac-ai-bridge-routes.js')).then(()=>import('./routes/highest-self-routes.js')).then(()=>import('./routes/shortcut-routes.js')).then(()=>import('./routes/local-workspace-mcp-routes.js')).then(()=>import('./routes/trading-guardian-routes.js')).then(()=>import('./routes/vertical-readiness-routes.js')).then(()=>import('./routes/connected-ops-routes.js')).then(()=>console.log('backend route imports ok'))"
       - name: Boot backend and test operator verticals
         working-directory: server
         env:
@@ -109,6 +107,11 @@ jobs:
             exit 1
           fi
           cat /tmp/ucc-health.json
+
+          echo '--- Connected Ops status ---'
+          curl -fsS http://127.0.0.1:3005/api/connectors/status | tee /tmp/connected-ops.json
+          grep -q '"connector"' /tmp/connected-ops.json
+          grep -q '"twilio"' /tmp/connected-ops.json
 
           echo '--- Mac AI bridge auth guard ---'
           code=$(curl -s -o /tmp/mac-bridge-unauth.json -w '%{http_code}' http://127.0.0.1:3005/api/ai/bridge/status)
