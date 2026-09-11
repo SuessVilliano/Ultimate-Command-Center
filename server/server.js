@@ -10,6 +10,7 @@
  */
 
 import express from 'express';
+import { registerCommandReportRoutes } from './routes/command-report-routes.js';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -103,6 +104,8 @@ try {
 } catch (e) {
   console.error('Database initialization failed:', e.message);
 }
+
+registerCommandReportRoutes(app);
 
 // Initialize AI providers
 const aiStatus = ai.initAIProviders({

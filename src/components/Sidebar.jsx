@@ -20,6 +20,7 @@ const highestSelfItems = [
 ].filter((item) => FEATURES.HIGHEST_SELF?.[item.flag]);
 
 const mainItems = [
+  { id: 'reports', label: 'Reports', icon: BarChart3 },
   { id: 'tickets', label: 'GHL', icon: Ticket },
   { id: 'content-engine', label: 'Content Engine', icon: TrendingUp },
   { id: 'trading', label: 'Trading Hub', icon: BarChart3 },
