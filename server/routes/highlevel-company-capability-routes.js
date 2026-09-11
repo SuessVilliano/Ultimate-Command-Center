@@ -38,7 +38,7 @@ export async function getCompanyCapabilityStatus() {
   const capabilities = [
     await check('contacts.readonly', () => highlevel.searchContacts('', { account: 'company', limit: 5 }), 'contacts'),
     await check('conversations.readonly', () => highlevel.searchConversations({ account: 'company', limit: 5 }), 'conversations'),
-    await check('opportunities.readonly', () => highlevel.searchOpportunities({ limit: 5, status: 'all' }, { account: 'company' }), 'opportunities'),
+    await check('opportunities.readonly', () => highlevel.searchOpportunities({ limit: 5 }, { account: 'company' }), 'opportunities'),
   ];
 
   return {
