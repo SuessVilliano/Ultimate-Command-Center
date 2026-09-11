@@ -137,7 +137,8 @@ export function registerCalendarIntelligenceRoutes(app) {
     res.json({ok:true,synced:count});
   });
 
-  console.log('Calendar Intelligence routes registered (read-only Google + authenticated webhook sync)');
+  const c = config();
+  console.log(`Calendar Intelligence routes registered | directGoogle=${Boolean(c.clientId&&c.clientSecret&&c.refreshToken)} | webhook=${Boolean(c.ingestSecret)} | calendar=${c.calendarId}`);
 }
 
 export default registerCalendarIntelligenceRoutes;
