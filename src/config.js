@@ -1,34 +1,34 @@
 /**
  * Application Configuration
  *
- * Uses environment variables when deployed, falls back to localhost for development
+ * Production must never silently fall back to a localhost API. Localhost is
+ * allowed only while the frontend itself is running on localhost/127.0.0.1.
  */
 
-// API Server URL
-// VITE_API_URL should be a full URL (e.g., https://api.example.com)
-export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3005';
+const isBrowser = typeof window !== 'undefined';
+const hostname = isBrowser ? window.location.hostname : '';
+const isLocalHost = hostname === 'localhost' || hostname === '127.0.0.1';
 
-// Voicebox Voice Cloning & TTS Server
-// Local-first voice cloning studio (https://github.com/SuessVilliano/voicebox)
-// Runs on port 8000 in production, 17493 in dev mode
+const configuredApiUrl = import.meta.env.VITE_API_URL;
+export const API_URL = configuredApiUrl || (isLocalHost ? 'http://localhost:3005' : 'https://liv8-command-center-api.onrender.com');
+
+// Voicebox is a local Mac service. Cloud builds may probe it, but cloud AI/TTS
+// must not depend on it. Browser/Edge/server TTS remains the production path.
 export const VOICEBOX_URL = import.meta.env.VITE_VOICEBOX_URL || 'http://localhost:8000';
 
-// Feature flags
 export const FEATURES = {
   AGENT_TEAM: true,
   VOICE_COMMANDS: true,
   SCHEDULED_ANALYSIS: true,
   KNOWLEDGE_BASE: true,
-  // Highest Self OS — additive life-operating-system surfaces.
-  // All read/draft-only; existing names/pages are untouched.
   HIGHEST_SELF: {
-    TODAY: true,        // Highest Self (Today + Self)
-    LIFE_MAP: true,     // Mind-map / web of notes -> master plans
-    HEALTH: true,       // Recomposition + labs
-    TRADING: true,      // Alert-adherence process
-    FAMILY: true,       // Family OS — people, protected dates, all-kids windows
-    BUSINESS: true,     // Business/Creation OS + Idea Orbit
-    GLANCE: true,       // Unified Today glance
+    TODAY: true,
+    LIFE_MAP: true,
+    HEALTH: true,
+    TRADING: true,
+    FAMILY: true,
+    BUSINESS: true,
+    GLANCE: true,
   }
 };
 
