@@ -53,6 +53,8 @@ export function initEmailService() {
       host,
       port,
       secure,
+      connectionTimeout: 15000,
+      socketTimeout: 45000,
       auth: {
         user,
         pass
@@ -560,3 +562,17 @@ export default {
   sendNotification,
   sendUrgentAlert
 };
+
+// Command Center recaps use their own schema, separate from legacy support reports.
+export async function sendCommandReport({ recipient, filename, pdf, report }) {
+  if (!isEmailEnabled()) initEmailService();
+  if (!isEmailEnabled()) throw new Error('SMTP delivery is not configured');
+  const result = await transporter.sendMail({
+    from: emailConfig.from, to: recipient,
+    subject: `LIV8 ${report.cadence} recap | ${report.period.label}`,
+    text: `Your ${report.cadence} Command Center recap is attached.\n\nPeriod: ${report.period.label}\nTimezone: ${report.timezone}\n\nOpen the PDF for your overview, wins, setbacks, metrics, current priorities and source coverage.`,
+    attachments: [{ filename, content: pdf, contentType: 'application/pdf' }],
+  });
+  if (!result.accepted?.length) throw new Error('SMTP server did not accept the recipient');
+  return { messageId: result.messageId };
+}

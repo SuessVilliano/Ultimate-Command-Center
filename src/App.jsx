@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import Reports from './pages/Reports';
+import ReportNotification from './components/ReportNotification';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Sidebar, { MobileMenuButton } from './components/Sidebar';
@@ -36,7 +38,7 @@ import Today from './pages/Today';
 import Operations from './pages/Operations';
 
 const validPages = new Set([
-  'dashboard','projects','github','tickets','inbox','team-inbox','news','agent-team','integrations','operations',
+  'reports','dashboard','projects','github','tickets','inbox','team-inbox','news','agent-team','integrations','operations',
   'action-feed','actions','agents','voice-agents','domains','valuation','trading','api-builder','admin',
   'content-engine','highest-self','life-map','health-os','memory-vault','trading-process','family-os',
   'business-os','hs-today','glasses'
@@ -87,6 +89,7 @@ function AppContent() {
 
   const renderPage = () => {
     switch (activePage) {
+      case 'reports': return <Reports />;
       case 'dashboard': return <CommandDashboard />;
       case 'projects': return <Projects />;
       case 'github': return <GitHub />;
@@ -135,6 +138,7 @@ function AppContent() {
         .theme-light [data-testid="god-view-rail"] .bg-black\/60 { background: rgba(255,255,255,.82) !important; }
       `}</style>
       <MobileMenuButton onClick={toggleSidebar} isDark={isDark} />
+      <ReportNotification onNavigate={setActivePage} />
       <Sidebar activePage={activePage} setActivePage={setActivePage} isOpen={sidebarOpen} onToggle={toggleSidebar} collapsed={sidebarCollapsed} onCollapse={toggleSidebarCollapsed} />
       <main className={`flex-1 ${sidebarCollapsed ? 'lg:ml-20' : 'lg:ml-64'} p-4 sm:p-6 lg:p-8 pt-20 lg:pt-8 min-h-screen ${twinRailExpanded ? 'xl:pr-[390px]' : 'xl:pr-[96px]'} transition-all duration-300`}>{renderPage()}</main>
       <GodViewRail activePage={activePage} onNavigate={handleNavigate} onExpandedChange={setTwinRailExpanded} />
