@@ -1,5 +1,6 @@
 import { highlevel } from '../lib/highlevel-integration.js';
 import { registerHighLevelCompanyCapabilityRoutes } from './highlevel-company-capability-routes.js';
+import { registerCalendarIntelligenceRoutes } from './calendar-intelligence-routes.js';
 
 function contactsFrom(payload) {
   if (Array.isArray(payload)) return payload;
@@ -12,6 +13,7 @@ function assignedUserId(contact = {}) {
 
 export function registerHighLevelCompanyHealthRoutes(app) {
   registerHighLevelCompanyCapabilityRoutes(app);
+  registerCalendarIntelligenceRoutes(app);
 
   app.get('/api/highlevel/company-health', async (_req, res) => {
     const account = 'company';
