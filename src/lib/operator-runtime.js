@@ -2,6 +2,8 @@ import aiService from '../services/aiService';
 import { API_URL } from '../config';
 
 const SILENCE_MS = 1800;
+const OPERATOR_RETRIES = 2;
+const OPERATOR_TIMEOUT_MS = 20000;
 
 function cleanChatText(value) {
   return typeof value === 'string' ? value.replace(/\*\*/g, '') : value;
@@ -65,40 +67,84 @@ function patchSpeechRecognition() {
   window.webkitSpeechRecognition = SmartRecognition;
 }
 
-async function callOperator(message, context = {}) {
-  const response = await fetch(`${API_URL}/api/operator/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      message: String(message || '').trim(),
-      conversationId: aiService.conversationId || null,
-      userId: 'sv',
-      operatorMode: true,
-      highLevelAccount: localStorage.getItem('liv8_highlevel_account') || 'company',
-      clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York',
-      context: {
-        ...context,
-        source: 'command-center-chat-widget',
-      },
-    }),
-  });
+async function operatorFetch(message, context = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OPERATOR_TIMEOUT_MS);
+  try {
+    return await fetch(`${API_URL}/api/operator/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        message: String(message || '').trim(),
+        conversationId: aiService.conversationId || null,
+        userId: 'sv',
+        operatorMode: true,
+        highLevelAccount: localStorage.getItem('liv8_highlevel_account') || 'company',
+        clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York',
+        context: {
+          ...context,
+          source: 'command-center-chat-widget',
+        },
+      }),
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
-  if (!response.ok) {
-    const detail = await response.json().catch(() => ({}));
-    throw new Error(detail?.error || `Operator HTTP ${response.status}`);
+async function callOperator(message, context = {}) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= OPERATOR_RETRIES; attempt++) {
+    try {
+      const response = await operatorFetch(message, context);
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        throw new Error(detail?.error || `Operator HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      const text = cleanChatText(String(data?.response || '').trim());
+      if (!text) throw new Error('Operator returned an empty response');
+
+      if (data?.conversationId) aiService.conversationId = data.conversationId;
+      aiService.backendConnected = true;
+
+      return {
+        response: text,
+        speakText: cleanChatText(data?.speakText) || aiService.extractSpeakText?.(text) || text,
+        provider: data?.provider || 'operator',
+        model: data?.model || 'liv8-operator',
+        operator: true,
+        affiliateContext: data?.affiliateContext,
+        context: data?.context,
+      };
+    } catch (error) {
+      lastError = error;
+      if (attempt < OPERATOR_RETRIES) {
+        await new Promise(resolve => setTimeout(resolve, 450 * (attempt + 1)));
+      }
+    }
   }
 
-  const data = await response.json();
-  const text = cleanChatText(String(data?.response || '').trim());
-  if (!text) throw new Error('Operator returned an empty response');
+  aiService.backendConnected = false;
+  throw lastError || new Error('Live Operator is unavailable');
+}
 
+function liveAIUnavailableResult(error) {
+  const reason = error?.name === 'AbortError'
+    ? 'The live AI request timed out.'
+    : `The live AI connection failed${error?.message ? `: ${error.message}` : '.'}`;
+
+  const text = `${reason} I did not replace your request with a canned response. Please retry in a moment; your live Operator must be connected before I answer.`;
   return {
     response: text,
-    speakText: aiService.extractSpeakText?.(text) || text,
-    provider: 'operator',
-    model: 'liv8-operator',
-    operator: true,
-    affiliateContext: data?.affiliateContext,
+    speakText: 'The live AI connection failed. Please retry in a moment.',
+    provider: 'operator-unavailable',
+    model: null,
+    operator: false,
+    error: true,
   };
 }
 
@@ -106,8 +152,6 @@ function patchAIService() {
   if (!aiService || aiService.__liv8OperatorPatched) return;
   aiService.__liv8OperatorPatched = true;
 
-  const legacyGenerateResponse = aiService.generateResponse.bind(aiService);
-  const legacyCommanderChat = aiService.commanderChat.bind(aiService);
   const legacyDailyBrief = aiService.generateDailyBrief.bind(aiService);
   const legacyGetHistory = aiService.getConversationHistory.bind(aiService);
   const legacyAddToHistory = aiService.addToHistory.bind(aiService);
@@ -126,9 +170,8 @@ function patchAIService() {
       aiService.addToHistory('assistant', result.response);
       return result;
     } catch (error) {
-      console.warn('Operator unavailable; using legacy AI fallback:', error?.message || error);
-      const result = await legacyGenerateResponse(message, context);
-      return { ...result, response: cleanChatText(result?.response), speakText: cleanChatText(result?.speakText) };
+      console.error('Live Operator failed:', error);
+      return liveAIUnavailableResult(error);
     }
   };
 
@@ -139,9 +182,8 @@ function patchAIService() {
       aiService.addToHistory('assistant', result.response);
       return result;
     } catch (error) {
-      console.warn('Operator commander unavailable; using legacy commander:', error?.message || error);
-      const result = await legacyCommanderChat(message);
-      return { ...result, response: cleanChatText(result?.response) };
+      console.error('Live Operator commander failed:', error);
+      return liveAIUnavailableResult(error);
     }
   };
 }
@@ -151,10 +193,11 @@ function patchOperatorChatFetch() {
   const originalFetch = window.fetch.bind(window);
 
   window.fetch = async (input, init = {}) => {
-    try {
-      const url = typeof input === 'string' ? input : input?.url || '';
-      const method = String(init?.method || 'GET').toUpperCase();
-      if (method === 'POST' && /\/api\/chat(?:\?|$)/.test(url) && init?.body) {
+    const url = typeof input === 'string' ? input : input?.url || '';
+    const method = String(init?.method || 'GET').toUpperCase();
+
+    if (method === 'POST' && /\/api\/chat(?:\?|$)/.test(url) && init?.body) {
+      try {
         const body = JSON.parse(init.body);
         if (body?.message) {
           const nextUrl = url.replace('/api/chat', '/api/operator/chat');
@@ -168,10 +211,11 @@ function patchOperatorChatFetch() {
             }),
           });
         }
+      } catch (error) {
+        console.error('Operator fetch rewrite failed:', error);
       }
-    } catch {
-      // Never break normal fetch behavior because of the operator layer.
     }
+
     return originalFetch(input, init);
   };
 
@@ -184,6 +228,7 @@ export function installOperatorRuntime() {
   patchAIService();
   patchOperatorChatFetch();
   window.__liv8OperatorRuntimeReady = true;
+  window.__liv8OperatorRuntimeVersion = '2026-09-11-live-first';
 }
 
 installOperatorRuntime();
