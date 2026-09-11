@@ -1,4 +1,11 @@
+import aiService from '../services/aiService';
+import { API_URL } from '../config';
+
 const SILENCE_MS = 1800;
+
+function cleanChatText(value) {
+  return typeof value === 'string' ? value.replace(/\*\*/g, '') : value;
+}
 
 function patchSpeechRecognition() {
   if (typeof window === 'undefined') return;
@@ -58,6 +65,87 @@ function patchSpeechRecognition() {
   window.webkitSpeechRecognition = SmartRecognition;
 }
 
+async function callOperator(message, context = {}) {
+  const response = await fetch(`${API_URL}/api/operator/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message: String(message || '').trim(),
+      conversationId: aiService.conversationId || null,
+      userId: 'sv',
+      operatorMode: true,
+      highLevelAccount: localStorage.getItem('liv8_highlevel_account') || 'company',
+      clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York',
+      context: {
+        ...context,
+        source: 'command-center-chat-widget',
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}));
+    throw new Error(detail?.error || `Operator HTTP ${response.status}`);
+  }
+
+  const data = await response.json();
+  const text = cleanChatText(String(data?.response || '').trim());
+  if (!text) throw new Error('Operator returned an empty response');
+
+  return {
+    response: text,
+    speakText: aiService.extractSpeakText?.(text) || text,
+    provider: 'operator',
+    model: 'liv8-operator',
+    operator: true,
+    affiliateContext: data?.affiliateContext,
+  };
+}
+
+function patchAIService() {
+  if (!aiService || aiService.__liv8OperatorPatched) return;
+  aiService.__liv8OperatorPatched = true;
+
+  const legacyGenerateResponse = aiService.generateResponse.bind(aiService);
+  const legacyCommanderChat = aiService.commanderChat.bind(aiService);
+  const legacyDailyBrief = aiService.generateDailyBrief.bind(aiService);
+  const legacyGetHistory = aiService.getConversationHistory.bind(aiService);
+  const legacyAddToHistory = aiService.addToHistory.bind(aiService);
+
+  aiService.addToHistory = (role, content) => legacyAddToHistory(role, cleanChatText(content));
+  aiService.getConversationHistory = () => legacyGetHistory().map(item => ({
+    ...item,
+    content: cleanChatText(item?.content),
+  }));
+  aiService.generateDailyBrief = () => cleanChatText(legacyDailyBrief());
+
+  aiService.generateResponse = async (message, context = {}) => {
+    try {
+      const result = await callOperator(message, context);
+      aiService.addToHistory('user', String(message || '').trim());
+      aiService.addToHistory('assistant', result.response);
+      return result;
+    } catch (error) {
+      console.warn('Operator unavailable; using legacy AI fallback:', error?.message || error);
+      const result = await legacyGenerateResponse(message, context);
+      return { ...result, response: cleanChatText(result?.response), speakText: cleanChatText(result?.speakText) };
+    }
+  };
+
+  aiService.commanderChat = async (message) => {
+    try {
+      const result = await callOperator(message, { mode: 'commander' });
+      aiService.addToHistory('user', String(message || '').trim());
+      aiService.addToHistory('assistant', result.response);
+      return result;
+    } catch (error) {
+      console.warn('Operator commander unavailable; using legacy commander:', error?.message || error);
+      const result = await legacyCommanderChat(message);
+      return { ...result, response: cleanChatText(result?.response) };
+    }
+  };
+}
+
 function patchOperatorChatFetch() {
   if (typeof window === 'undefined' || window.__liv8OperatorFetchPatched) return;
   const originalFetch = window.fetch.bind(window);
@@ -93,7 +181,9 @@ function patchOperatorChatFetch() {
 export function installOperatorRuntime() {
   if (typeof window === 'undefined') return;
   patchSpeechRecognition();
+  patchAIService();
   patchOperatorChatFetch();
+  window.__liv8OperatorRuntimeReady = true;
 }
 
 installOperatorRuntime();
