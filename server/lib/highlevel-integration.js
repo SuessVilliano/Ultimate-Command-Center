@@ -149,13 +149,13 @@ export const highlevel = {
     Object.entries(merged).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
     });
-    return highLevelRequest(`/opportunities/search?${params.toString()}`, {}, account);
+    return highLevelRequest(`/opportunities/search?${params.toString()}`, { version: 'v3' }, account);
   },
 
   async createOpportunity(data = {}, options = {}) {
     const account = normalizeAccount(options.account);
     return highLevelRequest('/opportunities/', {
-      method: 'POST', body: JSON.stringify(withLocation(data, account)),
+      version: 'v3', method: 'POST', body: JSON.stringify(withLocation(data, account)),
     }, account);
   },
 
