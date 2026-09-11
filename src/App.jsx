@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { HighLevelAccountProvider } from './contexts/HighLevelAccountContext';
 import Sidebar, { MobileMenuButton } from './components/Sidebar';
 import ChatWidget from './components/ChatWidget';
 import VoiceRouter from './components/VoiceRouter';
@@ -147,5 +148,5 @@ function AppContent() {
   );
 }
 
-function App() { return <ThemeProvider><AuthProvider><AppContent /></AuthProvider></ThemeProvider>; }
+function App() { return <ThemeProvider><AuthProvider><HighLevelAccountProvider><AppContent /></HighLevelAccountProvider></AuthProvider></ThemeProvider>; }
 export default App;
