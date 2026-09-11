@@ -3,6 +3,8 @@ name: Command Center QA
 on:
   pull_request:
     branches: [master]
+  push:
+    branches: [master]
 
 jobs:
   build:
@@ -19,7 +21,7 @@ jobs:
       - name: Production frontend build
         run: npm run build
 
-      - name: Browser proof — Digital Twin renders
+      - name: Browser proof — shell and operator runtime render
         run: |
           set -e
           npm install --no-save playwright@1.55.0
@@ -50,7 +52,10 @@ jobs:
           await img.waitFor({ state: 'visible', timeout: 15000 });
           const dims = await img.evaluate(el => ({ naturalWidth: el.naturalWidth, naturalHeight: el.naturalHeight, src: el.currentSrc || el.src }));
           if (!dims.naturalWidth || !dims.naturalHeight) throw new Error(`Digital Twin failed to load: ${JSON.stringify(dims)}`);
+          const operatorRuntime = await page.evaluate(() => window.__liv8OperatorFetchPatched === true);
+          if (!operatorRuntime) throw new Error('Operator fetch runtime did not initialize');
           console.log('Digital Twin loaded:', dims);
+          console.log('Operator runtime initialized:', operatorRuntime);
           await rail.screenshot({ path: '/tmp/digital-twin-proof.png' });
           await page.screenshot({ path: '/tmp/command-center-proof.png', fullPage: true });
           await browser.close();
@@ -71,7 +76,7 @@ jobs:
         run: npm ci
       - name: Backend module import smoke test
         working-directory: server
-        run: node -e "import('./routes/time-intelligence-routes.js').then(()=>import('./routes/local-ai-routes.js')).then(()=>import('./routes/mac-ai-bridge-routes.js')).then(()=>import('./routes/highest-self-routes.js')).then(()=>import('./routes/shortcut-routes.js')).then(()=>import('./routes/local-workspace-mcp-routes.js')).then(()=>import('./routes/trading-guardian-routes.js')).then(()=>import('./routes/vertical-readiness-routes.js')).then(()=>import('./routes/connected-ops-routes.js')).then(()=>console.log('backend route imports ok'))"
+        run: node -e "import('./routes/time-intelligence-routes.js').then(()=>import('./routes/local-ai-routes.js')).then(()=>import('./routes/mac-ai-bridge-routes.js')).then(()=>import('./routes/highest-self-routes.js')).then(()=>import('./routes/shortcut-routes.js')).then(()=>import('./routes/local-workspace-mcp-routes.js')).then(()=>import('./routes/trading-guardian-routes.js')).then(()=>import('./routes/vertical-readiness-routes.js')).then(()=>import('./routes/connected-ops-routes.js')).then(()=>import('./routes/operator-assistant-routes.js')).then(()=>import('./routes/highlevel-company-health-routes.js')).then(()=>import('./routes/highlevel-company-capability-routes.js')).then(()=>console.log('backend route imports ok'))"
       - name: Boot backend and test operator verticals
         working-directory: server
         env:
@@ -107,6 +112,21 @@ jobs:
             exit 1
           fi
           cat /tmp/ucc-health.json
+
+          echo '--- Operator guard ---'
+          code=$(curl -s -o /tmp/operator.json -w '%{http_code}' -X POST http://127.0.0.1:3005/api/operator/chat -H 'Content-Type: application/json' -d '{}')
+          test "$code" = '400'
+          grep -q 'message is required' /tmp/operator.json
+
+          echo '--- Company CRM health route exists ---'
+          code=$(curl -s -o /tmp/company-health.json -w '%{http_code}' http://127.0.0.1:3005/api/highlevel/company-health)
+          test "$code" = '503'
+          grep -q '"configured":false' /tmp/company-health.json
+
+          echo '--- Company CRM capability route exists ---'
+          code=$(curl -s -o /tmp/company-capabilities.json -w '%{http_code}' http://127.0.0.1:3005/api/highlevel/company-capabilities)
+          test "$code" = '503'
+          grep -q '"configured":false' /tmp/company-capabilities.json
 
           echo '--- Connected Ops status ---'
           curl -fsS http://127.0.0.1:3005/api/connectors/status | tee /tmp/connected-ops.json
