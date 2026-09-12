@@ -11,6 +11,7 @@ import OlivMeetingInbox from '../components/affiliates/OlivMeetingInbox';
 const WORK_LINKS = [
   ['Affiliate Command Center (ACC)','https://expand-command-center.vercel.app/leadership#home','Open the Affiliate Command Center for leadership, sessions and partner operations','🧭'],
   ['Affiliate Hub','https://affiliates.gohighlevel.com/','HighLevel affiliate resources, enablement and partner hub','🤝'],
+  ['Affiliate Community','https://affiliatecommunity.gohighlevel.com/communities/groups/highlevel-affiliate-community/learning','HighLevel Affiliate Community learning, discussions and community resources','👥'],
   ['My Book','https://docs.google.com/spreadsheets/d/1FhqNEO_K2yvd9RAieCbMR42Wc2Pa5RdE59uvVXqYuNs/edit?gid=2031531288#gid=2031531288','Jamaur’s assigned affiliate book with notes, status, forecasting and performance data','📊'],
   ['Gamification','https://docs.google.com/spreadsheets/d/12RGwzP7YAkr0aBrl3Ra40Xk7BvwaBTb9oo5ljFgrnpU/edit?gid=1207811217#gid=1207811217','Xavier-provided gamification tracker for offers, performance, completion and payouts','🎯'],
   ['Trials Goals','https://docs.google.com/spreadsheets/d/12RGwzP7YAkr0aBrl3Ra40Xk7BvwaBTb9oo5ljFgrnpU/edit?gid=1673541902#gid=1673541902','Trial-goal workspace for setting and tracking affiliate production goals','📈'],
