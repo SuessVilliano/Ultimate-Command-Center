@@ -1,356 +1,201 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Inbox as InboxIcon,
-  Ticket,
-  CheckSquare,
-  Bell,
-  AtSign,
-  Clock,
-  X,
-  Check,
-  RefreshCw,
-  Filter,
-  ChevronRight,
   AlertCircle,
-  MessageSquare,
-  Eye,
-  EyeOff,
-  Timer,
-  Zap,
-  Target
+  CalendarClock,
+  Check,
+  CheckSquare,
+  Clock,
+  RefreshCw,
+  Target,
+  Zap
 } from 'lucide-react';
-
 import { API_URL } from '../config';
-const AI_SERVER_URL = API_URL;
 
-// Type icons and colors mapping
-const typeConfig = {
-  ticket: { icon: Ticket, color: 'text-blue-400', bg: 'bg-blue-500/20', label: 'Ticket' },
-  task: { icon: CheckSquare, color: 'text-green-400', bg: 'bg-green-500/20', label: 'Task' },
-  notification: { icon: Bell, color: 'text-yellow-400', bg: 'bg-yellow-500/20', label: 'Notification' },
-  mention: { icon: AtSign, color: 'text-purple-400', bg: 'bg-purple-500/20', label: 'Mention' }
-};
+function dueState(task) {
+  if (!task.dueAt) return 'later';
+  const due = new Date(task.dueAt);
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const endToday = new Date(startToday);
+  endToday.setDate(endToday.getDate() + 1);
+  if (due < now) return 'overdue';
+  if (due >= startToday && due < endToday) return 'today';
+  return 'later';
+}
 
-// Source badges
-const sourceBadges = {
-  freshdesk: { label: 'Freshdesk', color: 'bg-green-600/50' },
-  nifty: { label: 'Nifty', color: 'bg-purple-600/50' },
-  taskade: { label: 'Taskade', color: 'bg-cyan-600/50' },
-  notion: { label: 'Notion', color: 'bg-gray-600/50' },
-  system: { label: 'System', color: 'bg-blue-600/50' }
-};
+function formatDue(value) {
+  if (!value) return 'No due date';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'No due date';
+  return date.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
 
-function InboxItem({ item, onMarkRead, onSnooze, onDismiss }) {
-  const config = typeConfig[item.item_type] || typeConfig.notification;
-  const Icon = config.icon;
-  const source = sourceBadges[item.source] || { label: item.source, color: 'bg-gray-600/50' };
-  const isUnread = item.status === 'unread';
-
-  const formatTime = (timestamp) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diff = Math.floor((now - date) / 1000);
-
-    if (diff < 60) return 'Just now';
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-    if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
-    return date.toLocaleDateString();
-  };
+function TaskCard({ task, completing, onComplete }) {
+  const state = dueState(task);
+  const status = task.status?.name || 'To Do';
+  const list = task.list?.name || (task.parentTaskId ? 'Weekly Execution' : 'Affiliate Career');
+  const urgent = state === 'overdue' || task.priority >= 4;
 
   return (
-    <div
-      className={`group flex items-start gap-4 p-4 rounded-lg border transition-all ${
-        isUnread
-          ? 'bg-white/5 border-white/20 hover:bg-white/10'
-          : 'bg-transparent border-white/5 hover:bg-white/5 opacity-60'
-      }`}
-    >
-      {/* Type Icon */}
-      <div className={`p-2 rounded-lg ${config.bg} shrink-0`}>
-        <Icon className={`w-5 h-5 ${config.color}`} />
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <span className={`px-2 py-0.5 text-xs rounded-full ${source.color} text-white`}>
-                {source.label}
-              </span>
-              {item.priority > 2 && (
-                <span className="px-2 py-0.5 text-xs rounded-full bg-red-500/50 text-white">
-                  High Priority
-                </span>
-              )}
-              {isUnread && (
-                <span className="w-2 h-2 rounded-full bg-cyan-400" />
-              )}
-            </div>
-            <h4 className={`font-medium truncate ${isUnread ? 'text-white' : 'text-gray-400'}`}>
-              {item.title}
-            </h4>
-            {item.preview && (
-              <p className="text-sm text-gray-500 truncate mt-0.5">{item.preview}</p>
-            )}
-          </div>
-
-          <span className="text-xs text-gray-500 shrink-0">
-            {formatTime(item.created_at)}
-          </span>
+    <div className={`p-4 rounded-xl border ${urgent ? 'border-red-500/30 bg-red-500/5' : 'border-white/10 bg-white/[0.03]'} hover:bg-white/[0.06] transition-colors`}>
+      <div className="flex items-start gap-4">
+        <div className={`mt-0.5 p-2 rounded-lg ${urgent ? 'bg-red-500/15 text-red-300' : 'bg-purple-500/15 text-purple-300'}`}>
+          <CheckSquare className="w-5 h-5" />
         </div>
-      </div>
-
-      {/* Actions */}
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-        {isUnread && (
-          <button
-            onClick={() => onMarkRead(item)}
-            className="p-1.5 rounded hover:bg-white/10 text-gray-400 hover:text-white"
-            title="Mark as read"
-          >
-            <Eye className="w-4 h-4" />
-          </button>
-        )}
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-2 mb-1.5">
+            <span className="px-2 py-0.5 text-[11px] rounded-full bg-purple-500/20 text-purple-200">Nifty</span>
+            <span className="px-2 py-0.5 text-[11px] rounded-full bg-white/10 text-gray-300">{status}</span>
+            <span className="px-2 py-0.5 text-[11px] rounded-full bg-cyan-500/10 text-cyan-200">{list}</span>
+            {state === 'overdue' && <span className="px-2 py-0.5 text-[11px] rounded-full bg-red-500/20 text-red-300">Overdue</span>}
+            {state === 'today' && <span className="px-2 py-0.5 text-[11px] rounded-full bg-yellow-500/20 text-yellow-200">Due today</span>}
+          </div>
+          <h3 className="text-white font-semibold leading-snug">{task.name}</h3>
+          {task.description && <p className="mt-1 text-sm text-gray-400 line-clamp-2">{task.description}</p>}
+          <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-gray-500">
+            <span className="inline-flex items-center gap-1"><CalendarClock className="w-3.5 h-3.5" />{formatDue(task.dueAt)}</span>
+            {task.niceId && <span>AFF-{task.niceId}</span>}
+          </div>
+        </div>
         <button
-          onClick={() => onSnooze(item)}
-          className="p-1.5 rounded hover:bg-white/10 text-gray-400 hover:text-yellow-400"
-          title="Snooze 1 hour"
+          onClick={() => onComplete(task)}
+          disabled={completing === task.id}
+          className="shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-green-500/30 bg-green-500/10 text-green-300 hover:bg-green-500/20 disabled:opacity-50"
+          title="Complete in Nifty"
         >
-          <Timer className="w-4 h-4" />
-        </button>
-        <button
-          onClick={() => onDismiss(item)}
-          className="p-1.5 rounded hover:bg-white/10 text-gray-400 hover:text-red-400"
-          title="Dismiss"
-        >
-          <X className="w-4 h-4" />
+          {completing === task.id ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+          <span className="hidden md:inline">Complete</span>
         </button>
       </div>
     </div>
   );
 }
 
-function ActionFeed() {
-  const [items, setItems] = useState([]);
-  const [counts, setCounts] = useState({ total: 0, tickets: 0, tasks: 0, notifications: 0 });
+export default function ActionFeed() {
+  const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
   const [filter, setFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [completing, setCompleting] = useState(null);
 
-  const fetchInbox = async () => {
+  const load = async ({ sync = false } = {}) => {
+    setError('');
     try {
-      const params = new URLSearchParams();
-      if (filter !== 'all') params.set('type', filter);
-      if (statusFilter === 'unread') params.set('status', 'unread');
-
-      const response = await fetch(`${AI_SERVER_URL}/api/inbox?${params}`);
-      if (response.ok) {
-        const data = await response.json();
-        setItems(data.items || []);
+      if (sync) {
+        await fetch(`${API_URL}/api/nifty/mcp/action-feed/sync`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: 200 })
+        });
       }
+      const response = await fetch(`${API_URL}/api/nifty/mcp/action-feed?limit=200`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `Nifty action feed HTTP ${response.status}`);
+      setTasks(Array.isArray(data.tasks) ? data.tasks : []);
+      if (data.configured === false) setError('Nifty MCP is not configured on the server yet.');
     } catch (e) {
-      console.error('Failed to fetch inbox:', e);
+      setError(e.message || 'Could not load Nifty work.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  };
-
-  const fetchCounts = async () => {
-    try {
-      const response = await fetch(`${AI_SERVER_URL}/api/inbox/counts`);
-      if (response.ok) {
-        const data = await response.json();
-        setCounts(data);
-      }
-    } catch (e) {}
-  };
-
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    try {
-      await fetch(`${AI_SERVER_URL}/api/inbox/refresh`, { method: 'POST' });
-      await Promise.all([fetchInbox(), fetchCounts()]);
-    } catch (e) {}
-    setRefreshing(false);
-  };
-
-  const handleMarkRead = async (item) => {
-    try {
-      await fetch(`${AI_SERVER_URL}/api/inbox/${item.id}/read`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ feedType: item.feed_type })
-      });
-      await Promise.all([fetchInbox(), fetchCounts()]);
-    } catch (e) {}
-  };
-
-  const handleSnooze = async (item) => {
-    try {
-      await fetch(`${AI_SERVER_URL}/api/inbox/${item.id}/snooze`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ minutes: 60 })
-      });
-      await fetchInbox();
-    } catch (e) {}
-  };
-
-  const handleDismiss = async (item) => {
-    try {
-      await fetch(`${AI_SERVER_URL}/api/inbox/${item.id}/dismiss`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ feedType: item.feed_type })
-      });
-      await Promise.all([fetchInbox(), fetchCounts()]);
-    } catch (e) {}
   };
 
   useEffect(() => {
-    fetchInbox();
-    fetchCounts();
+    load();
+    const timer = setInterval(() => load(), 120000);
+    return () => clearInterval(timer);
+  }, []);
 
-    // Refresh every 2 minutes
-    const interval = setInterval(() => {
-      fetchInbox();
-      fetchCounts();
-    }, 120000);
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await load({ sync: true });
+    setRefreshing(false);
+  };
 
-    return () => clearInterval(interval);
-  }, [filter, statusFilter]);
+  const handleComplete = async (task) => {
+    setCompleting(task.id);
+    setError('');
+    try {
+      const response = await fetch(`${API_URL}/api/nifty/mcp/tasks/${encodeURIComponent(task.id)}/complete`, { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not complete Nifty task.');
+      setTasks(current => current.filter(item => item.id !== task.id));
+    } catch (e) {
+      setError(e.message || 'Could not complete Nifty task.');
+    } finally {
+      setCompleting(null);
+    }
+  };
 
-  const filterTabs = [
-    { id: 'all', label: 'All', count: counts.total },
-    { id: 'ticket', label: 'Tickets', count: counts.tickets || 0, icon: Ticket },
-    { id: 'task', label: 'Tasks', count: counts.tasks || 0, icon: CheckSquare },
-    { id: 'notification', label: 'Notifications', count: counts.notifications || 0, icon: Bell }
+  const counts = useMemo(() => {
+    const result = { all: tasks.length, today: 0, overdue: 0, waiting: 0 };
+    for (const task of tasks) {
+      const state = dueState(task);
+      if (state === 'today') result.today++;
+      if (state === 'overdue') result.overdue++;
+      const status = String(task.status?.name || '').toLowerCase();
+      if (status.includes('waiting') || status.includes('blocked')) result.waiting++;
+    }
+    return result;
+  }, [tasks]);
+
+  const visible = useMemo(() => tasks.filter(task => {
+    if (filter === 'today') return dueState(task) === 'today';
+    if (filter === 'overdue') return dueState(task) === 'overdue';
+    if (filter === 'waiting') {
+      const status = String(task.status?.name || '').toLowerCase();
+      return status.includes('waiting') || status.includes('blocked');
+    }
+    return true;
+  }), [tasks, filter]);
+
+  const tabs = [
+    { id: 'all', label: 'All Work', count: counts.all, icon: Target },
+    { id: 'today', label: 'Today', count: counts.today, icon: Clock },
+    { id: 'overdue', label: 'Overdue', count: counts.overdue, icon: AlertCircle },
+    { id: 'waiting', label: 'Waiting', count: counts.waiting, icon: CalendarClock }
   ];
 
   return (
     <div className="space-y-6 animate-slide-in">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-white flex items-center gap-3">
-            <Zap className="w-8 h-8 text-cyan-400" />
-            Action Feed
-          </h1>
-          <p className="text-gray-400 mt-1">
-            All your tickets, tasks, and notifications in one place
-          </p>
+          <h1 className="text-3xl font-bold text-white flex items-center gap-3"><Zap className="w-8 h-8 text-cyan-400" />Action Feed</h1>
+          <p className="text-gray-400 mt-1">Your live Affiliate Manager work queue, powered by Nifty.</p>
         </div>
-        <div className="flex items-center gap-3">
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-3 py-2 rounded-lg bg-white/10 border border-white/10 text-white text-sm focus:outline-none focus:border-cyan-500"
-          >
-            <option value="all">All Items</option>
-            <option value="unread">Unread Only</option>
-          </select>
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-600 text-white hover:bg-cyan-500 transition-colors disabled:opacity-50"
-          >
-            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-            {refreshing ? 'Syncing...' : 'Sync Now'}
-          </button>
-        </div>
+        <button onClick={handleRefresh} disabled={refreshing} className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-50">
+          <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+          {refreshing ? 'Syncing Nifty…' : 'Sync Nifty'}
+        </button>
       </div>
 
-      {/* Counts Summary */}
-      <div className="grid grid-cols-4 gap-4">
-        {filterTabs.map((tab) => {
-          const Icon = tab.icon || InboxIcon;
-          const isActive = filter === tab.id;
-
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {tabs.map(tab => {
+          const Icon = tab.icon;
+          const active = filter === tab.id;
           return (
-            <button
-              key={tab.id}
-              onClick={() => setFilter(tab.id)}
-              className={`p-4 rounded-lg border transition-all ${
-                isActive
-                  ? 'bg-cyan-500/20 border-cyan-500/50'
-                  : 'bg-white/5 border-white/10 hover:bg-white/10'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <Icon className={`w-5 h-5 ${isActive ? 'text-cyan-400' : 'text-gray-400'}`} />
-                <span className={`text-2xl font-bold ${isActive ? 'text-cyan-400' : 'text-white'}`}>
-                  {tab.count}
-                </span>
-              </div>
-              <p className={`text-sm mt-2 ${isActive ? 'text-cyan-300' : 'text-gray-400'}`}>
-                {tab.label}
-              </p>
+            <button key={tab.id} onClick={() => setFilter(tab.id)} className={`p-4 rounded-xl border text-left transition-colors ${active ? 'border-cyan-500/50 bg-cyan-500/15' : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.06]'}`}>
+              <div className="flex items-center justify-between"><Icon className={`w-5 h-5 ${active ? 'text-cyan-300' : 'text-gray-400'}`} /><span className="text-2xl font-bold text-white">{tab.count}</span></div>
+              <p className={`mt-2 text-sm ${active ? 'text-cyan-200' : 'text-gray-400'}`}>{tab.label}</p>
             </button>
           );
         })}
       </div>
 
-      {/* Inbox Items */}
+      {error && <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-100">{error}</div>}
+
       <div className="card p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-            <Filter className="w-5 h-5 text-gray-400" />
-            {filterTabs.find(t => t.id === filter)?.label || 'All'}
-            <span className="text-sm text-gray-500 font-normal">
-              ({items.length} items)
-            </span>
-          </h2>
+          <div><h2 className="text-lg font-semibold text-white">{tabs.find(tab => tab.id === filter)?.label}</h2><p className="text-sm text-gray-500">01 — Affiliate Career · live Nifty source of truth</p></div>
         </div>
 
         {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="w-8 h-8 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-          </div>
-        ) : items.length === 0 ? (
-          <div className="text-center py-12">
-            <Target className="w-12 h-12 text-gray-600 mx-auto mb-4" />
-            <p className="text-gray-400">No action items</p>
-            <p className="text-sm text-gray-500 mt-1">
-              Click "Sync Now" to pull in tickets and tasks from connected services
-            </p>
-          </div>
+          <div className="flex items-center justify-center py-14"><RefreshCw className="w-7 h-7 text-cyan-400 animate-spin" /></div>
+        ) : visible.length === 0 ? (
+          <div className="text-center py-14"><Target className="w-12 h-12 text-gray-600 mx-auto mb-3" /><p className="text-gray-300">Nothing in this view.</p><p className="text-sm text-gray-500 mt-1">Nifty stays canonical; new work will appear here automatically.</p></div>
         ) : (
-          <div className="space-y-2">
-            {items.map((item) => (
-              <InboxItem
-                key={`${item.feed_type}-${item.id}`}
-                item={item}
-                onMarkRead={handleMarkRead}
-                onSnooze={handleSnooze}
-                onDismiss={handleDismiss}
-              />
-            ))}
-          </div>
+          <div className="space-y-3">{visible.map(task => <TaskCard key={task.id} task={task} completing={completing} onComplete={handleComplete} />)}</div>
         )}
-      </div>
-
-      {/* Quick Actions */}
-      <div className="card p-4 bg-gradient-to-r from-purple-900/30 to-cyan-900/30 border-purple-500/30">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-yellow-400" />
-            <span className="text-gray-300">
-              {counts.total > 0
-                ? `You have ${counts.total} items requiring attention`
-                : 'All caught up! Your feed is clear.'}
-            </span>
-          </div>
-          {counts.total > 0 && (
-            <button className="text-sm text-cyan-400 hover:underline flex items-center gap-1">
-              Process all <ChevronRight className="w-4 h-4" />
-            </button>
-          )}
-        </div>
       </div>
     </div>
   );
 }
-
-export default ActionFeed;
