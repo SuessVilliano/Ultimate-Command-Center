@@ -5,18 +5,18 @@ import { registerOperatorAssistantRoutes } from './operator-assistant-routes.js'
 import { registerHighLevelCompanyHealthRoutes } from './highlevel-company-health-routes.js';
 
 const API_BASE = 'https://services.leadconnectorhq.com';
-const SANDBOX_FORM_ID = process.env.GHL_AFFILIATE_SANDBOX_FORM_ID || 'TVI6Ch94dCiqvm94KpFN';
 
 function config() {
   return {
-    pit: process.env.GHL_AFFILIATE_SANDBOX_PIT || '',
-    locationId: process.env.GHL_AFFILIATE_SANDBOX_LOCATION_ID || '',
+    pit: process.env.GHL_COMPANY_PIT || process.env.GHL_COMPANY_PRIVATE_INTEGRATION_TOKEN || '',
+    locationId: process.env.GHL_COMPANY_LOCATION_ID || '',
+    staffUserId: process.env.GHL_STAFF_USER_ID || process.env.GHL_COMPANY_STAFF_USER_ID || '',
   };
 }
 
 async function request(path, options = {}) {
   const { pit } = config();
-  if (!pit) throw Object.assign(new Error('GHL_AFFILIATE_SANDBOX_PIT is not configured'), { status: 503 });
+  if (!pit) throw Object.assign(new Error('GHL_COMPANY_PIT is not configured'), { status: 503 });
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
@@ -54,15 +54,17 @@ function exactMatches(contacts, { identifier, email, promoterId }) {
 }
 
 async function findExactContact({ identifier, email, promoterId }) {
-  const { locationId } = config();
-  if (!locationId) throw Object.assign(new Error('GHL_AFFILIATE_SANDBOX_LOCATION_ID is not configured'), { status: 503 });
+  const { locationId, staffUserId } = config();
+  if (!locationId) throw Object.assign(new Error('GHL_COMPANY_LOCATION_ID is not configured'), { status: 503 });
+  if (!staffUserId) throw Object.assign(new Error('GHL_STAFF_USER_ID is not configured'), { status: 503 });
   const query = String(email || identifier || promoterId || '').trim();
   if (!query) throw Object.assign(new Error('An affiliate email, Promoter ID, or contact ID is required'), { status: 400 });
   const params = new URLSearchParams({ locationId, query, limit: '20' });
   const payload = await request(`/contacts/?${params.toString()}`);
-  const matches = exactMatches(contactsFrom(payload), { identifier, email, promoterId });
+  const matches = exactMatches(contactsFrom(payload), { identifier, email, promoterId })
+    .filter(contact => String(contact?.assignedTo || contact?.assignedUserId || '') === String(staffUserId));
   if (matches.length !== 1) {
-    const message = matches.length ? 'Multiple exact sandbox CRM contacts matched; nothing was written.' : 'No exact sandbox CRM contact matched; nothing was written.';
+    const message = matches.length ? 'Multiple exact company CRM contacts matched; nothing was written.' : 'No exact staff-scoped company CRM contact matched; nothing was written.';
     throw Object.assign(new Error(message), { status: 409 });
   }
   return matches[0];
@@ -76,14 +78,18 @@ export function registerAffiliateCrmRoutes(app) {
   registerHighLevelCompanyHealthRoutes(app);
 
   app.get('/api/affiliate/crm-note/status', (_req, res) => {
-    const { pit, locationId } = config();
+    const { pit, locationId, staffUserId } = config();
     res.json({
-      configured: Boolean(pit && locationId),
-      sandboxOnly: true,
+      configured: Boolean(pit && locationId && staffUserId),
+      sandboxOnly: false,
+      productionOnly: true,
+      account: 'company',
       authType: 'PIT',
-      formId: SANDBOX_FORM_ID,
       locationConfigured: Boolean(locationId),
       pitConfigured: Boolean(pit),
+      staffUserConfigured: Boolean(staffUserId),
+      deprecatedEndpoint: true,
+      preferredEndpoint: '/api/liv8-connect/highlevel/contacts/:contactId/notes?account=company',
     });
   });
 
@@ -103,16 +109,17 @@ export function registerAffiliateCrmRoutes(app) {
 
       res.json({
         success: true,
-        sandboxOnly: true,
+        sandboxOnly: false,
+        productionOnly: true,
+        account: 'company',
         authType: 'PIT',
         contactId,
         contactEmail: contact.email || email || null,
-        formId: SANDBOX_FORM_ID,
         source,
         noteId: result?.note?.id || result?.id || null,
       });
     } catch (error) {
-      res.status(error.status || 500).json({ error: error.message, details: error.data || null, sandboxOnly: true });
+      res.status(error.status || 500).json({ error: error.message, details: error.data || null, sandboxOnly: false, productionOnly: true, account: 'company' });
     }
   });
 }
