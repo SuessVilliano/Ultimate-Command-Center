@@ -42,6 +42,11 @@ async function getCommunicationTool(mode = 'query') {
   return tools.find(t => t.name === exact) || tools.find(t => fallback.test(t.name));
 }
 
+async function getTaskMutateTool() {
+  const tools = await niftyMcp.listTools();
+  return tools.find(t => t.name === 'tasks_mutate') || tools.find(t => /task.*mutate|task.*update/i.test(t.name));
+}
+
 export function registerNiftyMcpRoutes(app) {
   app.get('/api/nifty/mcp/status', (req, res) => res.json(niftyMcp.status()));
 
@@ -58,6 +63,19 @@ export function registerNiftyMcpRoutes(app) {
     try {
       const result = await syncAffiliateTasksToInbox({ limit: req.body?.limit });
       res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  app.post('/api/nifty/mcp/tasks/:taskId/complete', async (req, res) => {
+    try {
+      const tool = await getTaskMutateTool();
+      if (!tool) return res.status(501).json({ error: 'Nifty MCP task writes are unavailable.' });
+      const result = await niftyMcp.callTool(tool.name, {
+        resource: 'task', operation: 'update', id: req.params.taskId, completed: true
+      });
+      res.json({ success: true, result: unwrapToolResult(result) });
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
     }
