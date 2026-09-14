@@ -10,10 +10,34 @@ function contactsFrom(payload) {
   return payload?.contacts || payload?.data?.contacts || payload?.data || [];
 }
 
+function notesFrom(payload) {
+  if (Array.isArray(payload)) return payload;
+  return payload?.notes || payload?.data?.notes || payload?.data || [];
+}
+
+function conversationsFrom(payload) {
+  if (Array.isArray(payload)) return payload;
+  return payload?.conversations || payload?.data?.conversations || payload?.data || [];
+}
+
 function opportunityRows(payload) { return payload?.opportunities || payload?.data?.opportunities || []; }
 function accountFrom(req) { return String(req.query?.account || req.body?.account || 'personal').toLowerCase() === 'company' ? 'company' : 'personal'; }
 function normalizeAffiliate(contact = {}) {
-  return { id: contact.id || contact.contactId || null, name: contact.name || [contact.firstName, contact.lastName].filter(Boolean).join(' ') || null, email: contact.email || null, phone: contact.phone || null, tags: contact.tags || [], assignedTo: contact.assignedTo || contact.assignedUserId || null, dateAdded: contact.dateAdded || contact.createdAt || null, customFields: contact.customFields || contact.customField || [] };
+  return {
+    id: contact.id || contact.contactId || null,
+    name: contact.name || [contact.firstName, contact.lastName].filter(Boolean).join(' ') || null,
+    firstName: contact.firstName || null,
+    lastName: contact.lastName || null,
+    email: contact.email || null,
+    phone: contact.phone || null,
+    tags: contact.tags || [],
+    assignedTo: contact.assignedTo || contact.assignedUserId || null,
+    dateAdded: contact.dateAdded || contact.createdAt || null,
+    dateUpdated: contact.dateUpdated || contact.updatedAt || null,
+    customFields: contact.customFields || contact.customField || [],
+    source: contact.source || null,
+    raw: contact,
+  };
 }
 function assertCompanyOwnership(account, contact) {
   if (account !== 'company') return;
@@ -23,60 +47,263 @@ function assertCompanyOwnership(account, contact) {
   }
 }
 
+function customFieldValue(contact, needle) {
+  const fields = contact?.customFields || contact?.customField || [];
+  const key = String(needle || '').toLowerCase();
+  const match = fields.find(field => String(field?.name || field?.fieldKey || field?.key || '').toLowerCase().includes(key));
+  return String(match?.value ?? match?.fieldValue ?? '').trim();
+}
+
+function exactContactMatch(contacts, row = {}) {
+  const needles = [row.contactId, row.ghlId, row.email, row.promoterId, row.id]
+    .map(v => String(v || '').trim().toLowerCase())
+    .filter(Boolean);
+  if (!needles.length) return null;
+  return contacts.find(contact => {
+    const values = [
+      contact.id,
+      contact.contactId,
+      contact.email,
+      customFieldValue(contact, 'promoter'),
+      customFieldValue(contact, 'affiliate id'),
+    ].map(v => String(v || '').trim().toLowerCase()).filter(Boolean);
+    return needles.some(n => values.includes(n));
+  }) || null;
+}
+
+async function getContactNotes(contactId, account) {
+  const payload = await highlevel.request(`/contacts/${encodeURIComponent(contactId)}/notes`, { version: 'v3' }, account);
+  return notesFrom(payload);
+}
+
+async function getContactActivity(contactId, account) {
+  const payload = await highlevel.searchConversations({ account, contactId, limit: 100, sort: 'desc', status: 'all' });
+  return conversationsFrom(payload);
+}
+
+async function resolveImportedAffiliate(row, account, includeNotes = true, includeActivity = true) {
+  const identifier = String(row?.email || row?.contactId || row?.ghlId || row?.promoterId || row?.id || '').trim();
+  if (!identifier) return { imported: row, matched: false, reason: 'missing_identifier' };
+
+  let contacts = [];
+  if (row?.contactId || row?.ghlId) {
+    try {
+      const payload = await highlevel.getContact(row.contactId || row.ghlId, { account });
+      contacts = [payload?.contact || payload].filter(Boolean);
+    } catch {
+      contacts = [];
+    }
+  }
+  if (!contacts.length) {
+    const payload = await highlevel.searchContacts(identifier, { limit: 20, account });
+    contacts = contactsFrom(payload);
+  }
+
+  const contact = exactContactMatch(contacts, row) || (contacts.length === 1 ? contacts[0] : null);
+  if (!contact) return { imported: row, matched: false, reason: contacts.length > 1 ? 'ambiguous_match' : 'not_found' };
+  assertCompanyOwnership(account, contact);
+
+  const contactId = contact.id || contact.contactId;
+  const [notes, activity] = await Promise.all([
+    includeNotes && contactId ? getContactNotes(contactId, account).catch(() => []) : Promise.resolve([]),
+    includeActivity && contactId ? getContactActivity(contactId, account).catch(() => []) : Promise.resolve([]),
+  ]);
+
+  return {
+    imported: row,
+    matched: true,
+    contact: normalizeAffiliate(contact),
+    notes,
+    activity,
+    syncedAt: new Date().toISOString(),
+  };
+}
+
+async function mapWithConcurrency(rows, limit, mapper) {
+  const results = new Array(rows.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, rows.length || 1) }, async () => {
+    while (cursor < rows.length) {
+      const index = cursor++;
+      try { results[index] = await mapper(rows[index], index); }
+      catch (error) { results[index] = { imported: rows[index], matched: false, reason: 'sync_error', error: error.message }; }
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 export function registerLiv8ConnectRoutes(app) {
   app.get('/api/liv8-connect/status', async (req, res) => {
     const account = accountFrom(req); const niftyStatus = nifty.getTokenStatus();
-    res.json({ service: 'LIV8 Connect', account, highlevel: highlevel.getConfigStatus(account), staffUserConfigured: account === 'company' ? Boolean(highlevel.getStaffUserId('company')) : null, nifty: { configured: Boolean(niftyStatus.hasAccessToken), authenticated: Boolean(niftyStatus.hasAccessToken && !niftyStatus.isExpired), hasRefreshToken: Boolean(niftyStatus.hasRefreshToken) }, capabilities: ['highlevel.contacts.search','highlevel.contacts.get','highlevel.contacts.notes.create','highlevel.opportunities.search','affiliate.brief','affiliate.followup.create'] });
+    res.json({
+      service: 'LIV8 Connect',
+      account,
+      highlevel: highlevel.getConfigStatus(account),
+      staffUserConfigured: account === 'company' ? Boolean(highlevel.getStaffUserId('company')) : null,
+      nifty: { configured: Boolean(niftyStatus.hasAccessToken), authenticated: Boolean(niftyStatus.hasAccessToken && !niftyStatus.isExpired), hasRefreshToken: Boolean(niftyStatus.hasRefreshToken) },
+      capabilities: ['highlevel.contacts.search','highlevel.contacts.get','highlevel.contacts.notes.read','highlevel.contacts.notes.create','highlevel.conversations.read','highlevel.opportunities.search','affiliate.sync','affiliate.brief','affiliate.followup.create'],
+    });
   });
 
   app.get('/api/liv8-connect/highlevel/contacts', async (req, res) => {
     try {
-      const account = accountFrom(req); const payload = await highlevel.searchContacts(req.query.q || '', { limit: req.query.limit }, account);
+      const account = accountFrom(req);
+      const payload = await highlevel.searchContacts(req.query.q || '', { limit: req.query.limit, account });
       if (account !== 'company') return res.json(payload);
-      const staffId = highlevel.getStaffUserId('company'); const contacts = contactsFrom(payload); const mine = staffId ? contacts.filter(c => String(c.assignedTo || c.assignedUserId || '') === String(staffId)) : [];
+      const staffId = highlevel.getStaffUserId('company');
+      const contacts = contactsFrom(payload);
+      const mine = staffId ? contacts.filter(c => String(c.assignedTo || c.assignedUserId || '') === String(staffId)) : [];
       res.json({ account, staffScoped: true, contacts: mine, count: mine.length, sampled: contacts.length });
     } catch (error) { fail(res, error); }
   });
 
   app.get('/api/liv8-connect/highlevel/contacts/:contactId', async (req, res) => {
-    try { const account = accountFrom(req); const payload = await highlevel.getContact(req.params.contactId, account); const contact = payload?.contact || payload; assertCompanyOwnership(account, contact); res.json(payload); }
-    catch (error) { fail(res, error); }
+    try {
+      const account = accountFrom(req);
+      const payload = await highlevel.getContact(req.params.contactId, { account });
+      const contact = payload?.contact || payload;
+      assertCompanyOwnership(account, contact);
+      res.json(payload);
+    } catch (error) { fail(res, error); }
+  });
+
+  app.get('/api/liv8-connect/highlevel/contacts/:contactId/notes', async (req, res) => {
+    try {
+      const account = accountFrom(req);
+      const existing = await highlevel.getContact(req.params.contactId, { account });
+      assertCompanyOwnership(account, existing?.contact || existing);
+      const notes = await getContactNotes(req.params.contactId, account);
+      res.json({ account, contactId: req.params.contactId, notes, count: notes.length });
+    } catch (error) { fail(res, error); }
+  });
+
+  app.get('/api/liv8-connect/highlevel/contacts/:contactId/activity', async (req, res) => {
+    try {
+      const account = accountFrom(req);
+      const existing = await highlevel.getContact(req.params.contactId, { account });
+      assertCompanyOwnership(account, existing?.contact || existing);
+      const activity = await getContactActivity(req.params.contactId, account);
+      res.json({ account, contactId: req.params.contactId, activity, count: activity.length });
+    } catch (error) { fail(res, error); }
   });
 
   app.post('/api/liv8-connect/highlevel/contacts', async (req, res) => {
-    try { const account = accountFrom(req); if (account === 'company') return res.status(403).json({ error: 'Creating company contacts is disabled from LIV8 Connect' }); res.status(201).json(await highlevel.createContact(req.body || {}, account)); }
-    catch (error) { fail(res, error); }
+    try {
+      const account = accountFrom(req);
+      if (account === 'company') return res.status(403).json({ error: 'Creating company contacts is disabled from LIV8 Connect' });
+      res.status(201).json(await highlevel.createContact(req.body || {}, { account }));
+    } catch (error) { fail(res, error); }
   });
 
   app.put('/api/liv8-connect/highlevel/contacts/:contactId', async (req, res) => {
-    try { const account = accountFrom(req); const existing = await highlevel.getContact(req.params.contactId, account); assertCompanyOwnership(account, existing?.contact || existing); res.json(await highlevel.updateContact(req.params.contactId, req.body || {}, account)); }
-    catch (error) { fail(res, error); }
+    try {
+      const account = accountFrom(req);
+      const existing = await highlevel.getContact(req.params.contactId, { account });
+      assertCompanyOwnership(account, existing?.contact || existing);
+      res.json(await highlevel.updateContact(req.params.contactId, req.body || {}, { account }));
+    } catch (error) { fail(res, error); }
   });
 
   app.post('/api/liv8-connect/highlevel/contacts/:contactId/notes', async (req, res) => {
-    try { const account = accountFrom(req); const existing = await highlevel.getContact(req.params.contactId, account); assertCompanyOwnership(account, existing?.contact || existing); res.status(201).json(await highlevel.addContactNote(req.params.contactId, req.body?.body || req.body?.note, account)); }
-    catch (error) { fail(res, error); }
+    try {
+      const account = accountFrom(req);
+      const existing = await highlevel.getContact(req.params.contactId, { account });
+      assertCompanyOwnership(account, existing?.contact || existing);
+      res.status(201).json(await highlevel.addContactNote(req.params.contactId, req.body?.body || req.body?.note, { account }));
+    } catch (error) { fail(res, error); }
   });
 
-  app.get('/api/liv8-connect/highlevel/opportunities', async (req, res) => { try { res.json(await highlevel.searchOpportunities(req.query, accountFrom(req))); } catch (error) { fail(res, error); } });
-  app.post('/api/liv8-connect/highlevel/opportunities', async (req, res) => { try { const account = accountFrom(req); if (account === 'company') return res.status(403).json({ error: 'Creating company opportunities is disabled from LIV8 Connect' }); res.status(201).json(await highlevel.createOpportunity(req.body || {}, account)); } catch (error) { fail(res, error); } });
+  app.post('/api/liv8-connect/affiliate/sync', async (req, res) => {
+    try {
+      const account = accountFrom(req);
+      if (account !== 'company') return res.status(400).json({ error: 'Affiliate sync must use account=company' });
+      const status = highlevel.getConfigStatus('company');
+      if (!status.configured) return res.status(503).json({ error: 'Company HighLevel connection is not fully configured', highlevel: status });
+
+      const rows = Array.isArray(req.body?.affiliates) ? req.body.affiliates : [];
+      if (!rows.length) return res.status(400).json({ error: 'affiliates array is required; import your weekly book first' });
+      if (rows.length > 500) return res.status(400).json({ error: 'Maximum 500 affiliates per sync' });
+
+      const includeNotes = req.body?.includeNotes !== false;
+      const includeActivity = req.body?.includeActivity !== false;
+      const records = await mapWithConcurrency(rows, 4, row => resolveImportedAffiliate(row, 'company', includeNotes, includeActivity));
+      const matched = records.filter(r => r?.matched).length;
+      const unmatched = records.length - matched;
+      res.json({
+        success: true,
+        account: 'company',
+        sourceOfTruth: 'highlevel_company',
+        weeklyImportRole: 'roster_and_performance_enrichment',
+        syncedAt: new Date().toISOString(),
+        total: records.length,
+        matched,
+        unmatched,
+        records,
+      });
+    } catch (error) { fail(res, error); }
+  });
+
+  app.get('/api/liv8-connect/highlevel/opportunities', async (req, res) => {
+    try {
+      const account = accountFrom(req);
+      res.json(await highlevel.searchOpportunities(req.query, { account }));
+    } catch (error) { fail(res, error); }
+  });
+  app.post('/api/liv8-connect/highlevel/opportunities', async (req, res) => {
+    try {
+      const account = accountFrom(req);
+      if (account === 'company') return res.status(403).json({ error: 'Creating company opportunities is disabled from LIV8 Connect' });
+      res.status(201).json(await highlevel.createOpportunity(req.body || {}, { account }));
+    } catch (error) { fail(res, error); }
+  });
 
   app.get('/api/liv8-connect/affiliate/brief', async (req, res) => {
     try {
-      const account = accountFrom(req); const identifier = String(req.query.q || req.query.email || req.query.contactId || '').trim(); if (!identifier) return res.status(400).json({ error: 'q, email, or contactId is required' });
-      let contactPayload = req.query.contactId ? await highlevel.getContact(req.query.contactId, account) : await highlevel.searchContacts(identifier, { limit: 20 }, account);
-      const contacts = req.query.contactId ? [contactPayload?.contact || contactPayload] : contactsFrom(contactPayload); const contact = contacts.find(c => String(c.email || '').toLowerCase() === identifier.toLowerCase()) || contacts[0]; if (!contact) return res.status(404).json({ error: 'Affiliate/contact not found' }); assertCompanyOwnership(account, contact);
-      const contactId = contact.id || contact.contactId; const opportunities = contactId ? opportunityRows(await highlevel.searchOpportunities({ contactId, limit: 100, getNotes: true, getTasks: true, getCalendarEvents: true }, account)) : [];
-      res.json({ account, affiliate: normalizeAffiliate(contact), opportunities, opportunityCount: opportunities.length, openOpportunityCount: opportunities.filter(o => o.status === 'open').length, wonOpportunityCount: opportunities.filter(o => o.status === 'won').length, generatedAt: new Date().toISOString() });
+      const account = accountFrom(req);
+      const identifier = String(req.query.q || req.query.email || req.query.contactId || '').trim();
+      if (!identifier) return res.status(400).json({ error: 'q, email, or contactId is required' });
+      let contactPayload = req.query.contactId
+        ? await highlevel.getContact(req.query.contactId, { account })
+        : await highlevel.searchContacts(identifier, { limit: 20, account });
+      const contacts = req.query.contactId ? [contactPayload?.contact || contactPayload] : contactsFrom(contactPayload);
+      const contact = contacts.find(c => String(c.email || '').toLowerCase() === identifier.toLowerCase()) || contacts[0];
+      if (!contact) return res.status(404).json({ error: 'Affiliate/contact not found' });
+      assertCompanyOwnership(account, contact);
+      const contactId = contact.id || contact.contactId;
+      const opportunities = contactId ? opportunityRows(await highlevel.searchOpportunities({ contactId, limit: 100, getNotes: true, getTasks: true, getCalendarEvents: true }, { account })) : [];
+      const [notes, activity] = contactId ? await Promise.all([
+        getContactNotes(contactId, account).catch(() => []),
+        getContactActivity(contactId, account).catch(() => []),
+      ]) : [[], []];
+      res.json({ account, affiliate: normalizeAffiliate(contact), notes, activity, opportunities, opportunityCount: opportunities.length, openOpportunityCount: opportunities.filter(o => o.status === 'open').length, wonOpportunityCount: opportunities.filter(o => o.status === 'won').length, generatedAt: new Date().toISOString() });
     } catch (error) { fail(res, error); }
   });
 
   app.post('/api/liv8-connect/affiliate/followup', async (req, res) => {
     try {
-      const account = accountFrom(req); const { projectId, contactId, email, promoterId, taskName, description, dueDate, writeCrmNote = true } = req.body || {}; if (!projectId) return res.status(400).json({ error: 'projectId is required' }); if (!contactId && !email && !promoterId) return res.status(400).json({ error: 'contactId, email, or promoterId is required' });
-      let contact; if (contactId) { const payload = await highlevel.getContact(contactId, account); contact = payload?.contact || payload; } else { const payload = await highlevel.searchContacts(email || promoterId, { limit: 20 }, account); const contacts = contactsFrom(payload); const needle = String(email || promoterId).toLowerCase(); contact = contacts.find(c => String(c.email || '').toLowerCase() === needle) || contacts[0]; } if (!contact) return res.status(404).json({ error: 'Affiliate/contact not found' }); assertCompanyOwnership(account, contact);
-      const affiliate = normalizeAffiliate(contact); const name = taskName || `Affiliate follow-up — ${affiliate.name || affiliate.email || affiliate.id}`; const taskDescription = description || ['Created automatically by LIV8 Connect.', `HighLevel Contact ID: ${affiliate.id || 'unknown'}`, affiliate.email ? `Email: ${affiliate.email}` : null, promoterId ? `Promoter ID: ${promoterId}` : null].filter(Boolean).join('\n');
-      const task = await nifty.createTask(projectId, { name, description: taskDescription, ...(dueDate ? { due_date: dueDate } : {}) }); let crmNote = null; if (writeCrmNote && affiliate.id) crmNote = await highlevel.addContactNote(affiliate.id, `LIV8 Connect created Nifty follow-up: ${name}`, account);
+      const account = accountFrom(req);
+      const { projectId, contactId, email, promoterId, taskName, description, dueDate, writeCrmNote = true } = req.body || {};
+      if (!projectId) return res.status(400).json({ error: 'projectId is required' });
+      if (!contactId && !email && !promoterId) return res.status(400).json({ error: 'contactId, email, or promoterId is required' });
+      let contact;
+      if (contactId) {
+        const payload = await highlevel.getContact(contactId, { account });
+        contact = payload?.contact || payload;
+      } else {
+        const payload = await highlevel.searchContacts(email || promoterId, { limit: 20, account });
+        const contacts = contactsFrom(payload);
+        const needle = String(email || promoterId).toLowerCase();
+        contact = contacts.find(c => String(c.email || '').toLowerCase() === needle) || contacts[0];
+      }
+      if (!contact) return res.status(404).json({ error: 'Affiliate/contact not found' });
+      assertCompanyOwnership(account, contact);
+      const affiliate = normalizeAffiliate(contact);
+      const name = taskName || `Affiliate follow-up — ${affiliate.name || affiliate.email || affiliate.id}`;
+      const taskDescription = description || ['Created automatically by LIV8 Connect.', `HighLevel Contact ID: ${affiliate.id || 'unknown'}`, affiliate.email ? `Email: ${affiliate.email}` : null, promoterId ? `Promoter ID: ${promoterId}` : null].filter(Boolean).join('\n');
+      const task = await nifty.createTask(projectId, { name, description: taskDescription, ...(dueDate ? { due_date: dueDate } : {}) });
+      let crmNote = null;
+      if (writeCrmNote && affiliate.id) crmNote = await highlevel.addContactNote(affiliate.id, `LIV8 Connect created Nifty follow-up: ${name}`, { account });
       res.status(201).json({ success: true, account, affiliate, niftyTask: task, crmNote });
     } catch (error) { fail(res, error); }
   });
