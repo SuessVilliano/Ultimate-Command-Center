@@ -1,5 +1,6 @@
 import { niftyMcp } from '../lib/nifty-mcp-client.js';
 import * as unifiedInbox from '../lib/unified-inbox.js';
+import { getAffiliateTasks, syncAffiliateTasksToInbox } from '../lib/nifty-action-feed.js';
 
 const ACTIVE_PORTFOLIO_ID = process.env.NIFTY_ACTIVE_PORTFOLIO_ID || 'u45ydW04vO';
 
@@ -24,7 +25,7 @@ function rowsFrom(payload) {
 }
 
 function activeProject(project) {
-  if (!project) return true; // direct messages / non-project contexts remain valid
+  if (!project) return true;
   if (project.archived === true) return false;
   const portfolioId = project.portfolioId || project.portfolio?.id || null;
   return !ACTIVE_PORTFOLIO_ID || portfolioId === ACTIVE_PORTFOLIO_ID;
@@ -44,6 +45,24 @@ async function getCommunicationTool(mode = 'query') {
 export function registerNiftyMcpRoutes(app) {
   app.get('/api/nifty/mcp/status', (req, res) => res.json(niftyMcp.status()));
 
+  app.get('/api/nifty/mcp/action-feed', async (req, res) => {
+    try {
+      const result = await getAffiliateTasks({ limit: req.query.limit });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: error.message, tasks: [] });
+    }
+  });
+
+  app.post('/api/nifty/mcp/action-feed/sync', async (req, res) => {
+    try {
+      const result = await syncAffiliateTasksToInbox({ limit: req.body?.limit });
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
   app.get('/api/nifty/mcp/tools', async (req, res) => {
     try { res.json({ tools: await niftyMcp.listTools({ refresh: req.query.refresh === 'true' }) }); }
     catch (error) { res.status(500).json({ error: error.message, ...niftyMcp.status() }); }
@@ -60,9 +79,6 @@ export function registerNiftyMcpRoutes(app) {
     } catch (error) { res.status(500).json({ error: error.message }); }
   });
 
-  // Nifty chats become first-class Command Center inbox channels.
-  // Project chats are deliberately scoped to the active 2026 portfolio so old
-  // work cannot pollute Juno's current operating view.
   app.get('/api/nifty/mcp/chats', async (req, res) => {
     try {
       const tool = await getCommunicationTool('query');
