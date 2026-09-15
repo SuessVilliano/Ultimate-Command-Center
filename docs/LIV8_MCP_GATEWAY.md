@@ -25,6 +25,12 @@ GET /.well-known/oauth-protected-resource
 GET /.well-known/oauth-authorization-server
 ```
 
+## One MCP, not competing MCP endpoints
+
+The repo previously had a narrow `/mcp` endpoint dedicated to the allow-listed local workspace. That endpoint is now consolidated into LIV8 Connect. There is only one `/mcp` transport, and the workspace tools are part of the same authenticated registry as Nifty, HighLevel, calendar, Hybrid Journal, health, and Command Center intelligence.
+
+`GET /api/mcp/status` is retained as a workspace-compatibility/status route, but it no longer registers its own transport.
+
 ## Security model
 
 The MCP endpoint is private by default. It accepts either:
@@ -38,10 +44,12 @@ The generic MCP gateway intentionally does **not** expose:
 
 - live trade execution or order modification
 - outbound email/SMS/DM sending
-- deletes
+- record/file deletion tools
 - bulk destructive operations
 
 Those remain behind their dedicated confirmation/approval surfaces.
+
+The allow-listed `workspace_write` tool is the only advertised tool marked with MCP's destructive hint because an explicit overwrite can replace file contents. It still requires `liv8.write` scope **and** the existing local workspace write permission. The gateway does not bypass the workspace allow-list.
 
 ## Required server environment
 
@@ -66,7 +74,7 @@ COMMAND_CENTER_TIMEZONE=America/New_York
 
 ## Advertised tools
 
-The tool list is intentionally normalized around Command Center concepts rather than exposing every downstream API primitive:
+The unified registry currently exposes **24 tools**: 17 normalized Command Center/source-system tools plus 7 allow-listed workspace tools.
 
 ### Operator / system
 
@@ -110,6 +118,18 @@ These are read/analysis tools only. No trade execution capability is exported.
 - `health_snapshot`
 
 Health data is private behind MCP authentication. The tool retrieves connected measurements; it does not diagnose.
+
+### Allow-listed workspace
+
+- `workspace_status`
+- `workspace_list`
+- `workspace_search`
+- `workspace_read`
+- `workspace_stat`
+- `workspace_write`
+- `workspace_mkdir`
+
+These preserve the existing Command Center/Mac workspace capability without creating a second MCP endpoint. Workspace reads/writes remain constrained by the existing workspace roots and local write toggle.
 
 ## ChatGPT custom app connection
 
@@ -160,19 +180,20 @@ GET  /api/liv8-connect/mcp/tools
 POST /api/liv8-connect/mcp/call
 ```
 
-They now use the same normalized tool registry as the remote MCP endpoint. Existing legacy tool names are still accepted internally even though they are not advertised to new MCP clients.
+They now use the same normalized tool registry as the remote MCP endpoint. Existing legacy HighLevel/Nifty tool aliases are still accepted internally even though they are not advertised to new MCP clients.
 
 ## Operational checks
 
 After deployment:
 
-1. `GET /api/liv8-connect/mcp/status` should report the endpoint, protocol, auth configuration, tool counts, and safety flags.
+1. `GET /api/liv8-connect/mcp/status` should report the endpoint, protocol, auth configuration, unified tool counts, and safety flags.
 2. Unauthenticated `POST /mcp` should return `401` plus a `WWW-Authenticate` challenge when auth is configured.
 3. OAuth discovery endpoints should return absolute URLs using `LIV8_MCP_PUBLIC_BASE_URL`.
 4. An authenticated `initialize` request should return server name `liv8-command-center`.
-5. `tools/list` should show the normalized tool registry.
+5. `tools/list` should show all 24 unified tools, including the existing workspace tools.
 6. `command_center_today` should surface live Nifty + calendar data.
 7. `affiliate_brief` should remain staff-scoped.
-8. No generic trading-execution, outbound-message, or delete tools should appear.
+8. `workspace_write` should still obey the local workspace allow-list/write toggle.
+9. No generic trading-execution, outbound-message, delete, or bulk destructive tools should appear.
 
-The automated `server/test/liv8-mcp-contract.test.js` test guards route registration and the high-risk-tool exclusion contract.
+The automated `server/test/liv8-mcp-contract.test.js` test guards route registration, workspace consolidation, and the high-risk-tool exclusion contract.
