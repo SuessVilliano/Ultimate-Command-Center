@@ -8,19 +8,20 @@ function startMonday(d){const x=new Date(d.getFullYear(),d.getMonth(),d.getDate(
 function windowFor(key){const n=new Date();let s,e;const day=(o)=>{const x=new Date(n.getFullYear(),n.getMonth(),n.getDate()+o);return x};
  if(key==='yesterday')s=e=day(-1); else if(key==='today')s=e=day(0); else if(key==='tomorrow')s=e=day(1); else if(key.includes('week')){const o=key==='last_week'?-7:key==='next_week'?7:0;s=startMonday(day(o));e=new Date(s);e.setDate(s.getDate()+6);} else if(key.includes('month')){const o=key==='last_month'?-1:key==='next_month'?1:0;s=new Date(n.getFullYear(),n.getMonth()+o,1);e=new Date(n.getFullYear(),n.getMonth()+o+1,0);} else if(key==='this_quarter'){const m=Math.floor(n.getMonth()/3)*3;s=new Date(n.getFullYear(),m,1);e=new Date(n.getFullYear(),m+3,0);} else {s=new Date(n.getFullYear(),0,1);e=new Date(n.getFullYear(),11,31);} return {start:ymd(s),end:ymd(e)} }
 function rows(p){if(Array.isArray(p))return p;for(const k of ['tasks','projects','events','data','items'])if(Array.isArray(p?.[k]))return p[k];return[]}
-function rowDate(x){return String(x?.dueDate||x?.due_date||x?.date||x?.start||x?.startTime||x?.start_time||x?.updatedAt||x?.updated_at||x?.createdAt||x?.created_at||'').slice(0,10)}
+function dueValue(x){return x?.dueAt||x?.dueDate||x?.due_date||null}
+function rowDate(x){return String(dueValue(x)||x?.date||x?.start||x?.startTime||x?.start_time||x?.updatedAt||x?.updated_at||x?.createdAt||x?.created_at||'').slice(0,10)}
 function within(x,w){const d=rowDate(x);return d&&d>=w.start&&d<=w.end}
-function displayTask(t){return `${t.name||t.title||'Task'} · ${t._project?.name||'Nifty'}${t.dueDate||t.due_date?` · due ${String(t.dueDate||t.due_date).slice(0,10)}`:''}`}
+function projectFor(t){return t?._project||t?.project||{id:t?.projectId||'nifty',name:t?.project?.name||'Nifty'}}
+function displayTask(t){const due=dueValue(t);return `${t.name||t.title||'Task'} · ${projectFor(t)?.name||'Nifty'}${due?` · due ${String(due).slice(0,10)}`:''}`}
 function displayEvent(e){return `${e.summary||e.title||e.name||'Calendar event'}${e.start?.dateTime||e.start_time||e.startTime?` · ${new Date(e.start?.dateTime||e.start_time||e.startTime).toLocaleString()}`:''}`}
 
 export default function CommandTimelineLive(){
  const [period,setPeriod]=useState('today'),[loading,setLoading]=useState(true),[error,setError]=useState(''),[ai,setAi]=useState(null),[tasks,setTasks]=useState([]),[calendar,setCalendar]=useState([]),[oura,setOura]=useState(null),[trading,setTrading]=useState(null);
  const w=useMemo(()=>windowFor(period),[period]);
+ const loadLegacyTasks=async()=>{const pr=await fetch(`${API_URL}/api/nifty/projects`);const projects=pr.ok?rows(await pr.json()):[];const taskGroups=await Promise.all(projects.filter(p=>p?.archived!==true).map(async p=>{try{const r=await fetch(`${API_URL}/api/nifty/projects/${encodeURIComponent(p.id)}/tasks`);if(!r.ok)return[];return rows(await r.json()).filter(t=>t?.archived!==true).map(t=>({...t,_project:p}))}catch{return[]}}));return taskGroups.flat()};
  const load=async()=>{setLoading(true);setError('');
    try{
-     const pr=await fetch(`${API_URL}/api/nifty/projects`);const projects=pr.ok?rows(await pr.json()):[];
-     const taskGroups=await Promise.all(projects.filter(p=>p?.archived!==true).map(async p=>{try{const r=await fetch(`${API_URL}/api/nifty/projects/${encodeURIComponent(p.id)}/tasks`);if(!r.ok)return[];return rows(await r.json()).filter(t=>t?.archived!==true).map(t=>({...t,_project:p}))}catch{return[]}}));
-     setTasks(taskGroups.flat());
+     try{const nr=await fetch(`${API_URL}/api/nifty/mcp/tasks?includeCompleted=true&limit=250`);if(nr.ok){const payload=await nr.json();setTasks(rows(payload).filter(t=>t?.archived!==true).map(t=>({...t,_project:projectFor(t)})))}else setTasks(await loadLegacyTasks())}catch{setTasks(await loadLegacyTasks())}
      const span=Math.max(1,Math.ceil((new Date(w.end)-new Date(w.start))/86400000)+1);
      const calPath=period==='today'?'/api/calendar/today':(period.includes('next')||period==='tomorrow'||period.startsWith('this_'))?`/api/calendar/upcoming?hours=${Math.min(span*24,1440)}`:null;
      if(calPath){try{const r=await fetch(`${API_URL}${calPath}`);setCalendar(r.ok?rows(await r.json()):[])}catch{setCalendar([])}} else setCalendar([]);

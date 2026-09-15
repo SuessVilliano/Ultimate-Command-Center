@@ -42,6 +42,11 @@ async function getCommunicationTool(mode = 'query') {
   return tools.find(t => t.name === exact) || tools.find(t => fallback.test(t.name));
 }
 
+async function getTaskQueryTool() {
+  const tools = await niftyMcp.listTools();
+  return tools.find(t => t.name === 'tasks_query') || tools.find(t => /task.*query|task.*list/i.test(t.name));
+}
+
 async function getTaskMutateTool() {
   const tools = await niftyMcp.listTools();
   return tools.find(t => t.name === 'tasks_mutate') || tools.find(t => /task.*mutate|task.*update/i.test(t.name));
@@ -49,6 +54,38 @@ async function getTaskMutateTool() {
 
 export function registerNiftyMcpRoutes(app) {
   app.get('/api/nifty/mcp/status', (req, res) => res.json(niftyMcp.status()));
+
+  app.get('/api/nifty/mcp/tasks', async (req, res) => {
+    try {
+      if (!niftyMcp.configured) return res.status(503).json({ error: 'Nifty MCP is not configured.', tasks: [] });
+      const tool = await getTaskQueryTool();
+      if (!tool) return res.status(501).json({ error: 'Nifty MCP task reads are unavailable.', tasks: [] });
+
+      const limit = Math.min(Number(req.query.limit) || 250, 250);
+      const includeCompleted = req.query.includeCompleted === 'true';
+      const states = includeCompleted ? [false, true] : [false];
+      const payloads = await Promise.all(states.map(async completed => {
+        const result = await niftyMcp.callTool(tool.name, {
+          resource: 'task', operation: 'list', completed, archived: false, limit,
+          includeTotal: true, sort: 'dueAt', expand: 'project,status,list,assignees'
+        });
+        return rowsFrom(unwrapToolResult(result));
+      }));
+
+      const seen = new Set();
+      const tasks = payloads.flat()
+        .filter(task => task && task.archived !== true)
+        .filter(task => {
+          if (!task.id || seen.has(task.id)) return false;
+          seen.add(task.id);
+          return true;
+        });
+
+      res.json({ tasks, total: tasks.length, source: 'nifty-mcp', scope: 'live' });
+    } catch (error) {
+      res.status(500).json({ error: error.message, tasks: [] });
+    }
+  });
 
   app.get('/api/nifty/mcp/action-feed', async (req, res) => {
     try {
