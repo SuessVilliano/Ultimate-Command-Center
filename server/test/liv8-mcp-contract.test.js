@@ -30,7 +30,7 @@ function fakeResponse() {
   };
 }
 
-test('LIV8 MCP registers remote transport and OAuth discovery routes', () => {
+test('LIV8 MCP registers one remote transport plus OAuth discovery routes', () => {
   const app = fakeApp();
   registerLiv8ConnectMcpRoutes(app);
 
@@ -43,7 +43,7 @@ test('LIV8 MCP registers remote transport and OAuth discovery routes', () => {
   ]) assert.ok(app.routes.has(route), `missing ${route}`);
 });
 
-test('advertised MCP tools are useful but exclude high-risk generic actions', () => {
+test('advertised MCP tools unify operator, source-system, and workspace capabilities without generic high-risk actions', () => {
   const app = fakeApp();
   registerLiv8ConnectMcpRoutes(app);
   const handlers = app.routes.get('GET /api/liv8-connect/mcp/tools');
@@ -52,11 +52,31 @@ test('advertised MCP tools are useful but exclude high-risk generic actions', ()
 
   const tools = res.body?.tools || [];
   const names = new Set(tools.map(tool => tool.name));
-  assert.ok(tools.length >= 15, 'expected a broad operating tool surface');
-  for (const expected of ['command_center_today', 'nifty_list_tasks', 'affiliate_brief', 'calendar_today', 'trading_snapshot']) assert.ok(names.has(expected), `missing ${expected}`);
-  for (const prohibited of ['execute_trade', 'place_trade', 'send_email', 'send_message', 'delete_contact', 'delete_task']) assert.equal(names.has(prohibited), false, `${prohibited} must not be generically exposed`);
+  assert.ok(tools.length >= 20, 'expected a broad unified operating tool surface');
+  for (const expected of [
+    'command_center_today',
+    'nifty_list_tasks',
+    'affiliate_brief',
+    'calendar_today',
+    'trading_snapshot',
+    'workspace_search',
+    'workspace_read',
+    'workspace_write',
+  ]) assert.ok(names.has(expected), `missing ${expected}`);
+
+  for (const prohibited of [
+    'execute_trade',
+    'place_trade',
+    'send_email',
+    'send_message',
+    'delete_contact',
+    'delete_task',
+  ]) assert.equal(names.has(prohibited), false, `${prohibited} must not be generically exposed`);
+
+  const destructive = tools.filter(tool => tool.annotations?.destructiveHint === true).map(tool => tool.name);
+  assert.deepEqual(destructive, ['workspace_write'], 'only allow-listed workspace overwrite may be annotated destructive');
 
   const writes = tools.filter(tool => tool.annotations?.readOnlyHint === false);
-  assert.ok(writes.length > 0, 'expected safe operational write tools');
-  assert.ok(writes.every(tool => tool.annotations?.destructiveHint === false), 'generic writes should be non-destructive');
+  assert.ok(writes.length > 0, 'expected operational write tools');
+  assert.ok(writes.every(tool => typeof tool.annotations?.destructiveHint === 'boolean'), 'write tools must declare destructive semantics');
 });
