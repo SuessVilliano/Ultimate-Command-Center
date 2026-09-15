@@ -76,7 +76,10 @@ jobs:
         run: npm ci
       - name: Backend module import smoke test
         working-directory: server
-        run: node -e "import('./routes/time-intelligence-routes.js').then(()=>import('./routes/local-ai-routes.js')).then(()=>import('./routes/mac-ai-bridge-routes.js')).then(()=>import('./routes/highest-self-routes.js')).then(()=>import('./routes/shortcut-routes.js')).then(()=>import('./routes/local-workspace-mcp-routes.js')).then(()=>import('./routes/trading-guardian-routes.js')).then(()=>import('./routes/vertical-readiness-routes.js')).then(()=>import('./routes/connected-ops-routes.js')).then(()=>import('./routes/operator-assistant-routes.js')).then(()=>import('./routes/highlevel-company-health-routes.js')).then(()=>import('./routes/highlevel-company-capability-routes.js')).then(()=>console.log('backend route imports ok'))"
+        run: node -e "import('./routes/time-intelligence-routes.js').then(()=>import('./routes/local-ai-routes.js')).then(()=>import('./routes/mac-ai-bridge-routes.js')).then(()=>import('./routes/highest-self-routes.js')).then(()=>import('./routes/shortcut-routes.js')).then(()=>import('./routes/local-workspace-mcp-routes.js')).then(()=>import('./routes/liv8-connect-mcp-routes.js')).then(()=>import('./routes/trading-guardian-routes.js')).then(()=>import('./routes/vertical-readiness-routes.js')).then(()=>import('./routes/connected-ops-routes.js')).then(()=>import('./routes/operator-assistant-routes.js')).then(()=>import('./routes/highlevel-company-health-routes.js')).then(()=>import('./routes/highlevel-company-capability-routes.js')).then(()=>console.log('backend route imports ok'))"
+      - name: LIV8 MCP contract tests
+        working-directory: server
+        run: node --test test/liv8-mcp-contract.test.js
       - name: Boot backend and test operator verticals
         working-directory: server
         env:
@@ -90,6 +93,7 @@ jobs:
           LOCAL_WORKSPACE_ROOTS: '..'
           LOCAL_WORKSPACE_WRITE_ENABLED: 'false'
           LIV8_MAC_BRIDGE_TOKEN: 'ci-bridge-token'
+          LIV8_MCP_API_KEY: 'ci-mcp-key'
         run: |
           set -e
           node server.js > /tmp/ucc-server.log 2>&1 &
@@ -138,14 +142,38 @@ jobs:
           test "$code" = '401'
           grep -q 'Unauthorized' /tmp/mac-bridge-unauth.json
 
-          echo '--- MCP status ---'
+          echo '--- Unified MCP workspace status ---'
           curl -fsS http://127.0.0.1:3005/api/mcp/status | tee /tmp/mcp.json
           grep -q 'workspace_search' /tmp/mcp.json
+          grep -q '"unified":true' /tmp/mcp.json
 
-          echo '--- MCP tools/list ---'
-          curl -fsS -X POST http://127.0.0.1:3005/mcp -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | tee /tmp/mcp-tools.json
+          echo '--- Remote MCP auth guard ---'
+          code=$(curl -s -o /tmp/mcp-unauth.json -w '%{http_code}' -X POST http://127.0.0.1:3005/mcp -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')
+          test "$code" = '401'
+          grep -q 'unauthorized' /tmp/mcp-unauth.json
+
+          echo '--- OAuth protected resource metadata ---'
+          curl -fsS http://127.0.0.1:3005/.well-known/oauth-protected-resource | tee /tmp/mcp-resource.json
+          grep -q 'liv8.read' /tmp/mcp-resource.json
+          grep -q 'liv8.write' /tmp/mcp-resource.json
+
+          echo '--- MCP initialize ---'
+          curl -fsS -X POST http://127.0.0.1:3005/mcp \
+            -H 'Authorization: Bearer ci-mcp-key' \
+            -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"ci","version":"1.0.0"}}}' | tee /tmp/mcp-init.json
+          grep -q 'liv8-command-center' /tmp/mcp-init.json
+
+          echo '--- Unified MCP tools/list ---'
+          curl -fsS -X POST http://127.0.0.1:3005/mcp \
+            -H 'Authorization: Bearer ci-mcp-key' \
+            -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | tee /tmp/mcp-tools.json
+          grep -q 'command_center_today' /tmp/mcp-tools.json
+          grep -q 'affiliate_brief' /tmp/mcp-tools.json
           grep -q 'workspace_read' /tmp/mcp-tools.json
           grep -q 'workspace_write' /tmp/mcp-tools.json
+          ! grep -q 'execute_trade' /tmp/mcp-tools.json
 
           echo '--- Trading Guardian ---'
           curl -fsS http://127.0.0.1:3005/api/trading/guardian/status | tee /tmp/guardian-status.json
