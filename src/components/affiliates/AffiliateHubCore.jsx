@@ -48,7 +48,7 @@ const TIER_COLORS = {
 };
 
 const FIRST_PROMOTERS_URL = 'https://firstpromoter.com/login';
-const GHL_APP_URL = 'https://app.gohighlevel.com/';
+const GHL_APP_URL = 'https://app.gohighlevel.com/v2/location/jL84BEwDKwPefLU4YQYR/dashboard';
 
 function fmtMoney(n) {
   if (n == null) return '$0';
