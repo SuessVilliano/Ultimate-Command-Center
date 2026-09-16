@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 UCC="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_FILE="$UCC/server/.env"
@@ -26,9 +28,10 @@ if [[ -z "$LIV8_MAC_BRIDGE_TOKEN" ]]; then
   exit 1
 fi
 
-if ! command -v node >/dev/null 2>&1; then
+NODE_BIN="$(command -v node || true)"
+if [[ -z "$NODE_BIN" ]]; then
   echo "Node.js is required for the LIV8 Mac AI worker." >&2
   exit 1
 fi
 
-exec node "$UCC/scripts/mac-ai-worker.mjs"
+exec "$NODE_BIN" "$UCC/scripts/mac-ai-worker.mjs"
