@@ -75,7 +75,12 @@ async function loadFromMac() {
     if (!response.ok) return null;
     const payload = await response.json().catch(() => ({}));
     const rows = Array.isArray(payload.rows) ? payload.rows : [];
-    return rows.length ? { rows, updatedAt: payload.updatedAt || null, source: payload.source || 'mac-home-state' } : null;
+    return rows.length ? {
+      rows,
+      updatedAt: payload.updatedAt || null,
+      source: payload.source || 'mac-home-state',
+      meta: payload.meta || {},
+    } : null;
   } catch {
     return null;
   }
@@ -117,6 +122,7 @@ export async function storeAffiliateBook(rows, meta = {}) {
     source,
     count: rows.length,
     updatedAt,
+    diff: meta.diff || null,
   };
 
   cacheRows(rows, source, true, finalMeta);
@@ -131,7 +137,7 @@ export async function storeAffiliateBook(rows, meta = {}) {
         rows,
         filename: finalMeta.filename,
         source,
-        metadata: { kind: finalMeta.kind, updatedAt },
+        metadata: { kind: finalMeta.kind, updatedAt, diff: finalMeta.diff },
       });
     }
   } catch (error) {
@@ -148,6 +154,7 @@ export async function restoreAffiliateImport(importId) {
     filename: snapshot.filename || '',
     kind: snapshot.metadata?.kind || 'affiliate-book',
     source: 'history-restore',
+    diff: snapshot.metadata?.diff || null,
   });
 }
 
@@ -179,8 +186,8 @@ export async function hydrateAffiliateBook() {
 
   const mac = await loadFromMac();
   if (mac?.rows?.length) {
-    cacheRows(mac.rows, 'mac-home-state', true, { updatedAt: mac.updatedAt });
-    try { await setCloudState(CLOUD_STATE_KEY, { rows: mac.rows, meta: { updatedAt: mac.updatedAt, source: mac.source } }); } catch {}
+    cacheRows(mac.rows, 'mac-home-state', true, { ...mac.meta, updatedAt: mac.updatedAt });
+    try { await setCloudState(CLOUD_STATE_KEY, { rows: mac.rows, meta: { ...mac.meta, updatedAt: mac.updatedAt, source: mac.source } }); } catch {}
     return { source: 'mac', rows: mac.rows.length };
   }
 
