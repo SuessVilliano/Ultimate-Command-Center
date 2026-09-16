@@ -99,3 +99,60 @@ export function parseAffiliateBookCSV(text) {
     kind: isBookView ? 'book-view' : 'reactivation',
   };
 }
+
+const COMPARE_FIELDS = [
+  'name','email','newAfm','priority','dormantBand','lifetime','prevQ','currQ','mtd','qoqPacing','mom',
+  'activeStatus','lastMrr','endorsement','award','country','niche','story','touches','valueGiven','replied',
+  'dnc','exhausted','outcome','owner','nextMove','promoterProfile','youtube','instagram','forecasting',
+];
+
+function identity(row) {
+  return String(row?.id || row?.email || '').trim().toLowerCase();
+}
+
+function sameValue(a, b) {
+  return String(a ?? '').trim() === String(b ?? '').trim();
+}
+
+export function compareAffiliateBooks(previousRows = [], nextRows = []) {
+  const previous = new Map(previousRows.map(row => [identity(row), row]).filter(([key]) => key));
+  const next = new Map(nextRows.map(row => [identity(row), row]).filter(([key]) => key));
+  const added = [];
+  const removed = [];
+  const changed = [];
+  const fieldCounts = {};
+
+  for (const [key, row] of next) {
+    const before = previous.get(key);
+    if (!before) {
+      added.push({ id: row.id, name: row.name, email: row.email });
+      continue;
+    }
+    const fields = COMPARE_FIELDS.filter(field => !sameValue(before[field], row[field]));
+    if (fields.length) {
+      fields.forEach(field => { fieldCounts[field] = (fieldCounts[field] || 0) + 1; });
+      changed.push({
+        id: row.id,
+        name: row.name,
+        email: row.email,
+        fields,
+        before: Object.fromEntries(fields.map(field => [field, before[field]])),
+        after: Object.fromEntries(fields.map(field => [field, row[field]])),
+      });
+    }
+  }
+
+  for (const [key, row] of previous) {
+    if (!next.has(key)) removed.push({ id: row.id, name: row.name, email: row.email });
+  }
+
+  return {
+    added,
+    removed,
+    changed,
+    counts: { added: added.length, removed: removed.length, changed: changed.length },
+    fieldCounts,
+    previousCount: previousRows.length,
+    nextCount: nextRows.length,
+  };
+}
