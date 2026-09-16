@@ -44,7 +44,7 @@ const WORK_LINKS = [
   ['Endorsement Sheet','https://docs.google.com/spreadsheets/d/1Km3xLBqkiyzLCqh2I25LV34GKtF4rImngRUAOM-aY-g/edit?gid=2101000012#gid=2101000012','Affiliate endorsement tracking and reference sheet','🏅'],
   ['Affiliate SOPs','https://docs.google.com/spreadsheets/d/1DnYn1NCarQFWd-2LCt2QGP4LmPBXCoVbDEG4GiEWSVg/edit?gid=1220225360#gid=1220225360','Affiliate team procedures, operating guidance and reference material','📚'],
   ['First Promoters','https://firstpromoter.com/login','Affiliate tracking, referrals and payouts','🚀'],
-  ['HighLevel','https://app.gohighlevel.com/','Product / platform workspace','⚡'],
+  ['HighLevel','https://app.gohighlevel.com/v2/location/jL84BEwDKwPefLU4YQYR/dashboard','Product / platform workspace','⚡'],
   ['HQ','https://support.leadconnectorhq.com/login','LeadConnector / HighLevel HQ','🏢'],
   ['Darwinbox','https://gohighlevel.darwinbox.com/','HighLevel employee HR and workforce portal','📦'],
   ['Gemini','https://gemini.google.com/gem/a3f972a495f7','Google Gemini AI','🌟'],
