@@ -2,8 +2,13 @@ import { createClient } from '@supabase/supabase-js';
 
 export const LIV8_OWNER_EMAIL = 'liv8ent@gmail.com';
 
-const supabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || '').trim();
-const supabaseKey = String(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
+// Publishable Supabase values are intentionally client-visible. Environment values
+// can override these, while the defaults keep the Mac Mini/Vite install connected.
+const DEFAULT_SUPABASE_URL = 'https://jnpfjjqevglenqpxpvsx.supabase.co';
+const DEFAULT_SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_32gEkj00AeeuhEtE65XopA_XrfaUQ0d';
+
+const supabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_URL).trim();
+const supabaseKey = String(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_PUBLISHABLE_KEY).trim();
 
 export const cloudSyncConfigured = Boolean(supabaseUrl && supabaseKey);
 
