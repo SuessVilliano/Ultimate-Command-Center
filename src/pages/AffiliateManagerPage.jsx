@@ -227,7 +227,7 @@ function DashboardSection({meta,open,isDark,index,total,dragging,onToggle,onMove
         <div className={`mt-1 hidden text-xs sm:block ${isDark?'text-slate-500':'text-slate-600'}`}>{meta.subtitle}</div>
       </button>
       {actions}
-      <div className="hidden items-center gap-1 sm:flex">
+      <div className="flex items-center gap-1">
         <button type="button" onClick={onMoveUp} disabled={index===0} className={iconButton(isDark)} title="Move up"><ArrowUp className="h-3.5 w-3.5"/></button>
         <button type="button" onClick={onMoveDown} disabled={index===total-1} className={iconButton(isDark)} title="Move down"><ArrowDown className="h-3.5 w-3.5"/></button>
       </div>
