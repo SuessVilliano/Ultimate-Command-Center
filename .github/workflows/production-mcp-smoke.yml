@@ -1,0 +1,76 @@
+name: Production MCP Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - 'server/**'
+      - '.github/workflows/production-mcp-smoke.yml'
+
+jobs:
+  production-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify production Command Center and trading MCP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          UCC='https://liv8-command-center-api.onrender.com'
+          TRADING='https://hybrid-mcp-server.onrender.com'
+
+          echo '--- Wait for Command Center federation deployment ---'
+          ready=0
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 20 "$UCC/health" >/tmp/health.json 2>/dev/null \
+              && curl -fsS --max-time 20 "$UCC/api/mcp/status" >/tmp/mcp-status.json 2>/dev/null \
+              && grep -q 'trading_mcp_capabilities' /tmp/mcp-status.json; then
+              ready=1
+              break
+            fi
+            sleep 10
+          done
+          if [ "$ready" != '1' ]; then
+            echo 'Production Command Center did not expose the federated MCP tool surface in time.'
+            cat /tmp/mcp-status.json 2>/dev/null || true
+            exit 1
+          fi
+          cat /tmp/health.json
+          cat /tmp/mcp-status.json
+
+          echo '--- Confirm live trading is armed and federated tools exist ---'
+          grep -q '"enabled":true' /tmp/mcp-status.json
+          grep -q 'trading_live_execute' /tmp/mcp-status.json
+          grep -q 'trading_close_position' /tmp/mcp-status.json
+          grep -q 'trading_copy_to_followers' /tmp/mcp-status.json
+          grep -q 'trading_accounts' /tmp/mcp-status.json
+
+          echo '--- Command Center /mcp must reject unauthenticated callers ---'
+          code=$(curl -sS --max-time 20 -o /tmp/ucc-unauth.json -w '%{http_code}' \
+            -X POST "$UCC/mcp" \
+            -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"prod-smoke","version":"1"}}}')
+          test "$code" = '401'
+          cat /tmp/ucc-unauth.json
+
+          echo '--- Hybrid Trading MCP health must report gateway auth configured ---'
+          curl -fsS --max-time 20 "$TRADING/health" | tee /tmp/trading-health.json
+          grep -q '"gatewayAuthConfigured":true' /tmp/trading-health.json
+
+          echo '--- Hybrid Trading MCP must reject unauthenticated callers ---'
+          code=$(curl -sS --max-time 20 -o /tmp/trading-unauth.json -w '%{http_code}' \
+            -X POST "$TRADING/mcp" \
+            -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"prod-smoke","version":"1"}}}')
+          test "$code" = '401'
+          cat /tmp/trading-unauth.json
+
+          echo '--- Direct execution gateway readiness (no order is submitted) ---'
+          curl -fsS --max-time 25 "$UCC/api/trading/hybrid-journal/status" | tee /tmp/trading-status.json
+          grep -q '"executionGateway"' /tmp/trading-status.json
+          grep -q '"configured":true' /tmp/trading-status.json
+          grep -q '"reachable":true' /tmp/trading-status.json
+
+          echo 'Production MCP smoke passed. No trade was submitted.'
