@@ -16,6 +16,7 @@ Human-readable status:
 
 ```text
 GET /api/liv8-connect/mcp/status
+GET /api/mcp/status
 ```
 
 OAuth discovery:
@@ -27,54 +28,49 @@ GET /.well-known/oauth-authorization-server
 
 ## One MCP, not competing MCP endpoints
 
-The repo previously had a narrow `/mcp` endpoint dedicated to the allow-listed local workspace. That endpoint is now consolidated into LIV8 Connect. There is only one `/mcp` transport, and the workspace tools are part of the same authenticated registry as Nifty, HighLevel, calendar, Hybrid Journal, health, and Command Center intelligence.
-
-`GET /api/mcp/status` is retained as a workspace-compatibility/status route, but it no longer registers its own transport.
+There is one `/mcp` transport. Workspace tools, Nifty, HighLevel, calendar, Hybrid Journal, health, trading intelligence, and gated live execution are advertised through that same authenticated registry.
 
 ## Security model
 
-The MCP endpoint is private by default. It accepts either:
+The MCP endpoint is private by default. It accepts either OAuth Authorization Code + PKCE or a trusted machine-to-machine Bearer API key.
 
-1. OAuth Authorization Code + PKCE (preferred for interactive MCP clients such as ChatGPT/custom apps), or
-2. `Authorization: Bearer <LIV8_MCP_API_KEY>` for trusted server-to-server clients such as a private gateway or OpenClaw deployment that supports custom headers.
+Normal writes require `liv8.write` scope. Real-money trade execution has additional gates:
 
-OAuth uses an owner-password consent screen, short-lived signed access tokens, refresh tokens, PKCE S256, Client ID Metadata Documents, and a compatibility Dynamic Client Registration endpoint.
+1. `liv8.write` permission on the MCP connection.
+2. `LIV8_MCP_LIVE_TRADING_ENABLED=true` on the server.
+3. Optional broker allowlist in `LIV8_MCP_LIVE_TRADING_BROKERS`.
+4. Every live call must include `confirmation: "CONFIRM_LIVE_TRADE"`.
+5. The downstream Hybrid execution route independently requires the same confirmation before it can submit a live order.
+6. Broker/API credentials and account permissions remain downstream; the MCP gateway does not contain broker secrets.
 
-The generic MCP gateway intentionally does **not** expose:
+The MCP does **not** expose a raw unrestricted `place_trade`, raw cTrader write primitive, outbound email/SMS/DM sending, contact/task deletion, or bulk destructive operations. cTrader raw MCP access is read-only; writes go through the confirmation-gated live execution path.
 
-- live trade execution or order modification
-- outbound email/SMS/DM sending
-- record/file deletion tools
-- bulk destructive operations
-
-Those remain behind their dedicated confirmation/approval surfaces.
-
-The allow-listed `workspace_write` tool is the only advertised tool marked with MCP's destructive hint because an explicit overwrite can replace file contents. It still requires `liv8.write` scope **and** the existing local workspace write permission. The gateway does not bypass the workspace allow-list.
+`workspace_write` and `trading_live_execute` are intentionally marked destructive in MCP tool annotations so clients can surface appropriate confirmation UX.
 
 ## Required server environment
 
 ```env
-# Public origin of the deployed Node/Express API, no trailing slash.
 LIV8_MCP_PUBLIC_BASE_URL=https://your-command-center-api.example.com
-
-# Long random values. Never expose these through VITE_ variables.
 LIV8_MCP_AUTH_SECRET=
 LIV8_MCP_OWNER_PASSWORD=
 LIV8_MCP_API_KEY=
-
-# Optional. Comma-separated hostnames allowed to present OAuth Client ID Metadata Documents.
-# Leave empty to allow public HTTPS CIMD clients whose metadata validates their redirect URI.
 LIV8_MCP_ALLOWED_CLIENT_HOSTS=
-
-# Used by the unified today view.
 COMMAND_CENTER_TIMEZONE=America/New_York
+
+# Real-money MCP trading
+LIV8_MCP_LIVE_TRADING_ENABLED=true
+LIV8_MCP_LIVE_TRADING_BROKERS=kraken,ctrader,hybrid-journal
+
+# Downstream execution gateway
+HYBRID_EXECUTION_URL=https://hybridzone-api.onrender.com
+HYBRID_EXECUTION_API_KEY=
 ```
 
-`LIV8_MCP_AUTH_SECRET` should be a high-entropy random value. `LIV8_MCP_API_KEY` is optional if all clients will use OAuth, but is useful for trusted machine-to-machine clients.
+Never expose any of the MCP auth or broker/execution keys through `VITE_` variables.
 
 ## Advertised tools
 
-The unified registry currently exposes **24 tools**: 17 normalized Command Center/source-system tools plus 7 allow-listed workspace tools.
+The unified registry exposes the normal Command Center tools, workspace tools, and a dedicated trading-execution lane.
 
 ### Operator / system
 
@@ -89,7 +85,7 @@ The unified registry currently exposes **24 tools**: 17 normalized Command Cente
 - `nifty_update_task`
 - `nifty_complete_task`
 
-Nifty remains canonical for project/task state. The Command Center does not create a second local task database.
+Nifty remains canonical for project/task state.
 
 ### Affiliate / HighLevel
 
@@ -98,7 +94,7 @@ Nifty remains canonical for project/task state. The Command Center does not crea
 - `affiliate_add_note`
 - `affiliate_create_followup`
 
-Company CRM operations stay staff-scoped. Follow-up creation writes the task to Nifty and can add an internal CRM note, but never sends outbound communication.
+Company CRM operations stay staff-scoped.
 
 ### Calendar
 
@@ -111,13 +107,27 @@ Company CRM operations stay staff-scoped. Follow-up creation writes the task to 
 - `trading_snapshot`
 - `trading_performance`
 
-These are read/analysis tools only. No trade execution capability is exported.
+### Trading execution
+
+- `trading_execution_status` — MCP + Hybrid execution readiness, confirmation phrase and broker allowlist
+- `trading_positions` — live or paper positions by broker
+- `trading_orders` — live or paper orders by broker
+- `trading_order_preview` — preview/validate without placing an order
+- `trading_order_paper` — paper/demo execution
+- `trading_live_execute` — **real live execution**, double-confirmation gated
+- `trading_ctrader_mcp_read` — discover/call read-only cTrader MCP tools
+
+The live execution tool ultimately uses the existing Command Center route:
+
+```text
+POST /api/trading/hybrid-journal/order-execute
+```
+
+That route already supports the Hybrid execution gateway/Kraken path and the Hybrid Journal `place_trade` path for other supported broker adapters. It requires `CONFIRM_LIVE_TRADE` independently of the MCP layer.
 
 ### Health data
 
 - `health_snapshot`
-
-Health data is private behind MCP authentication. The tool retrieves connected measurements; it does not diagnose.
 
 ### Allow-listed workspace
 
@@ -129,7 +139,31 @@ Health data is private behind MCP authentication. The tool retrieves connected m
 - `workspace_write`
 - `workspace_mkdir`
 
-These preserve the existing Command Center/Mac workspace capability without creating a second MCP endpoint. Workspace reads/writes remain constrained by the existing workspace roots and local write toggle.
+Workspace reads/writes remain constrained by the existing root allow-list and local write toggle.
+
+## Recommended live-trade sequence
+
+An MCP client should not jump directly from an idea to execution. The intended workflow is:
+
+```text
+trading_execution_status
+        ↓
+trading_order_preview
+        ↓
+user reviews broker / account / symbol / side / size / price / stops
+        ↓
+trading_live_execute + confirmation="CONFIRM_LIVE_TRADE"
+        ↓
+trading_orders / trading_positions
+        ↓
+Hybrid Journal sync + reporting
+```
+
+This supports real trading while keeping the final capital-moving action explicit.
+
+## cTrader / MCP trader connections
+
+Use `trading_ctrader_mcp_read` with `listTools:true` to discover a configured cTrader connection's MCP tools. Read-only tools can then be called through the same MCP surface. Write-capable cTrader actions are intentionally rejected on the raw proxy and must flow through `trading_live_execute` so confirmation, broker/account rules, and auditing stay centralized.
 
 ## ChatGPT custom app connection
 
@@ -140,13 +174,12 @@ When the ChatGPT account/workspace supports custom MCP apps / Developer Mode:
 3. Choose OAuth authentication.
 4. Let ChatGPT scan the tools.
 5. Complete the LIV8 owner authorization screen.
-6. Review app permissions, especially write tools.
+6. Grant `liv8.write` only when you want the client to be able to perform writes/live trading.
+7. Review every real trade before providing the live confirmation phrase.
 
-OpenAI's custom-app availability and write-action support depend on the ChatGPT plan/workspace and may change during the MCP beta. The server itself remains usable from other MCP clients and from OpenAI API remote-MCP tooling regardless of the ChatGPT UI rollout.
+The same server can also be used from OpenAI API remote-MCP tooling, Claude, OpenClaw, or other compatible clients.
 
 ## Machine-to-machine connection
-
-For a client that supports a custom Bearer header:
 
 ```http
 POST /mcp
@@ -154,22 +187,7 @@ Authorization: Bearer <LIV8_MCP_API_KEY>
 Content-Type: application/json
 ```
 
-Initialize example:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "initialize",
-  "params": {
-    "protocolVersion": "2025-11-25",
-    "capabilities": {},
-    "clientInfo": { "name": "liv8-test", "version": "1.0.0" }
-  }
-}
-```
-
-Then call `tools/list` and `tools/call` using normal MCP JSON-RPC requests.
+Initialize, then call `tools/list` and `tools/call` using normal MCP JSON-RPC requests.
 
 ## Existing LIV8/Juno compatibility
 
@@ -180,20 +198,21 @@ GET  /api/liv8-connect/mcp/tools
 POST /api/liv8-connect/mcp/call
 ```
 
-They now use the same normalized tool registry as the remote MCP endpoint. Existing legacy HighLevel/Nifty tool aliases are still accepted internally even though they are not advertised to new MCP clients.
+They use the same unified tool registry.
 
 ## Operational checks
 
 After deployment:
 
-1. `GET /api/liv8-connect/mcp/status` should report the endpoint, protocol, auth configuration, unified tool counts, and safety flags.
-2. Unauthenticated `POST /mcp` should return `401` plus a `WWW-Authenticate` challenge when auth is configured.
-3. OAuth discovery endpoints should return absolute URLs using `LIV8_MCP_PUBLIC_BASE_URL`.
-4. An authenticated `initialize` request should return server name `liv8-command-center`.
-5. `tools/list` should show all 24 unified tools, including the existing workspace tools.
-6. `command_center_today` should surface live Nifty + calendar data.
-7. `affiliate_brief` should remain staff-scoped.
-8. `workspace_write` should still obey the local workspace allow-list/write toggle.
-9. No generic trading-execution, outbound-message, delete, or bulk destructive tools should appear.
+1. `/api/liv8-connect/mcp/status` reports the MCP endpoint and auth readiness.
+2. `/api/mcp/status` reports the unified extension set and whether live MCP trading is armed.
+3. Unauthenticated `/mcp` returns `401` when MCP auth is configured.
+4. `tools/list` includes `trading_execution_status`, preview, paper, live execute, positions/orders, and cTrader read tools.
+5. `trading_live_execute` is marked destructive and requires the exact confirmation enum.
+6. With live trading disabled, `trading_live_execute` returns 403 before reaching the broker.
+7. With live trading enabled but a missing/invalid confirmation, execution is rejected.
+8. With a broker allowlist configured, non-allowlisted brokers are rejected.
+9. The downstream execution gateway must still independently accept the live request.
+10. `trading_orders` and `trading_positions` should confirm the resulting broker state after an accepted order.
 
-The automated `server/test/liv8-mcp-contract.test.js` test guards route registration, workspace consolidation, and the high-risk-tool exclusion contract.
+The automated `server/test/liv8-mcp-contract.test.js` test guards the unified tool contract and live-execution confirmation schema.
