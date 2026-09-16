@@ -1,10 +1,20 @@
-import { cloudSyncConfigured, isOwnerEmail, supabase } from './supabase-client';
+import {
+  cloudSyncConfigured,
+  getCloudSession,
+  isOwnerEmail,
+  supabase,
+  supabaseRest,
+} from './supabase-client';
 
 async function ownerSession() {
-  if (!cloudSyncConfigured || !supabase) return null;
-  const { data, error } = await supabase.auth.getSession();
-  if (error || !data?.session?.user || !isOwnerEmail(data.session.user.email)) return null;
-  return data.session;
+  if (!cloudSyncConfigured) return null;
+  const session = await getCloudSession();
+  if (!session?.user || !isOwnerEmail(session.user.email)) return null;
+  return session;
+}
+
+function enc(value) {
+  return encodeURIComponent(String(value ?? ''));
 }
 
 export async function cloudStateStatus() {
@@ -20,76 +30,67 @@ export async function cloudStateStatus() {
 export async function getCloudState(stateKey, fallback = null) {
   const session = await ownerSession();
   if (!session) return fallback;
-  const { data, error } = await supabase
-    .from('liv8_user_state')
-    .select('value,updated_at')
-    .eq('user_id', session.user.id)
-    .eq('state_key', stateKey)
-    .maybeSingle();
-  if (error || !data) return fallback;
-  return { value: data.value, updatedAt: data.updated_at };
+  const rows = await supabaseRest(
+    `liv8_user_state?select=value,updated_at&user_id=eq.${enc(session.user.id)}&state_key=eq.${enc(stateKey)}&limit=1`
+  );
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row) return fallback;
+  return { value: row.value, updatedAt: row.updated_at };
 }
 
 export async function setCloudState(stateKey, value) {
   const session = await ownerSession();
   if (!session) return { ok: false, reason: 'not-connected' };
   const updatedAt = new Date().toISOString();
-  const { error } = await supabase
-    .from('liv8_user_state')
-    .upsert({
+  const rows = await supabaseRest('liv8_user_state?on_conflict=user_id,state_key', {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+    body: {
       user_id: session.user.id,
       state_key: stateKey,
       value,
       updated_at: updatedAt,
-    }, { onConflict: 'user_id,state_key' });
-  if (error) throw error;
-  return { ok: true, updatedAt };
+    },
+  });
+  return { ok: true, updatedAt, state: Array.isArray(rows) ? rows[0] || null : null };
 }
 
 export async function saveAffiliateImport({ rows, filename = '', source = 'ghl-toolbar', metadata = {} }) {
   const session = await ownerSession();
   if (!session) return { ok: false, reason: 'not-connected' };
   const cleanRows = Array.isArray(rows) ? rows : [];
-  const { data, error } = await supabase
-    .from('liv8_affiliate_imports')
-    .insert({
+  const data = await supabaseRest('liv8_affiliate_imports', {
+    method: 'POST',
+    headers: { Prefer: 'return=representation' },
+    body: {
       user_id: session.user.id,
       filename,
       source,
       row_count: cleanRows.length,
       rows: cleanRows,
       metadata,
-    })
-    .select('id,imported_at,row_count,filename,source,metadata')
-    .single();
-  if (error) throw error;
-  return { ok: true, import: data };
+    },
+  });
+  return { ok: true, import: Array.isArray(data) ? data[0] || null : data };
 }
 
 export async function listAffiliateImports(limit = 12) {
   const session = await ownerSession();
   if (!session) return [];
-  const { data, error } = await supabase
-    .from('liv8_affiliate_imports')
-    .select('id,imported_at,row_count,filename,source,metadata')
-    .eq('user_id', session.user.id)
-    .order('imported_at', { ascending: false })
-    .limit(limit);
-  if (error) throw error;
-  return data || [];
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 12, 50));
+  const data = await supabaseRest(
+    `liv8_affiliate_imports?select=id,imported_at,row_count,filename,source,metadata&user_id=eq.${enc(session.user.id)}&order=imported_at.desc&limit=${safeLimit}`
+  );
+  return Array.isArray(data) ? data : [];
 }
 
 export async function getAffiliateImport(importId) {
   const session = await ownerSession();
   if (!session || !importId) return null;
-  const { data, error } = await supabase
-    .from('liv8_affiliate_imports')
-    .select('id,imported_at,row_count,filename,source,metadata,rows')
-    .eq('user_id', session.user.id)
-    .eq('id', importId)
-    .maybeSingle();
-  if (error) throw error;
-  return data || null;
+  const data = await supabaseRest(
+    `liv8_affiliate_imports?select=id,imported_at,row_count,filename,source,metadata,rows&user_id=eq.${enc(session.user.id)}&id=eq.${enc(importId)}&limit=1`
+  );
+  return Array.isArray(data) ? data[0] || null : null;
 }
 
 export async function requestOwnerMagicLink() {
