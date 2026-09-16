@@ -12,11 +12,9 @@ UID_NUM="$(id -u)"
 mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
 chmod +x "$RUNNER" 2>/dev/null || true
 
-if ! "$RUNNER" --check >/dev/null 2>&1; then
-  if ! grep -q '^LIV8_MAC_BRIDGE_TOKEN=' "$UCC/server/.env" 2>/dev/null; then
-    echo "⚠️  LIV8_MAC_BRIDGE_TOKEN is not present in $UCC/server/.env"
-    echo "The LaunchAgent can be installed now, but the worker cannot connect until that token exists."
-  fi
+if [[ ! -f "$UCC/server/.env" ]] || ! grep -q '^LIV8_MAC_BRIDGE_TOKEN=' "$UCC/server/.env" 2>/dev/null; then
+  echo "⚠️  LIV8_MAC_BRIDGE_TOKEN is not present in $UCC/server/.env"
+  echo "The LaunchAgent will be installed, but the worker cannot connect until that token exists."
 fi
 
 cat > "$PLIST" <<EOF
