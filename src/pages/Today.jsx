@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Activity, AlertTriangle, ArrowRight, Brain, Briefcase, CalendarDays,
-  CheckCircle2, Circle, Heart, Mail, RefreshCw, ShieldCheck, Sparkles,
-  Target, TrendingUp, Users, Zap
+  Activity, AlertTriangle, ArrowRight, Briefcase, CalendarDays,
+  CheckCircle2, Circle, Heart, ListTodo, Mail, RefreshCw, ShieldCheck,
+  Sparkles, TrendingUp, Zap
 } from 'lucide-react';
 import { API_URL } from '../config';
 import * as svc from '../services/highestSelfService';
@@ -25,6 +25,10 @@ const pill = {
   gray: 'border-white/10 bg-white/[.035] text-gray-400',
 };
 
+const ET_DATE = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'
+});
+
 function hasImportedAffiliateBook() {
   try {
     const raw = sessionStorage.getItem('liv8_ghl_reactivation_book_v1');
@@ -33,34 +37,114 @@ function hasImportedAffiliateBook() {
   } catch { return false; }
 }
 
+function rows(payload, keys = ['tasks', 'data', 'items', 'projects']) {
+  if (Array.isArray(payload)) return payload;
+  for (const key of keys) if (Array.isArray(payload?.[key])) return payload[key];
+  return [];
+}
+
+function dt(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function dueValue(task) {
+  return task?.dueAt || task?.dueDate || task?.due_date || task?.end?.date || null;
+}
+
+function etDateKey(value) {
+  const parsed = value instanceof Date ? value : dt(value);
+  return parsed ? ET_DATE.format(parsed) : null;
+}
+
+function projectName(task) {
+  return task?._project?.name || task?.project?.name || task?.projectName || 'Nifty';
+}
+
+async function jsonFetch(url) {
+  const response = await fetch(url);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
+  return payload;
+}
+
+async function fetchNiftyTasks() {
+  try {
+    const payload = await jsonFetch(`${API_URL}/api/nifty/mcp/tasks?includeCompleted=false&limit=250`);
+    return {
+      tasks: rows(payload).filter(task => task && task.archived !== true && !task.completed),
+      source: payload?.source || 'nifty-mcp'
+    };
+  } catch (mcpError) {
+    try {
+      const projectsPayload = await jsonFetch(`${API_URL}/api/nifty/projects`);
+      const projects = rows(projectsPayload).filter(project => project && project.archived !== true);
+      const resultSets = await Promise.all(projects.map(async project => {
+        try {
+          const payload = await jsonFetch(`${API_URL}/api/nifty/projects/${encodeURIComponent(project.id)}/tasks`);
+          return rows(payload)
+            .filter(task => task && task.archived !== true && !task.completed)
+            .map(task => ({ ...task, _project: project }));
+        } catch { return []; }
+      }));
+      return { tasks: resultSets.flat(), source: 'nifty-api' };
+    } catch (legacyError) {
+      throw new Error(mcpError?.message || legacyError?.message || 'Nifty unavailable');
+    }
+  }
+}
+
 export default function Today({ onNavigate }) {
-  const date = new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
-  const dayName = new Date().toLocaleDateString('en-US', { timeZone:'America/New_York', weekday: 'long' });
+  const date = ET_DATE.format(new Date());
+  const dayName = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'long' });
   const [brief, setBrief] = useState(null);
   const [oura, setOura] = useState(null);
   const [health, setHealth] = useState(null);
   const [mcp, setMcp] = useState(null);
   const [mcpError, setMcpError] = useState('');
+  const [niftyTasks, setNiftyTasks] = useState([]);
+  const [niftySource, setNiftySource] = useState('');
+  const [niftyError, setNiftyError] = useState('');
   const [loading, setLoading] = useState(true);
   const [affiliateBookLoaded, setAffiliateBookLoaded] = useState(() => hasImportedAffiliateBook());
 
   const load = async () => {
     setLoading(true);
-    const [b, o, h, t] = await Promise.allSettled([
+    const [b, o, h, t, n] = await Promise.allSettled([
       svc.getTodayBrief(date),
       svc.getOuraSnapshot(),
       svc.getHealthSnapshot(),
-      fetch(`${API_URL}/api/trading/hybrid-journal/status`).then(async r => {
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-        return j;
+      fetch(`${API_URL}/api/trading/hybrid-journal/status`).then(async response => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+        return payload;
       }),
+      fetchNiftyTasks(),
     ]);
+
     setBrief(b.status === 'fulfilled' ? b.value : null);
     setOura(o.status === 'fulfilled' ? o.value : null);
     setHealth(h.status === 'fulfilled' ? h.value : null);
-    if (t.status === 'fulfilled') { setMcp(t.value); setMcpError(''); }
-    else { setMcp(null); setMcpError(t.reason?.message || 'Unavailable'); }
+
+    if (t.status === 'fulfilled') {
+      setMcp(t.value);
+      setMcpError('');
+    } else {
+      setMcp(null);
+      setMcpError(t.reason?.message || 'Unavailable');
+    }
+
+    if (n.status === 'fulfilled') {
+      setNiftyTasks(n.value.tasks || []);
+      setNiftySource(n.value.source || 'nifty');
+      setNiftyError('');
+    } else {
+      setNiftyTasks([]);
+      setNiftySource('');
+      setNiftyError(n.reason?.message || 'Nifty unavailable');
+    }
+
     setAffiliateBookLoaded(hasImportedAffiliateBook());
     setLoading(false);
   };
@@ -84,24 +168,57 @@ export default function Today({ onNavigate }) {
     return Array.isArray(raw) ? raw.filter(Boolean).slice(0, 3) : [];
   }, [brief]);
 
+  const sortedOpenTasks = useMemo(() => [...niftyTasks].sort((a, b) => {
+    const ad = dt(dueValue(a));
+    const bd = dt(dueValue(b));
+    if (ad && bd) return ad - bd;
+    if (ad) return -1;
+    if (bd) return 1;
+    return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+  }), [niftyTasks]);
+
+  const todayTasks = useMemo(
+    () => sortedOpenTasks.filter(task => etDateKey(dueValue(task)) === date),
+    [sortedOpenTasks, date]
+  );
+  const overdueTasks = useMemo(
+    () => sortedOpenTasks.filter(task => {
+      const key = etDateKey(dueValue(task));
+      return key && key < date;
+    }),
+    [sortedOpenTasks, date]
+  );
+  const focusTasks = useMemo(() => [...todayTasks, ...overdueTasks].slice(0, 5), [todayTasks, overdueTasks]);
+  const affiliateFocus = useMemo(() => [...todayTasks, ...overdueTasks]
+    .filter(task => /affiliate|expand/i.test(projectName(task)))
+    .slice(0, 3), [todayTasks, overdueTasks]);
+
   const mcpConnected = !!(mcp?.connected || mcp?.mcp?.hasSession || (mcp?.mcp?.initialized && mcp?.tools?.length));
+  const niftyConnected = Boolean(niftySource);
   const ouraConfigured = !!oura?.configured;
-  const ouraLive = ouraConfigured && [readiness, sleepScore, activityScore].some(v => v != null);
+  const ouraLive = ouraConfigured && [readiness, sleepScore, activityScore].some(value => value != null);
   const healthLive = !!(health?.latestMetrics || health?.metrics?.length);
   const sourceStates = [
     { label: 'Oura', state: ouraLive ? 'LIVE' : ouraConfigured ? 'DEGRADED' : 'AUTH NEEDED', tone: ouraLive ? 'emerald' : 'amber', icon: Activity, nav: 'health-os' },
     { label: 'Apple Health', state: healthLive ? 'INGESTED' : 'AWAITING SYNC', tone: healthLive ? 'emerald' : 'amber', icon: Heart, nav: 'health-os' },
     { label: 'Hybrid MCP', state: mcpConnected ? 'CONNECTED' : 'OFFLINE', tone: mcpConnected ? 'emerald' : 'rose', icon: TrendingUp, nav: 'trading-process' },
-    { label: 'Gmail', state: 'BRIDGE REQUIRED', tone: 'amber', icon: Mail, nav: 'integrations' },
+    { label: 'Nifty', state: niftyConnected ? 'LIVE' : 'AUTH NEEDED', tone: niftyConnected ? 'emerald' : 'rose', icon: ListTodo, nav: 'actions' },
     { label: 'Calendar', state: 'BRIDGE REQUIRED', tone: 'amber', icon: CalendarDays, nav: 'integrations' },
     { label: 'GHL', state: affiliateBookLoaded ? 'PORTFOLIO LOADED' : 'AUTH REQUIRED', tone: affiliateBookLoaded ? 'emerald' : 'rose', icon: Briefcase, nav: 'tickets' },
+    { label: 'Gmail', state: 'BRIDGE REQUIRED', tone: 'amber', icon: Mail, nav: 'integrations' },
   ];
 
   const operatorNote = readiness != null
-    ? readiness < 65 ? 'Protect recovery. Reduce load and avoid forcing decisions.' : readiness >= 80 ? 'Recovery supports a normal workload. Stay selective.' : 'Moderate recovery. Keep the plan tight and conserve attention.'
+    ? readiness < 65
+      ? 'Protect recovery. Reduce load and avoid forcing decisions.'
+      : readiness >= 80
+        ? 'Recovery supports a normal workload. Stay selective.'
+        : 'Moderate recovery. Keep the plan tight and conserve attention.'
     : 'Readiness is unknown until the Oura bridge returns a current score.';
 
-  const nextMove = outcomes[0] || (dayName === 'Monday' ? 'Map the week, validate systems, and observe the market.' : 'Set today’s top outcome in Highest Self.');
+  const nextMove = todayTasks[0]?.name || todayTasks[0]?.title || outcomes[0]
+    || overdueTasks[0]?.name || overdueTasks[0]?.title
+    || (dayName === 'Monday' ? 'Map the week, validate systems, and observe the market.' : 'Set today’s top outcome in Highest Self.');
 
   return <div className="space-y-4 max-w-6xl" data-testid="morning-command">
     <section className="rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-950/20 via-[#080b0f] to-purple-950/15 p-5">
@@ -109,7 +226,7 @@ export default function Today({ onNavigate }) {
         <div>
           <div className="text-[10px] uppercase tracking-[.22em] text-cyan-300">Morning Command</div>
           <h1 className="text-2xl font-bold text-white mt-1">{dayName} operating brief</h1>
-          <p className="text-sm text-gray-500 mt-1">One screen: operator state → trading posture → work priorities → source health.</p>
+          <p className="text-sm text-gray-500 mt-1">One screen: operator state → live tasks → trading posture → source health.</p>
         </div>
         <button onClick={load} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-gray-300 hover:border-cyan-500/30">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Sync morning
@@ -117,7 +234,7 @@ export default function Today({ onNavigate }) {
       </div>
       <div className="grid sm:grid-cols-3 gap-3 mt-4">
         <Mini label="META SV" value={readiness != null ? `Readiness ${readiness}` : 'Readiness unknown'} sub={operatorNote} />
-        <Mini label="Trade posture" value={tradeMode} sub={tradeNote} tone={tradeTone} />
+        <Mini label="Nifty workload" value={niftyConnected ? `${todayTasks.length} today · ${overdueTasks.length} overdue` : 'Nifty unavailable'} sub={niftyConnected ? `Live via ${niftySource}` : niftyError || 'Connect Nifty to load tasks'} tone={overdueTasks.length ? 'amber' : niftyConnected ? 'emerald' : 'rose'} />
         <Mini label="Next move" value={nextMove} sub="Highest priority currently visible" />
       </div>
     </section>
@@ -156,18 +273,31 @@ export default function Today({ onNavigate }) {
       </Card>
 
       <Card title="GHL / Affiliate" icon={Briefcase} action="Affiliate Manager" onAction={() => go('tickets')}>
-        <Priority text="Confirm role scorecard + success metrics" />
-        <Priority text="Map affiliate portfolio + priority partners" />
-        <Priority text="Build weekly partner operating cadence" />
-        <div className="mt-3"><Status tone={affiliateBookLoaded ? 'emerald' : 'rose'}>{affiliateBookLoaded ? 'AFFILIATE DATA LOADED' : 'GHL AUTH REQUIRED'}</Status></div>
-        <p className="text-[11px] text-gray-500 mt-2">{affiliateBookLoaded ? 'Imported portfolio data is active. Direct CRM reads/writes still require the Command Center GHL bridge.' : 'CRM activity should not be treated as live until authorization is repaired.'}</p>
+        {affiliateFocus.length > 0
+          ? affiliateFocus.map(task => <TaskLine key={task.id} task={task} todayKey={date} compact />)
+          : <>
+              <Priority text="Confirm role scorecard + success metrics" />
+              <Priority text="Map affiliate portfolio + priority partners" />
+              <Priority text="Build weekly partner operating cadence" />
+            </>}
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Status tone={affiliateBookLoaded ? 'emerald' : 'rose'}>{affiliateBookLoaded ? 'AFFILIATE DATA LOADED' : 'GHL AUTH REQUIRED'}</Status>
+          <Status tone={niftyConnected ? 'emerald' : 'rose'}>{niftyConnected ? 'NIFTY LIVE' : 'NIFTY OFFLINE'}</Status>
+        </div>
+        <p className="text-[11px] text-gray-500 mt-2">{affiliateFocus.length ? 'Affiliate priorities are now driven by live Nifty due dates instead of hard-coded dashboard text.' : 'No due affiliate tasks were returned; open Nifty Tasks for the full book.'}</p>
       </Card>
 
-      <Card title="Build / business" icon={Zap} action="Nifty Tasks" onAction={() => go('actions')}>
-        <Priority text="Validate Hybrid Journal MCP + signal flow" />
-        <Priority text="Smart Life Brokers landing-page positioning + tracking" />
-        <Priority text="Hybrid Funding growth message matrix" />
-        <p className="text-[11px] text-gray-500 mt-3">Use Nifty as the canonical task layer; Morning Command surfaces only the next few moves.</p>
+      <Card title="Today / overdue" icon={Zap} action="Nifty Tasks" onAction={() => go('actions')}>
+        <div className="flex flex-wrap gap-2 mb-2">
+          <Status tone={todayTasks.length ? 'emerald' : 'gray'}>{todayTasks.length} TODAY</Status>
+          <Status tone={overdueTasks.length ? 'rose' : 'gray'}>{overdueTasks.length} OVERDUE</Status>
+        </div>
+        {focusTasks.length > 0
+          ? focusTasks.map(task => <TaskLine key={task.id} task={task} todayKey={date} compact />)
+          : niftyConnected
+            ? <p className="text-xs text-gray-500 py-2">No open tasks due today or overdue.</p>
+            : <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-300"><AlertTriangle className="w-3.5 h-3.5 inline mr-2"/>{niftyError || 'Nifty is not connected to Command Center.'}</div>}
+        <p className="text-[11px] text-gray-500 mt-3">Nifty remains the canonical task layer; this card is a live filtered view, not a duplicate task database.</p>
       </Card>
     </section>
 
@@ -191,9 +321,57 @@ function Card({ title, icon: Icon, action, onAction, children }) {
     </div>{children}
   </section>;
 }
-function Mini({ label, value, sub, tone='gray' }) { return <div className="rounded-xl border border-white/10 bg-black/25 p-3"><div className="text-[9px] uppercase tracking-wider text-gray-600">{label}</div><div className={`font-semibold mt-1 ${tone==='gray'?'text-white':pill[tone].split(' ').at(-1)}`}>{value}</div><div className="text-[11px] text-gray-500 mt-1 leading-4">{sub}</div></div>; }
-function Status({ tone='gray', children }) { return <span className={`inline-flex rounded-md border px-2 py-1 text-[9px] font-bold tracking-wider ${pill[tone] || pill.gray}`}>{children}</span>; }
-function ResetLine({ done, text, detail }) { return <div className="flex gap-2"><div className="mt-0.5">{done?<CheckCircle2 className="w-4 h-4 text-emerald-400"/>:<Circle className="w-4 h-4 text-gray-600"/>}</div><div><div className="text-gray-300">{text}</div><div className="text-[11px] text-gray-600">{detail}</div></div></div>; }
-function MetricRow({ label, value, source }) { return <div className="flex items-center justify-between py-2 border-b border-white/[.06] last:border-0"><span className="text-xs text-gray-500">{label}</span><div className="text-right"><div className="text-sm font-semibold text-white">{value}</div><div className="text-[9px] text-gray-700">{source}</div></div></div>; }
-function Priority({ text }) { return <div className="flex gap-2 py-1.5 text-xs text-gray-300"><ArrowRight className="w-3.5 h-3.5 text-cyan-500 mt-0.5 shrink-0"/>{text}</div>; }
-function num(v) { return Number.isFinite(Number(v)) ? Number(v) : null; }
+
+function Mini({ label, value, sub, tone = 'gray' }) {
+  return <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+    <div className="text-[9px] uppercase tracking-wider text-gray-600">{label}</div>
+    <div className={`font-semibold mt-1 ${tone === 'gray' ? 'text-white' : pill[tone].split(' ').at(-1)}`}>{value}</div>
+    <div className="text-[11px] text-gray-500 mt-1 leading-4">{sub}</div>
+  </div>;
+}
+
+function Status({ tone = 'gray', children }) {
+  return <span className={`inline-flex rounded-md border px-2 py-1 text-[9px] font-bold tracking-wider ${pill[tone] || pill.gray}`}>{children}</span>;
+}
+
+function ResetLine({ done, text, detail }) {
+  return <div className="flex gap-2">
+    <div className="mt-0.5">{done ? <CheckCircle2 className="w-4 h-4 text-emerald-400"/> : <Circle className="w-4 h-4 text-gray-600"/>}</div>
+    <div><div className="text-gray-300">{text}</div><div className="text-[11px] text-gray-600">{detail}</div></div>
+  </div>;
+}
+
+function MetricRow({ label, value, source }) {
+  return <div className="flex items-center justify-between py-2 border-b border-white/[.06] last:border-0">
+    <span className="text-xs text-gray-500">{label}</span>
+    <div className="text-right"><div className="text-sm font-semibold text-white">{value}</div><div className="text-[9px] text-gray-700">{source}</div></div>
+  </div>;
+}
+
+function Priority({ text }) {
+  return <div className="flex gap-2 py-1.5 text-xs text-gray-300"><ArrowRight className="w-3.5 h-3.5 text-cyan-500 mt-0.5 shrink-0"/>{text}</div>;
+}
+
+function TaskLine({ task, todayKey, compact = false }) {
+  const due = dueValue(task);
+  const key = etDateKey(due);
+  const isToday = key === todayKey;
+  const isOverdue = key && key < todayKey;
+  const parsed = dt(due);
+  const dueText = parsed
+    ? isToday
+      ? parsed.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })
+      : parsed.toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric' })
+    : 'No due date';
+  return <div className={`flex items-start justify-between gap-3 border-b border-white/[.06] last:border-0 ${compact ? 'py-2' : 'py-3'}`}>
+    <div className="min-w-0">
+      <div className="text-xs text-gray-200 leading-4">{task.name || task.title || 'Untitled task'}</div>
+      <div className="text-[10px] text-gray-600 mt-0.5 truncate">{projectName(task)}</div>
+    </div>
+    <span className={`text-[10px] shrink-0 ${isOverdue ? 'text-rose-300' : isToday ? 'text-emerald-300' : 'text-gray-500'}`}>{isOverdue ? 'Overdue · ' : ''}{dueText}</span>
+  </div>;
+}
+
+function num(value) {
+  return Number.isFinite(Number(value)) ? Number(value) : null;
+}
