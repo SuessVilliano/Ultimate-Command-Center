@@ -23,13 +23,23 @@ else
   printf '⚪ %-16s closed (Remote can remain ready)\n' "OBS Studio"
 fi
 
-for label in com.obsremote.commandcenter com.obsremote.cloudflared; do
+for label in com.obsremote.commandcenter com.obsremote.cloudflared com.liv8.commandcenter.mac-ai; do
   if launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
     printf '✅ %-32s loaded\n' "$label"
   else
     printf '⚪ %-32s not loaded\n' "$label"
   fi
 done
+
+printf '\nAI bridge:\n'
+relay="$(curl -fsS --max-time 6 https://liv8-command-center-api.onrender.com/api/ai/mac-relay/status 2>/dev/null || true)"
+if printf '%s' "$relay" | grep -q '"connected":true'; then
+  printf '✅ Mac Mini → cloud relay connected\n'
+elif [[ -n "$relay" ]]; then
+  printf '⚠️  Mac Mini → cloud relay offline\n'
+else
+  printf '⚠️  Could not read cloud relay status\n'
+fi
 
 printf '\nPublic checks:\n'
 for url in https://command.liv8.co https://clipped.liv8.co https://obsremote.liv8.co; do

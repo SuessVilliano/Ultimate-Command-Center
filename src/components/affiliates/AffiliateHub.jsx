@@ -15,15 +15,16 @@ export default function AffiliateHub({ showCrm = true, showAnalytics = true, ...
 
     const checkBackend = async () => {
       try {
-        const response = await fetch(`${API_URL}/health`, { cache: 'no-store' });
-        if (active) setAiServerStatus(response.ok ? 'online' : 'offline');
+        const response = await fetch(`${API_URL}/api/ai/local/status`, { cache: 'no-store' });
+        const data = await response.json().catch(() => ({}));
+        if (active) setAiServerStatus(response.ok && data.ok === true ? 'online' : 'offline');
       } catch {
         if (active) setAiServerStatus('offline');
       }
     };
 
     checkBackend();
-    timer = setInterval(checkBackend, 30000);
+    timer = setInterval(checkBackend, 15000);
     return () => {
       active = false;
       if (timer) clearInterval(timer);

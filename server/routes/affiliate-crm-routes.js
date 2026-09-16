@@ -3,6 +3,7 @@ import { registerLiv8ConnectRoutes } from './liv8-connect-routes.js';
 import { registerLiv8ConnectMcpRoutes } from './liv8-connect-mcp-routes.js';
 import { registerOperatorAssistantRoutes } from './operator-assistant-routes.js';
 import { registerHighLevelCompanyHealthRoutes } from './highlevel-company-health-routes.js';
+import { registerLocalHomeStateRoutes } from './local-home-state-routes.js';
 
 const API_BASE = 'https://services.leadconnectorhq.com';
 
@@ -76,6 +77,7 @@ export function registerAffiliateCrmRoutes(app) {
   registerLiv8ConnectMcpRoutes(app);
   registerOperatorAssistantRoutes(app);
   registerHighLevelCompanyHealthRoutes(app);
+  registerLocalHomeStateRoutes(app);
 
   app.get('/api/affiliate/crm-note/status', (_req, res) => {
     const { pit, locationId, staffUserId } = config();
