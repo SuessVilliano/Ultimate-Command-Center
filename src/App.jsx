@@ -44,7 +44,9 @@ const validPages = new Set([
 ]);
 
 function initialPage() {
-  if (window.location.hash.includes('access_token=')) return 'integrations';
+  const hash = window.location.hash || '';
+  const isSupabaseOwnerAuth = hash.includes('access_token=') && hash.includes('refresh_token=') && hash.includes('token_type=bearer');
+  if (hash.includes('access_token=') && !isSupabaseOwnerAuth) return 'integrations';
   const requested = new URLSearchParams(window.location.search).get('page');
   return requested && validPages.has(requested) ? requested : 'dashboard';
 }
