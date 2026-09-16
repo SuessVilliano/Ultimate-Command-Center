@@ -43,7 +43,7 @@ test('LIV8 MCP registers one remote transport plus OAuth discovery routes', () =
   ]) assert.ok(app.routes.has(route), `missing ${route}`);
 });
 
-test('advertised MCP tools unify operator, source-system, and workspace capabilities without generic high-risk actions', () => {
+test('advertised MCP tools unify operator, workspace, and confirmation-gated live trading capabilities', () => {
   const app = fakeApp();
   registerLiv8ConnectMcpRoutes(app);
   const handlers = app.routes.get('GET /api/liv8-connect/mcp/tools');
@@ -52,18 +52,27 @@ test('advertised MCP tools unify operator, source-system, and workspace capabili
 
   const tools = res.body?.tools || [];
   const names = new Set(tools.map(tool => tool.name));
-  assert.ok(tools.length >= 20, 'expected a broad unified operating tool surface');
+  assert.ok(tools.length >= 27, 'expected a broad unified operating + trading tool surface');
   for (const expected of [
     'command_center_today',
     'nifty_list_tasks',
     'affiliate_brief',
     'calendar_today',
     'trading_snapshot',
+    'trading_execution_status',
+    'trading_positions',
+    'trading_orders',
+    'trading_order_preview',
+    'trading_order_paper',
+    'trading_live_execute',
+    'trading_ctrader_mcp_read',
     'workspace_search',
     'workspace_read',
     'workspace_write',
   ]) assert.ok(names.has(expected), `missing ${expected}`);
 
+  // Raw unrestricted primitives stay hidden; live execution is exposed only through
+  // the dedicated confirmation-gated trading_live_execute tool.
   for (const prohibited of [
     'execute_trade',
     'place_trade',
@@ -73,8 +82,14 @@ test('advertised MCP tools unify operator, source-system, and workspace capabili
     'delete_task',
   ]) assert.equal(names.has(prohibited), false, `${prohibited} must not be generically exposed`);
 
-  const destructive = tools.filter(tool => tool.annotations?.destructiveHint === true).map(tool => tool.name);
-  assert.deepEqual(destructive, ['workspace_write'], 'only allow-listed workspace overwrite may be annotated destructive');
+  const live = tools.find(tool => tool.name === 'trading_live_execute');
+  assert.equal(live?.annotations?.readOnlyHint, false);
+  assert.equal(live?.annotations?.destructiveHint, true);
+  assert.deepEqual(live?.inputSchema?.required, ['confirmation']);
+  assert.deepEqual(live?.inputSchema?.properties?.confirmation?.enum, ['CONFIRM_LIVE_TRADE']);
+
+  const destructive = tools.filter(tool => tool.annotations?.destructiveHint === true).map(tool => tool.name).sort();
+  assert.deepEqual(destructive, ['trading_live_execute', 'workspace_write'].sort(), 'only explicit overwrite/live-trading tools may be destructive');
 
   const writes = tools.filter(tool => tool.annotations?.readOnlyHint === false);
   assert.ok(writes.length > 0, 'expected operational write tools');
