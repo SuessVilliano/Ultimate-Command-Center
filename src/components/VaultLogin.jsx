@@ -1,266 +1,104 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+import { AlertCircle, Cloud, Eye, EyeOff, Loader2, Lock, Mail, Shield, Sparkles } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import {
-  Lock,
-  Unlock,
-  Eye,
-  EyeOff,
-  Zap,
-  Shield,
-  AlertCircle,
-  Loader2,
-  Sparkles
-} from 'lucide-react';
 
 function VaultLogin() {
-  const { login, isLoading } = useAuth();
+  const { login, isLoading, requestMagicLink, cloudConfigured, ownerEmail } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [showLegacy, setShowLegacy] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
   const [error, setError] = useState('');
-  const [isUnlocking, setIsUnlocking] = useState(false);
-  const [vaultState, setVaultState] = useState('locked'); // locked, unlocking, unlocked
   const [particles, setParticles] = useState([]);
 
-  // Generate floating particles
   useEffect(() => {
-    const generateParticles = () => {
-      const newParticles = Array.from({ length: 50 }, (_, i) => ({
-        id: i,
-        x: Math.random() * 100,
-        y: Math.random() * 100,
-        size: Math.random() * 4 + 1,
-        duration: Math.random() * 20 + 10,
-        delay: Math.random() * 5
-      }));
-      setParticles(newParticles);
-    };
-    generateParticles();
+    setParticles(Array.from({ length: 44 }, (_, i) => ({
+      id: i,
+      x: Math.random() * 100,
+      y: Math.random() * 100,
+      size: Math.random() * 3 + 1,
+      duration: Math.random() * 18 + 10,
+      delay: Math.random() * 5,
+    })));
   }, []);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
-    setIsUnlocking(true);
-    setVaultState('unlocking');
-
-    // Simulate vault unlocking animation
-    await new Promise(resolve => setTimeout(resolve, 1500));
-
-    const result = login(username, password);
-
-    if (result.success) {
-      setVaultState('unlocked');
-      await new Promise(resolve => setTimeout(resolve, 800));
-    } else {
-      setVaultState('locked');
-      setError(result.error);
-      setIsUnlocking(false);
-    }
+  const sendLink = async () => {
+    setBusy(true); setError(''); setSent(false);
+    const result = await requestMagicLink(ownerEmail);
+    if (result.success) setSent(true);
+    else setError(result.error || 'Could not send the secure sign-in link.');
+    setBusy(false);
   };
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-[#030305] flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-purple-500 animate-spin" />
-      </div>
-    );
-  }
+  const handleLegacy = async e => {
+    e.preventDefault();
+    setBusy(true); setError('');
+    const result = login(username, password);
+    if (!result.success) setError(result.error);
+    setBusy(false);
+  };
 
-  return (
-    <div className="min-h-screen bg-[#030305] flex items-center justify-center overflow-hidden relative">
-      {/* Animated background particles */}
-      <div className="absolute inset-0 overflow-hidden">
-        {particles.map(particle => (
-          <div
-            key={particle.id}
-            className="absolute rounded-full bg-purple-500/20"
-            style={{
-              left: `${particle.x}%`,
-              top: `${particle.y}%`,
-              width: `${particle.size}px`,
-              height: `${particle.size}px`,
-              animation: `float ${particle.duration}s ease-in-out infinite`,
-              animationDelay: `${particle.delay}s`
-            }}
-          />
-        ))}
-      </div>
+  if (isLoading) return <div className="min-h-screen bg-[#030305] flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-purple-500"/></div>;
 
-      {/* Gradient orbs */}
-      <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl animate-pulse" />
-      <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-cyan-600/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-purple-900/10 rounded-full blur-3xl" />
-
-      {/* Grid overlay */}
-      <div
-        className="absolute inset-0 opacity-10"
-        style={{
-          backgroundImage: `
-            linear-gradient(rgba(139, 92, 246, 0.1) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(139, 92, 246, 0.1) 1px, transparent 1px)
-          `,
-          backgroundSize: '50px 50px'
-        }}
-      />
-
-      {/* Main vault container */}
-      <div className="relative z-10 w-full max-w-md px-6">
-        {/* Logo and title */}
-        <div className="text-center mb-8">
-          <div className={`inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-purple-600 to-cyan-500 mb-4 transition-all duration-500 ${
-            vaultState === 'unlocking' ? 'animate-pulse scale-110' : ''
-          } ${vaultState === 'unlocked' ? 'scale-125' : ''}`}>
-            {vaultState === 'locked' && <Lock className="w-10 h-10 text-white" />}
-            {vaultState === 'unlocking' && <Loader2 className="w-10 h-10 text-white animate-spin" />}
-            {vaultState === 'unlocked' && <Unlock className="w-10 h-10 text-white" />}
-          </div>
-          <h1 className="text-3xl font-bold text-white mb-2">
-            LIV8 Command Center
-          </h1>
-          <p className="text-gray-400 flex items-center justify-center gap-2">
-            <Shield className="w-4 h-4" />
-            Secure Access Portal
-          </p>
-        </div>
-
-        {/* Vault door effect */}
-        <div className={`relative transition-all duration-700 ${
-          vaultState === 'unlocked' ? 'opacity-0 scale-95' : 'opacity-100 scale-100'
-        }`}>
-          {/* Outer ring */}
-          <div className={`absolute -inset-4 rounded-3xl transition-all duration-500 ${
-            vaultState === 'unlocking'
-              ? 'bg-gradient-to-r from-purple-500 via-cyan-500 to-purple-500 animate-spin-slow opacity-50'
-              : 'bg-gradient-to-br from-purple-900/50 to-cyan-900/50 opacity-30'
-          }`} style={{ filter: 'blur(20px)' }} />
-
-          {/* Main card */}
-          <div className="relative bg-[#0a0a0f]/90 backdrop-blur-xl border border-purple-500/20 rounded-2xl p-8 shadow-2xl">
-            {/* Decorative corners */}
-            <div className="absolute top-0 left-0 w-8 h-8 border-t-2 border-l-2 border-purple-500/50 rounded-tl-2xl" />
-            <div className="absolute top-0 right-0 w-8 h-8 border-t-2 border-r-2 border-purple-500/50 rounded-tr-2xl" />
-            <div className="absolute bottom-0 left-0 w-8 h-8 border-b-2 border-l-2 border-purple-500/50 rounded-bl-2xl" />
-            <div className="absolute bottom-0 right-0 w-8 h-8 border-b-2 border-r-2 border-purple-500/50 rounded-br-2xl" />
-
-            <form onSubmit={handleSubmit} className="space-y-6">
-              {/* Username field */}
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Username
-                </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    className="w-full px-4 py-3 bg-white/5 border border-purple-500/30 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
-                    placeholder="Enter username"
-                    required
-                    disabled={isUnlocking}
-                  />
-                  <Sparkles className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-purple-400/50" />
-                </div>
-              </div>
-
-              {/* Password field */}
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Password
-                </label>
-                <div className="relative">
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full px-4 py-3 bg-white/5 border border-purple-500/30 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all pr-12"
-                    placeholder="Enter password"
-                    required
-                    disabled={isUnlocking}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white transition-colors"
-                  >
-                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                  </button>
-                </div>
-              </div>
-
-              {/* Error message */}
-              {error && (
-                <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  {error}
-                </div>
-              )}
-
-              {/* Submit button */}
-              <button
-                type="submit"
-                disabled={isUnlocking || !username || !password}
-                className={`w-full py-4 rounded-xl font-semibold text-white transition-all duration-300 flex items-center justify-center gap-3 ${
-                  isUnlocking
-                    ? 'bg-purple-600/50 cursor-not-allowed'
-                    : 'bg-gradient-to-r from-purple-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 hover:shadow-lg hover:shadow-purple-500/25'
-                }`}
-              >
-                {isUnlocking ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    Unlocking Vault...
-                  </>
-                ) : (
-                  <>
-                    <Lock className="w-5 h-5" />
-                    Access Command Center
-                  </>
-                )}
-              </button>
-            </form>
-
-            {/* Features preview */}
-            <div className="mt-8 pt-6 border-t border-purple-500/20">
-              <p className="text-xs text-gray-500 text-center mb-4">COMMAND CENTER FEATURES</p>
-              <div className="grid grid-cols-3 gap-3">
-                {[
-                  { icon: '📊', label: 'Dashboard' },
-                  { icon: '🎫', label: 'Tickets' },
-                  { icon: '🤖', label: 'AI Agents' }
-                ].map((feature, i) => (
-                  <div key={i} className="text-center p-2 rounded-lg bg-white/5 border border-purple-500/10">
-                    <div className="text-xl mb-1">{feature.icon}</div>
-                    <div className="text-xs text-gray-400">{feature.label}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <p className="text-center text-gray-600 text-sm mt-8">
-          © 2026 LIV8 Command Center • Powered by AI
-        </p>
-      </div>
-
-      {/* CSS for animations */}
-      <style>{`
-        @keyframes float {
-          0%, 100% { transform: translateY(0) translateX(0); opacity: 0.3; }
-          50% { transform: translateY(-20px) translateX(10px); opacity: 0.8; }
-        }
-        @keyframes spin-slow {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        .animate-spin-slow {
-          animation: spin-slow 3s linear infinite;
-        }
-      `}</style>
+  return <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#030305] px-6 py-10">
+    <div className="absolute inset-0 overflow-hidden">
+      {particles.map(p => <div key={p.id} className="absolute rounded-full bg-purple-500/20" style={{ left:`${p.x}%`, top:`${p.y}%`, width:p.size, height:p.size, animation:`float ${p.duration}s ease-in-out ${p.delay}s infinite` }}/>) }
     </div>
-  );
+    <div className="absolute left-1/4 top-1/4 h-96 w-96 rounded-full bg-purple-600/20 blur-3xl"/>
+    <div className="absolute bottom-1/4 right-1/4 h-96 w-96 rounded-full bg-cyan-600/20 blur-3xl"/>
+    <div className="absolute inset-0 opacity-10" style={{backgroundImage:'linear-gradient(rgba(139,92,246,.12) 1px, transparent 1px),linear-gradient(90deg,rgba(139,92,246,.12) 1px, transparent 1px)',backgroundSize:'50px 50px'}}/>
+
+    <div className="relative z-10 w-full max-w-md">
+      <div className="mb-7 text-center">
+        <div className="mx-auto mb-4 grid h-20 w-20 place-items-center rounded-2xl bg-gradient-to-br from-purple-600 to-cyan-500 shadow-2xl shadow-purple-500/20"><Lock className="h-10 w-10 text-white"/></div>
+        <h1 className="text-3xl font-bold text-white">LIV8 Command Center</h1>
+        <p className="mt-2 flex items-center justify-center gap-2 text-sm text-gray-400"><Shield className="h-4 w-4"/>Secure owner access</p>
+      </div>
+
+      <div className="relative rounded-2xl border border-purple-500/20 bg-[#0a0a0f]/90 p-7 shadow-2xl backdrop-blur-xl">
+        <div className="absolute -inset-px -z-10 rounded-2xl bg-gradient-to-br from-purple-500/10 via-transparent to-cyan-500/10"/>
+        <div className="flex items-start gap-3">
+          <div className="grid h-10 w-10 flex-none place-items-center rounded-xl border border-cyan-500/20 bg-cyan-500/10"><Cloud className="h-5 w-5 text-cyan-300"/></div>
+          <div>
+            <div className="text-xs uppercase tracking-[.18em] text-cyan-300">LIV8 owner account</div>
+            <div className="mt-1 font-semibold text-white">{ownerEmail}</div>
+            <p className="mt-1 text-xs leading-relaxed text-gray-500">Use the same account on your Mac Mini, browser, or work laptop and your synced Command Center state follows you.</p>
+          </div>
+        </div>
+
+        {cloudConfigured ? <button onClick={sendLink} disabled={busy || sent} className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-purple-600 to-cyan-600 px-4 py-3.5 font-semibold text-white transition hover:from-purple-500 hover:to-cyan-500 disabled:opacity-60">
+          {busy ? <Loader2 className="h-5 w-5 animate-spin"/> : <Mail className="h-5 w-5"/>}
+          {sent ? 'Check your email' : 'Email me a secure sign-in link'}
+        </button> : <div className="mt-6 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-200">LIV8 Cloud login is waiting for its production environment configuration.</div>}
+
+        {sent && <div className="mt-3 rounded-xl border border-emerald-500/25 bg-emerald-500/10 p-3 text-sm text-emerald-300">Open the sign-in email on this device. After the link opens Command Center, this device will stay signed in securely.</div>}
+        {error && <div className="mt-3 flex items-start gap-2 rounded-xl border border-red-500/25 bg-red-500/10 p-3 text-sm text-red-300"><AlertCircle className="mt-0.5 h-4 w-4 flex-none"/>{error}</div>}
+
+        <div className="my-6 flex items-center gap-3"><div className="h-px flex-1 bg-white/10"/><span className="text-[11px] uppercase tracking-wider text-gray-600">existing device fallback</span><div className="h-px flex-1 bg-white/10"/></div>
+
+        {!showLegacy ? <button onClick={() => setShowLegacy(true)} className="w-full rounded-xl border border-white/10 px-4 py-3 text-sm text-gray-400 transition hover:bg-white/5 hover:text-white">Use legacy local login</button> : <form onSubmit={handleLegacy} className="space-y-4">
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-gray-400">Username</label>
+            <div className="relative"><input value={username} onChange={e=>setUsername(e.target.value)} className="w-full rounded-xl border border-purple-500/25 bg-white/5 px-4 py-3 pr-10 text-white outline-none focus:border-purple-400" required/><Sparkles className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-purple-400/50"/></div>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-gray-400">Password</label>
+            <div className="relative"><input type={showPassword?'text':'password'} value={password} onChange={e=>setPassword(e.target.value)} className="w-full rounded-xl border border-purple-500/25 bg-white/5 px-4 py-3 pr-11 text-white outline-none focus:border-purple-400" required/><button type="button" onClick={()=>setShowPassword(v=>!v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">{showPassword?<EyeOff className="h-4 w-4"/>:<Eye className="h-4 w-4"/>}</button></div>
+          </div>
+          <button disabled={busy} className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 px-4 py-3 font-semibold text-white hover:bg-white/5 disabled:opacity-50">{busy&&<Loader2 className="h-4 w-4 animate-spin"/>}Unlock existing local session</button>
+        </form>}
+
+        <div className="mt-6 grid grid-cols-3 gap-2 border-t border-white/10 pt-5 text-center">
+          {[['📊','Dashboard'],['🤖','Local AI'],['☁️','Cloud Sync']].map(([icon,label])=><div key={label} className="rounded-lg border border-white/5 bg-white/[.025] p-2"><div>{icon}</div><div className="mt-1 text-[11px] text-gray-500">{label}</div></div>)}
+        </div>
+      </div>
+      <p className="mt-6 text-center text-xs text-gray-700">© 2026 LIV8 Command Center</p>
+    </div>
+
+    <style>{`@keyframes float{0%,100%{transform:translate(0,0);opacity:.25}50%{transform:translate(10px,-20px);opacity:.75}}`}</style>
+  </div>;
 }
 
 export default VaultLogin;

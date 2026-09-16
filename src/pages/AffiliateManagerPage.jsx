@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -33,6 +33,8 @@ import AffiliateIntelligenceWorkspace, { ClosedLoopWorkflow } from '../component
 import PortfolioIntelligence from '../components/affiliates/PortfolioIntelligence';
 import OlivMeetingInbox from '../components/affiliates/OlivMeetingInbox';
 import WeeklyAffiliateBrief from '../components/affiliates/WeeklyAffiliateBrief';
+import AffiliateDataImport from '../components/affiliates/AffiliateDataImport';
+import { getCloudState, setCloudState } from '../lib/liv8-cloud-state';
 
 const WORK_LINKS = [
   ['Affiliate Command Center (ACC)','https://expand-command-center.vercel.app/leadership#home','Open the Affiliate Command Center for leadership, sessions and partner operations','🧭'],
@@ -66,6 +68,7 @@ const LEGACY_SUPPORT_LINKS = [
 ];
 
 const LAYOUT_STORAGE_KEY = 'liv8_ghl_dashboard_layout_v2';
+const LAYOUT_CLOUD_KEY = 'ghl.dashboard.layout';
 
 const SECTION_META = [
   { id:'weekly', title:'Weekly Affiliate', subtitle:'Weekly brief, priorities, movement and manager-ready summary.', icon:CalendarDays, defaultOpen:true },
@@ -87,19 +90,23 @@ const SECTION_META = [
 
 const DEFAULT_LAYOUT = SECTION_META.map(section => ({ id: section.id, open: section.defaultOpen }));
 
+function sanitizeLayout(parsed) {
+  if (!Array.isArray(parsed)) return DEFAULT_LAYOUT.map(item => ({ ...item }));
+  const known = new Set(SECTION_META.map(section => section.id));
+  const sanitized = parsed
+    .filter(item => item && known.has(item.id))
+    .map(item => ({ id: item.id, open: item.open !== false }));
+  const present = new Set(sanitized.map(item => item.id));
+  const missing = DEFAULT_LAYOUT.filter(item => !present.has(item.id));
+  return [...sanitized, ...missing];
+}
+
 function loadLayout() {
   try {
     const parsed = JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY) || 'null');
-    if (!Array.isArray(parsed)) return DEFAULT_LAYOUT;
-    const known = new Set(SECTION_META.map(section => section.id));
-    const sanitized = parsed
-      .filter(item => item && known.has(item.id))
-      .map(item => ({ id: item.id, open: item.open !== false }));
-    const present = new Set(sanitized.map(item => item.id));
-    const missing = DEFAULT_LAYOUT.filter(item => !present.has(item.id));
-    return [...sanitized, ...missing];
+    return sanitizeLayout(parsed);
   } catch {
-    return DEFAULT_LAYOUT;
+    return DEFAULT_LAYOUT.map(item => ({ ...item }));
   }
 }
 
@@ -111,9 +118,22 @@ export default function AffiliateManagerPage(){
   const [saved,setSaved] = useState(false);
   const [affiliateAppKey,setAffiliateAppKey] = useState(0);
 
+  useEffect(() => {
+    let alive = true;
+    getCloudState(LAYOUT_CLOUD_KEY, null).then(state => {
+      const cloudLayout = state?.value?.layout;
+      if (!alive || !Array.isArray(cloudLayout)) return;
+      const next = sanitizeLayout(cloudLayout);
+      setLayout(next);
+      try { localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(next)); } catch {}
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
   const persistLayout = next => {
     setLayout(next);
     try { localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(next)); } catch {}
+    setCloudState(LAYOUT_CLOUD_KEY, { layout: next }).catch(() => {});
     setSaved(true);
     window.clearTimeout(persistLayout._timer);
     persistLayout._timer = window.setTimeout(() => setSaved(false), 1600);
@@ -172,9 +192,10 @@ export default function AffiliateManagerPage(){
         <div>
           <div className={`flex items-center gap-2 text-xs uppercase tracking-[.18em] ${isDark?'text-cyan-300':'text-cyan-700'}`}><LayoutDashboard className="h-4 w-4"/>Customizable GHL dashboard</div>
           <h1 className={`mt-1 text-xl font-bold ${isDark?'text-white':'text-slate-950'}`}>Your affiliate workspace, in your order</h1>
-          <p className={`mt-1 text-sm ${isDark?'text-slate-500':'text-slate-600'}`}>Collapse anything you do not need, drag sections into your preferred order, or use the arrow controls on mobile. Every change is saved on this device.</p>
+          <p className={`mt-1 text-sm ${isDark?'text-slate-500':'text-slate-600'}`}>Collapse anything you do not need, drag sections into your preferred order, or use the arrow controls on mobile. Local changes are saved immediately and sync to your LIV8 account when connected.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <AffiliateDataImport isDark={isDark} buttonClass={toolbarButton(isDark)} />
           <button onClick={()=>setAllOpen(true)} className={toolbarButton(isDark)}>Expand all</button>
           <button onClick={()=>setAllOpen(false)} className={toolbarButton(isDark)}>Collapse all</button>
           <button onClick={resetLayout} className={toolbarButton(isDark)}><RotateCcw className="h-3.5 w-3.5"/>Reset</button>

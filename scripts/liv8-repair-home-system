@@ -22,6 +22,11 @@ fi
 info "Updating Ultimate Command Center"
 git -C "$UCC" pull --ff-only origin master || warn "Update skipped because the repo has local changes"
 
+if [[ -f "$UCC/package.json" ]]; then
+  info "Refreshing Command Center frontend dependencies"
+  (cd "$UCC" && npm install --no-audit --no-fund >/dev/null) && ok "Frontend dependencies ready" || warn "Frontend dependency install needs attention"
+fi
+
 if curl -fsS --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
   ok "Ollama is online"
 elif command -v ollama >/dev/null 2>&1; then
@@ -35,7 +40,7 @@ else
   warn "Ollama is not installed"
 fi
 
-# Restart the local API so newly-pulled routes/state code are actually loaded.
+# Restart local API so newly-pulled routes/state code are actually loaded.
 if port_up 3005; then
   info "Restarting LIV8 local API"
   pids="$(lsof -tiTCP:3005 -sTCP:LISTEN 2>/dev/null || true)"
@@ -44,6 +49,17 @@ if port_up 3005; then
 fi
 (cd "$UCC/server" && nohup node server.js >"$LOGROOT/ucc-api.log" 2>"$LOGROOT/ucc-api-error.log" & echo $! >"$HOME/.liv8/ucc-api.pid")
 wait_port 3005 30 && ok "LIV8 local API is online" || warn "LIV8 local API failed; see $LOGROOT/ucc-api-error.log"
+
+# Restart the Vite frontend too. New browser dependencies/routes otherwise stay
+# stale even after git pull when the old dev server remains in memory.
+if port_up 3002; then
+  info "Restarting Command Center frontend"
+  pids="$(lsof -tiTCP:3002 -sTCP:LISTEN 2>/dev/null || true)"
+  [[ -n "$pids" ]] && kill $pids >/dev/null 2>&1 || true
+  sleep 1
+fi
+(cd "$UCC" && nohup npm run dev -- --port 3002 >"$LOGROOT/ucc-web.log" 2>"$LOGROOT/ucc-web-error.log" & echo $! >"$HOME/.liv8/ucc-web.pid")
+wait_port 3002 30 && ok "Command Center frontend is online" || warn "Command Center frontend failed; see $LOGROOT/ucc-web-error.log"
 
 info "Installing/refreshing persistent Mac AI relay"
 bash "$UCC/scripts/install-mac-ai-launchagent.sh" || warn "Mac AI relay install needs attention"
