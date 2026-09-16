@@ -34,6 +34,7 @@ export function registerLocalHomeStateRoutes(app) {
       count: Array.isArray(rows) ? rows.length : 0,
       updatedAt: meta.updatedAt || null,
       source: meta.source || 'mac-home-state',
+      meta,
     });
   });
 
@@ -43,14 +44,17 @@ export function registerLocalHomeStateRoutes(app) {
     if (rows.length > 1000) return res.status(400).json({ ok: false, error: 'Maximum 1000 affiliate rows' });
 
     const updatedAt = new Date().toISOString();
-    db.setSetting(BOOK_KEY, JSON.stringify(rows));
-    db.setSetting(BOOK_META_KEY, JSON.stringify({
+    const suppliedMeta = req.body?.meta && typeof req.body.meta === 'object' ? req.body.meta : {};
+    const meta = {
+      ...suppliedMeta,
       updatedAt,
-      source: req.body?.source || 'weekly-import',
+      source: req.body?.source || suppliedMeta.source || 'weekly-import',
       count: rows.length,
-    }));
+    };
+    db.setSetting(BOOK_KEY, JSON.stringify(rows));
+    db.setSetting(BOOK_META_KEY, JSON.stringify(meta));
 
-    res.json({ ok: true, count: rows.length, updatedAt, persisted: 'mac-local-sqlite' });
+    res.json({ ok: true, count: rows.length, updatedAt, meta, persisted: 'mac-local-sqlite' });
   });
 
   app.delete('/api/local/home-state/affiliate-book', localOnly, (_req, res) => {
