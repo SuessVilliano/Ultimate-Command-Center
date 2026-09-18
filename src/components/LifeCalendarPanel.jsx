@@ -20,7 +20,12 @@ export default function LifeCalendarPanel() {
     const now = new Date(); const end = new Date(now.getTime() + 120*86400000);
     const attempts = [
       {
-        label: 'Google Calendar',
+        label: 'MCP calendar connector',
+        url: `${CLOUD_API_URL}/api/connectors/calendar/events?start=${encodeURIComponent(now.toISOString())}&end=${encodeURIComponent(end.toISOString())}&limit=150`,
+        map: data => ({ events: data.events || [], warning: data.error || '' }),
+      },
+      {
+        label: 'Google Calendar direct',
         url: `${CLOUD_API_URL}/api/calendar/live?days=120&limit=150&refresh=true`,
         map: data => ({ events: data.events || [], warning: data.refreshError || '' }),
       },
@@ -28,11 +33,6 @@ export default function LifeCalendarPanel() {
         label: 'cloud calendar cache',
         url: `${CLOUD_API_URL}/api/calendar/events?upcoming=true&limit=150`,
         map: data => ({ events: data.events || [], warning: '' }),
-      },
-      {
-        label: 'calendar connector',
-        url: `${CLOUD_API_URL}/api/connectors/calendar/events?start=${encodeURIComponent(now.toISOString())}&end=${encodeURIComponent(end.toISOString())}&limit=150`,
-        map: data => ({ events: data.events || [], warning: data.error || '' }),
       },
     ];
     let lastError = '';
@@ -42,7 +42,7 @@ export default function LifeCalendarPanel() {
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
         const result = attempt.map(data);
-        if (result.events.length || attempt.label === 'Google Calendar') {
+        if (result.events.length || (attempt.label === 'cloud calendar cache' && !lastError)) {
           setEvents(result.events);
           setSource(attempt.label);
           if (result.warning && !result.events.length) setError(result.warning);
@@ -64,10 +64,10 @@ export default function LifeCalendarPanel() {
     if (!form.title || !form.date) return;
     const start = localDateTime(form.date, form.start); const end = localDateTime(form.date, form.end);
     try {
-      let r = await fetch(`${CLOUD_API_URL}/api/calendar/create`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ summary: form.title, start, end, description: `[${form.category.toUpperCase()}] ${form.description || ''}`.trim() }) });
+      let r = await fetch(`${CLOUD_API_URL}/api/connectors/calendar/events`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ summary: form.title, start, end, description: `[${form.category.toUpperCase()}] ${form.description || ''}`.trim() }) });
       let data = await r.json().catch(() => ({}));
       if (!r.ok) {
-        r = await fetch(`${CLOUD_API_URL}/api/connectors/calendar/events`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ summary: form.title, start, end, description: `[${form.category.toUpperCase()}] ${form.description || ''}`.trim() }) });
+        r = await fetch(`${CLOUD_API_URL}/api/calendar/create`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ summary: form.title, start, end, description: `[${form.category.toUpperCase()}] ${form.description || ''}`.trim() }) });
         data = await r.json().catch(() => ({}));
       }
       if (!r.ok) throw new Error(data.error || 'Could not create calendar event');
@@ -81,7 +81,7 @@ export default function LifeCalendarPanel() {
   const input = 'rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/30';
   return <div className="space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <div><div className="flex items-center gap-2 font-semibold text-white"><CalendarDays className="h-5 w-5 text-cyan-300"/>Life Calendar</div><p className="mt-1 text-xs text-gray-500">Shared cloud calendar for browser + desktop. Source: {source}.</p></div>
+      <div><div className="flex items-center gap-2 font-semibold text-white"><CalendarDays className="h-5 w-5 text-cyan-300"/>Life Calendar</div><p className="mt-1 text-xs text-gray-500">Shared cloud calendar for browser + desktop. MCP/Composio/TaskMagic is preferred; direct Google is fallback. Source: {source}.</p></div>
       <button onClick={load} className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-xs text-gray-400 hover:text-white"><RefreshCw className={`h-4 w-4 ${loading?'animate-spin':''}`}/>Sync</button>
     </div>
     {error && <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-300">{error}</div>}
