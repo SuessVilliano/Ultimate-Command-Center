@@ -278,9 +278,10 @@ export function getOAuthUrl(clientId, redirectUri) {
   return `https://accounts.google.com/o/oauth2/v2/auth?` +
     `client_id=${clientId}` +
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-    `&response_type=token` +
+    `&response_type=code` +
     `&scope=${encodeURIComponent(scopes.join(' '))}` +
-    `&access_type=online`;
+    `&access_type=offline` +
+    `&prompt=consent`;
 }
 
 /**

@@ -1,4 +1,4 @@
-import { API_URL } from '../config';
+import { CLOUD_API_URL } from '../config';
 
 const LS_KEY = 'liv8-health-training-log-v1';
 
@@ -12,7 +12,7 @@ function writeLocal(items) {
 }
 
 async function api(path, { method = 'GET', body } = {}) {
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`${CLOUD_API_URL}${path}`, {
     method,
     headers: { 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,

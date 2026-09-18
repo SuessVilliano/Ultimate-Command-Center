@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { CalendarDays, Plus, RefreshCw } from 'lucide-react';
-import { API_URL } from '../config';
+import { CLOUD_API_URL } from '../config';
 import * as hs from '../services/highestSelfService';
 
 const localDateTime = (date, time) => new Date(`${date}T${time || '09:00'}:00`).toISOString();
@@ -12,18 +12,49 @@ export default function LifeCalendarPanel() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [source, setSource] = useState('cloud');
   const [form, setForm] = useState({ category: 'work', title: '', date: '', start: '09:00', end: '10:00', description: '' });
 
   const load = async () => {
     setLoading(true); setError('');
-    try {
-      const now = new Date(); const end = new Date(now.getTime() + 120*86400000);
-      const r = await fetch(`${API_URL}/api/connectors/calendar/events?start=${encodeURIComponent(now.toISOString())}&end=${encodeURIComponent(end.toISOString())}&limit=150`);
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error || 'Calendar connector unavailable');
-      setEvents(data.events || []);
-    } catch (e) { setError(e.message); setEvents([]); }
-    finally { setLoading(false); }
+    const now = new Date(); const end = new Date(now.getTime() + 120*86400000);
+    const attempts = [
+      {
+        label: 'Google Calendar',
+        url: `${CLOUD_API_URL}/api/calendar/live?days=120&limit=150&refresh=true`,
+        map: data => ({ events: data.events || [], warning: data.refreshError || '' }),
+      },
+      {
+        label: 'cloud calendar cache',
+        url: `${CLOUD_API_URL}/api/calendar/events?upcoming=true&limit=150`,
+        map: data => ({ events: data.events || [], warning: '' }),
+      },
+      {
+        label: 'calendar connector',
+        url: `${CLOUD_API_URL}/api/connectors/calendar/events?start=${encodeURIComponent(now.toISOString())}&end=${encodeURIComponent(end.toISOString())}&limit=150`,
+        map: data => ({ events: data.events || [], warning: data.error || '' }),
+      },
+    ];
+    let lastError = '';
+    for (const attempt of attempts) {
+      try {
+        const r = await fetch(attempt.url, { cache: 'no-store' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+        const result = attempt.map(data);
+        if (result.events.length || attempt.label === 'Google Calendar') {
+          setEvents(result.events);
+          setSource(attempt.label);
+          if (result.warning && !result.events.length) setError(result.warning);
+          else setError(result.warning || '');
+          setLoading(false);
+          return;
+        }
+      } catch (e) { lastError = e.message || String(e); }
+    }
+    setEvents([]);
+    setError(lastError || 'No cloud calendar source returned events.');
+    setLoading(false);
   };
   useEffect(() => { load(); }, []);
 
@@ -33,8 +64,13 @@ export default function LifeCalendarPanel() {
     if (!form.title || !form.date) return;
     const start = localDateTime(form.date, form.start); const end = localDateTime(form.date, form.end);
     try {
-      const r = await fetch(`${API_URL}/api/connectors/calendar/events`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ summary: form.title, start, end, description: `[${form.category.toUpperCase()}] ${form.description || ''}`.trim() }) });
-      const data = await r.json(); if (!r.ok) throw new Error(data.error || 'Could not create calendar event');
+      let r = await fetch(`${CLOUD_API_URL}/api/calendar/create`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ summary: form.title, start, end, description: `[${form.category.toUpperCase()}] ${form.description || ''}`.trim() }) });
+      let data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        r = await fetch(`${CLOUD_API_URL}/api/connectors/calendar/events`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ summary: form.title, start, end, description: `[${form.category.toUpperCase()}] ${form.description || ''}`.trim() }) });
+        data = await r.json().catch(() => ({}));
+      }
+      if (!r.ok) throw new Error(data.error || 'Could not create calendar event');
       if (form.category === 'family') {
         try { await hs.addFamilyEvent({ person_id: null, title: form.title, event_type: 'family', date_start: form.date, date_end: form.date, notes: form.description, source: 'calendar' }); } catch {}
       }
@@ -45,7 +81,7 @@ export default function LifeCalendarPanel() {
   const input = 'rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/30';
   return <div className="space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <div><div className="flex items-center gap-2 font-semibold text-white"><CalendarDays className="h-5 w-5 text-cyan-300"/>Life Calendar</div><p className="mt-1 text-xs text-gray-500">Pulls your connected calendar into Command Center. New family, work, or personal events write back to the real calendar.</p></div>
+      <div><div className="flex items-center gap-2 font-semibold text-white"><CalendarDays className="h-5 w-5 text-cyan-300"/>Life Calendar</div><p className="mt-1 text-xs text-gray-500">Shared cloud calendar for browser + desktop. Source: {source}.</p></div>
       <button onClick={load} className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-xs text-gray-400 hover:text-white"><RefreshCw className={`h-4 w-4 ${loading?'animate-spin':''}`}/>Sync</button>
     </div>
     {error && <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-300">{error}</div>}

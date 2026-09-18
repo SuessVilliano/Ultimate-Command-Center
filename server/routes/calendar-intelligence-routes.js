@@ -8,8 +8,8 @@ function config() {
   return {
     clientId: process.env.GOOGLE_CLIENT_ID || '',
     clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
-    refreshToken: process.env.GOOGLE_REFRESH_TOKEN || '',
-    calendarId: process.env.GOOGLE_CALENDAR_ID || 'primary',
+    refreshToken: process.env.GOOGLE_REFRESH_TOKEN || db.getSetting('google_calendar_refresh_token', '') || '',
+    calendarId: process.env.GOOGLE_CALENDAR_ID || db.getSetting('google_calendar_id', 'primary') || 'primary',
     ingestSecret: process.env.CALENDAR_INGEST_SECRET || process.env.LIV8_CALENDAR_WEBHOOK_SECRET || '',
   };
 }
@@ -79,6 +79,25 @@ async function getAccessToken() {
   return payload.access_token;
 }
 
+async function exchangeAuthorizationCode(code, redirectUri) {
+  const c = config();
+  if (!c.clientId || !c.clientSecret) throw Object.assign(new Error('Google OAuth client ID/secret are not configured'), { status: 503 });
+  if (!code || !redirectUri) throw Object.assign(new Error('code and redirectUri are required'), { status: 400 });
+  const body = new URLSearchParams({
+    client_id: c.clientId,
+    client_secret: c.clientSecret,
+    code: String(code),
+    redirect_uri: String(redirectUri),
+    grant_type: 'authorization_code',
+  });
+  const response = await fetch(GOOGLE_TOKEN_URL, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body, signal:AbortSignal.timeout(15000) });
+  const payload = await response.json().catch(()=>({}));
+  if (!response.ok || !payload.access_token) throw Object.assign(new Error(payload.error_description || payload.error || `Google OAuth HTTP ${response.status}`), { status: response.status });
+  if (payload.refresh_token) await db.setSettingAsync('google_calendar_refresh_token', payload.refresh_token);
+  if (!payload.refresh_token && !config().refreshToken) throw Object.assign(new Error('Google did not return a refresh token. Reconnect and approve access again.'), { status: 409 });
+  return payload;
+}
+
 async function refreshGoogle(days = 30) {
   const token = await getAccessToken();
   const c = config();
@@ -111,7 +130,53 @@ export function registerCalendarIntelligenceRoutes(app) {
 
   app.get('/api/calendar/status',(_req,res)=>{
     const c=config();
-    res.json({ok:true,directGoogleConfigured:Boolean(c.clientId&&c.clientSecret&&c.refreshToken),webhookConfigured:Boolean(c.ingestSecret),calendarId:c.calendarId,sync:state()});
+    res.json({
+      ok:true,
+      directGoogleConfigured:Boolean(c.clientId&&c.clientSecret&&c.refreshToken),
+      clientIdConfigured:Boolean(c.clientId),
+      clientSecretConfigured:Boolean(c.clientSecret),
+      refreshTokenConfigured:Boolean(c.refreshToken),
+      webhookConfigured:Boolean(c.ingestSecret),
+      calendarId:c.calendarId,
+      sync:state()
+    });
+  });
+
+  app.post('/api/calendar/oauth/exchange', async (req, res) => {
+    try {
+      const payload = await exchangeAuthorizationCode(req.body?.code, req.body?.redirectUri);
+      const synced = await refreshGoogle(30).catch(() => 0);
+      res.json({ ok:true, connected:true, refreshTokenStored:Boolean(config().refreshToken), synced });
+    } catch (error) {
+      res.status(error.status || 500).json({ ok:false, error:error.message });
+    }
+  });
+
+  app.post('/api/calendar/create', async (req, res) => {
+    try {
+      const { summary, start, end, description = '', location = '' } = req.body || {};
+      if (!summary || !start || !end) return res.status(400).json({ ok:false, error:'summary, start and end are required' });
+      const token = await getAccessToken();
+      const c = config();
+      const response = await fetch(`${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(c.calendarId)}/events`, {
+        method:'POST',
+        headers:{ Authorization:`Bearer ${token}`, 'Content-Type':'application/json' },
+        body:JSON.stringify({
+          summary:String(summary),
+          description:String(description || ''),
+          location:String(location || ''),
+          start:{ dateTime:new Date(start).toISOString() },
+          end:{ dateTime:new Date(end).toISOString() },
+        }),
+        signal:AbortSignal.timeout(20000),
+      });
+      const payload = await response.json().catch(()=>({}));
+      if (!response.ok) throw Object.assign(new Error(payload.error?.message || `Google Calendar HTTP ${response.status}`), { status: response.status });
+      upsertEvents([payload], 'google-create');
+      res.json({ ok:true, event:payload });
+    } catch (error) {
+      res.status(error.status || 500).json({ ok:false, error:error.message });
+    }
   });
 
   app.get('/api/calendar/live',async(req,res)=>{
@@ -138,7 +203,7 @@ export function registerCalendarIntelligenceRoutes(app) {
   });
 
   const c = config();
-  console.log(`Calendar Intelligence routes registered | directGoogle=${Boolean(c.clientId&&c.clientSecret&&c.refreshToken)} | webhook=${Boolean(c.ingestSecret)} | calendar=${c.calendarId}`);
+  console.log(`Calendar Intelligence routes registered | clientId=${Boolean(c.clientId)} | clientSecret=${Boolean(c.clientSecret)} | refreshToken=${Boolean(c.refreshToken)} | webhook=${Boolean(c.ingestSecret)} | calendar=${c.calendarId}`);
 }
 
 export default registerCalendarIntelligenceRoutes;

@@ -10,7 +10,8 @@ const hostname = isBrowser ? window.location.hostname : '';
 const isLocalHost = hostname === 'localhost' || hostname === '127.0.0.1';
 
 const configuredApiUrl = import.meta.env.VITE_API_URL;
-export const API_URL = configuredApiUrl || (isLocalHost ? 'http://localhost:3005' : 'https://liv8-command-center-api.onrender.com');
+export const CLOUD_API_URL = import.meta.env.VITE_CLOUD_API_URL || 'https://liv8-command-center-api.onrender.com';
+export const API_URL = configuredApiUrl || (isLocalHost ? 'http://localhost:3005' : CLOUD_API_URL);
 
 // Voicebox is a local Mac service. Cloud builds may probe it, but cloud AI/TTS
 // must not depend on it. Browser/Edge/server TTS remains the production path.
@@ -34,6 +35,7 @@ export const FEATURES = {
 
 export default {
   API_URL,
+  CLOUD_API_URL,
   VOICEBOX_URL,
   FEATURES
 };

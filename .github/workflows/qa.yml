@@ -121,6 +121,19 @@ jobs:
           curl -fsS 'http://127.0.0.1:3005/api/hs/health/metrics/live?days=7' | tee /tmp/health-metrics.json
           grep -q '"ok":true' /tmp/health-metrics.json
 
+          echo '--- Calendar cloud backbone ---'
+          curl -fsS 'http://127.0.0.1:3005/api/calendar/status' | tee /tmp/calendar-status.json
+          grep -q '"clientIdConfigured"' /tmp/calendar-status.json
+          grep -q '"refreshTokenConfigured"' /tmp/calendar-status.json
+          curl -fsS 'http://127.0.0.1:3005/api/calendar/live?refresh=false&limit=10' | tee /tmp/calendar-live.json
+          grep -q '"ok":true' /tmp/calendar-live.json
+
+          echo '--- Cloud-canonical personal clients ---'
+          grep -q 'CLOUD_API_URL' ../src/services/highestSelfService.js
+          grep -q 'CLOUD_API_URL' ../src/services/trainingService.js
+          grep -q 'CLOUD_API_URL' ../src/components/HealthMetricsDashboard.jsx
+          grep -q 'CLOUD_API_URL' ../src/components/LifeCalendarPanel.jsx
+
           echo '--- Operator guard ---'
           code=$(curl -s -o /tmp/operator.json -w '%{http_code}' -X POST http://127.0.0.1:3005/api/operator/chat -H 'Content-Type: application/json' -d '{}')
           test "$code" = '400'

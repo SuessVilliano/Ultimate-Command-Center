@@ -7,7 +7,7 @@ import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis
 } from 'recharts';
-import { API_URL } from '../config';
+import { CLOUD_API_URL } from '../config';
 import { useTheme } from '../context/ThemeContext';
 
 const TABS = [
@@ -79,7 +79,7 @@ export default function HealthMetricsDashboard() {
   const load = async () => {
     setLoading(true); setError('');
     try {
-      const res = await fetch(`${API_URL}/api/hs/health/metrics/live?days=${days}`);
+      const res = await fetch(`${CLOUD_API_URL}/api/hs/health/metrics/live?days=${days}`);
       const text = await res.text();
       let json;
       try { json = JSON.parse(text); } catch { throw new Error(`Health API returned ${text.slice(0, 40) || 'non-JSON response'}`); }
@@ -143,6 +143,9 @@ export default function HealthMetricsDashboard() {
     </div>
 
     <div className="p-5">
+      {data?.oura?.configured === false && <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/[0.06] p-3 text-sm text-amber-200">
+        Oura is not configured on the shared cloud API yet. Desktop and browser now use the same Health source, so the Oura token must live on the cloud service rather than only on the Mac.
+      </div>}
       {error && <div className="mb-4 rounded-xl border border-rose-500/20 bg-rose-500/[0.05] p-3 text-sm text-rose-300">{error}</div>}
       {loading && !data ? <div className="h-64 grid place-items-center"><div className="text-center"><RefreshCw className="w-6 h-6 text-cyan-300 animate-spin mx-auto" /><div className="text-xs text-gray-500 mt-3">Reading your health signals…</div><div className="text-[10px] text-gray-600 mt-1">The body keeps receipts. We turn them into decisions.</div></div></div> : null}
 

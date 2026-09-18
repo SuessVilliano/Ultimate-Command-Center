@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { CheckCircle2, RefreshCw, Smartphone, Zap } from 'lucide-react';
-import { API_URL } from '../config';
+import { CLOUD_API_URL } from '../config';
 
 const MOTIVATION = [
   'Pulling your world into one view…',
@@ -30,7 +30,7 @@ export default function SyncAllButton({ compact = false }) {
         todayFocus: localStorage.getItem('liv8_today_focus') || null,
         completedToday: readJson('liv8_completed_today', []),
       };
-      const res = await fetch(`${API_URL}/api/sync/all`, {
+      const res = await fetch(`${CLOUD_API_URL}/api/sync/all`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
       });
       const data = await res.json();
