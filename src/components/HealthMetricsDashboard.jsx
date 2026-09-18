@@ -7,7 +7,7 @@ import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis
 } from 'recharts';
-import { API_URL } from '../config';
+import { API_URL, CLOUD_API_URL } from '../config';
 import { useTheme } from '../context/ThemeContext';
 
 const TABS = [
@@ -79,7 +79,7 @@ export default function HealthMetricsDashboard() {
   const load = async () => {
     setLoading(true); setError('');
     try {
-      const res = await fetch(`${API_URL}/api/hs/health/metrics/live?days=${days}`);
+      const res = await fetch(`${CLOUD_API_URL}/api/hs/health/metrics/live?days=${days}`);
       const text = await res.text();
       let json;
       try { json = JSON.parse(text); } catch { throw new Error(`Health API returned ${text.slice(0, 40) || 'non-JSON response'}`); }
