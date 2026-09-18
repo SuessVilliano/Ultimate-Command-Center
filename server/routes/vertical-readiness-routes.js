@@ -28,6 +28,7 @@ function result(id, label, probeResult, configured = true, mode = 'cloud-or-loca
 
 export function registerVerticalReadinessRoutes(app) {
   app.get('/api/system/verticals', async (req, res) => {
+    const connectorCalendarConfigured = env('CONNECTOR_MCP_URL','CONNECTOR_BRIDGE_URL');
     const [health, oura, trading, guardian, nifty, mcp, ai, calendar, integrations, memory, shortcut] = await Promise.all([
       probe('/api/hs/health/snapshot'),
       probe('/api/hs/health/oura/snapshot'),
@@ -36,7 +37,7 @@ export function registerVerticalReadinessRoutes(app) {
       probe('/api/nifty/mcp/status'),
       probe('/api/mcp/status'),
       probe('/api/ai/local/status'),
-      probe('/api/calendar/upcoming?hours=24'),
+      connectorCalendarConfigured ? probe('/api/connectors/calendar/events?limit=1') : probe('/api/calendar/upcoming?hours=24'),
       probe('/api/integrations/status'),
       probe('/api/memory/vault/stats'),
       probe('/api/shortcut/voice'),
@@ -50,7 +51,7 @@ export function registerVerticalReadinessRoutes(app) {
       result('nifty', 'Nifty', nifty, env('NIFTY_MCP_URL','NIFTY_ACCESS_TOKEN'), 'cloud', 'Projects, tasks and team conversations.'),
       result('mcp', 'Mac Workspace MCP', mcp, env('LOCAL_WORKSPACE_ROOTS'), 'local-only', 'Allow-listed file search/read/write. Never exposes shell or secrets.'),
       result('local-ai', 'Juno Local AI', ai, env('OLLAMA_BASE_URL') || process.env.NODE_ENV !== 'production', 'local-only', 'Ollama/Qwen on the Mac Mini.'),
-      result('calendar', 'Calendar', calendar, env('GOOGLE_CALENDAR_EMAIL'), 'cloud', 'Time intelligence and upcoming commitments.'),
+      result('calendar', 'Calendar', calendar, connectorCalendarConfigured || env('GOOGLE_CLIENT_ID','GOOGLE_CALENDAR_EMAIL'), 'cloud', connectorCalendarConfigured ? 'MCP/bridge calendar provider is canonical.' : 'Direct Google/calendar cache fallback.'),
       result('ghl', 'GHL / Integrations', integrations, env('GHL_API_KEY','GHL_LOCATION_ID'), 'cloud', 'CRM/affiliate/client operating layer.'),
       result('memory', 'Memory Vault', memory, true, 'local', 'Structured LLM and operator memory.'),
       result('voice', 'Voice / Shortcut', shortcut, env('LIV8_SHORTCUT_TOKEN','APPLE_HEALTH_INGEST_TOKEN'), 'cloud', 'Hands-free capture and routing.'),
