@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { CheckCircle2, RefreshCw, Smartphone, Zap } from 'lucide-react';
-import { API_URL, CLOUD_API_URL } from '../config';
+import { CLOUD_API_URL } from '../config';
 
 const MOTIVATION = [
   'Pulling your world into one view…',
