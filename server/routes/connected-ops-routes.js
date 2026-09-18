@@ -52,14 +52,22 @@ async function composioConnectionStatus(){
 
 async function composioConnect(toolkits=[]){
   const normalized=[...new Set((toolkits||[]).map(x=>String(x||'').toLowerCase()).filter(x=>['gmail','googlecalendar','googledrive'].includes(x)))];
-  if(!normalized.length)throw new Error('Choose gmail and/or googlecalendar');
-  return composioExecute('COMPOSIO_MANAGE_CONNECTIONS',{toolkits:normalized,reinitiate_all:false});
+  if(!normalized.length)throw new Error('Choose gmail, googlecalendar, and/or googledrive');
+  const sessionId=await ensureComposioSession();
+  const appUrl=String(process.env.APP_URL||process.env.FRONTEND_URL||'https://command.liv8.co').replace(/\/$/,'');
+  const links=[];
+  for(const toolkit of normalized){
+    const callbackUrl=`${appUrl}/?page=integrations&composio_connected=${encodeURIComponent(toolkit)}`;
+    const result=await composioApi('/api/v3.1/tool_router/session/'+encodeURIComponent(sessionId)+'/link',{method:'POST',body:{toolkit,callback_url:callbackUrl}});
+    links.push({toolkit,...result});
+  }
+  return links.length===1?links[0]:{links};
 }
 function findComposioConnectUrl(value,depth=0){
   if(depth>6||value==null)return '';
-  if(typeof value==='string')return /^https:\/\/connect\.composio\.dev\//i.test(value)?value:'';
+  if(typeof value==='string')return /^https:\/\//i.test(value)?value:'';
   if(Array.isArray(value)){for(const item of value){const found=findComposioConnectUrl(item,depth+1);if(found)return found;}return '';}
-  if(typeof value==='object'){for(const item of Object.values(value)){const found=findComposioConnectUrl(item,depth+1);if(found)return found;}}
+  if(typeof value==='object'){for(const key of ['redirect_url','redirectUrl','url']){const found=findComposioConnectUrl(value[key],depth+1);if(found)return found;}for(const item of Object.values(value)){const found=findComposioConnectUrl(item,depth+1);if(found)return found;}}
   return '';
 }
 
