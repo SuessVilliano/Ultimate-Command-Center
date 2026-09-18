@@ -126,6 +126,12 @@ export default function Integrations() {
     const params = new URLSearchParams(window.location.search);
     if (params.get('nifty_connected') === 'true') setConnectionNotice('Nifty connected. Refreshing project and task access.');
     if (params.get('nifty_error')) setError(`Nifty connection failed: ${params.get('nifty_error')}`);
+    if (params.get('composio_connected')) {
+      const labels = { gmail: 'Gmail', googlecalendar: 'Google Calendar', googledrive: 'Google Drive' };
+      const toolkit = params.get('composio_connected');
+      setConnectionNotice(`${labels[toolkit] || 'Google account'} connected through Composio. Refreshing connection status.`);
+    }
+    if (params.get('composio_error')) setError(`Composio connection failed: ${params.get('composio_error')}`);
 
     const code = params.get('code');
     if (code) {
