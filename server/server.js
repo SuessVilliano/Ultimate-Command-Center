@@ -39,6 +39,7 @@ import { registerNiftyRoutes } from './routes/nifty-routes.js';
 import { registerScraperRoutes } from './routes/scraper-routes.js';
 import { registerHighestSelfRoutes } from './routes/highest-self-routes.js';
 import { registerAgentMailRoutes } from './routes/agentmail-routes.js';
+import { registerAppAuthRoutes } from './routes/app-auth-routes.js';
 import * as highestSelf from './lib/highest-self-db.js';
 import * as scrapers from './lib/scrapers.js';
 import { taskmagicMCP } from './lib/taskmagic-mcp.js';
@@ -5881,6 +5882,7 @@ app.get('/api/clickup/status', (req, res) => {
 registerNiftyRoutes(app);
 registerHighestSelfRoutes(app);
 registerAgentMailRoutes(app);
+registerAppAuthRoutes(app);
 
 // Register Scraper routes (RapidAPI + Apify)
 registerScraperRoutes(app);
