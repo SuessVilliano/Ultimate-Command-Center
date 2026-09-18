@@ -46,6 +46,12 @@ services:
         sync: false
       - key: TASKMAGIC_MCP_TOKEN
         sync: false
+      - key: COMPOSIO_API_KEY
+        sync: false
+      - key: COMPOSIO_USER_ID
+        value: liv8-owner
+      - key: COMPOSIO_API_BASE_URL
+        value: https://backend.composio.dev
       - key: CONNECTOR_BRIDGE_URL
         sync: false
       - key: CONNECTOR_BRIDGE_KEY
