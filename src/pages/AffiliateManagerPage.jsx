@@ -40,6 +40,7 @@ const WORK_LINKS = [
   ['Affiliate Community','https://affiliatecommunity.gohighlevel.com/communities/groups/highlevel-affiliate-community/learning','HighLevel Affiliate Community learning, discussions and community resources','👥'],
   ['My Book','https://docs.google.com/spreadsheets/d/1FhqNEO_K2yvd9RAieCbMR42Wc2Pa5RdE59uvVXqYuNs/edit?gid=2031531288#gid=2031531288','Jamaur’s assigned affiliate book with notes, status, forecasting and performance data','📊'],
   ['Forecast Sheet','https://affiliates.highlevel-inc-enterprise-account.workers.dev/','HighLevel affiliate forecasting workspace for pipeline and performance planning','🔮'],
+  ['ARO','https://app.ghl-aro.com/library','HighLevel ARO library for affiliate research, enablement and account intelligence','🧠'],
   ['Gamification','https://docs.google.com/spreadsheets/d/12RGwzP7YAkr0aBrl3Ra40Xk7BvwaBTb9oo5ljFgrnpU/edit?gid=1207811217#gid=1207811217','Xavier-provided gamification tracker for offers, performance, completion and payouts','🎯'],
   ['Trials Goals','https://docs.google.com/spreadsheets/d/12RGwzP7YAkr0aBrl3Ra40Xk7BvwaBTb9oo5ljFgrnpU/edit?gid=1673541902#gid=1673541902','Trial-goal workspace for setting and tracking affiliate production goals','📈'],
   ['Endorsement Sheet','https://docs.google.com/spreadsheets/d/1Km3xLBqkiyzLCqh2I25LV34GKtF4rImngRUAOM-aY-g/edit?gid=2101000012#gid=2101000012','Affiliate endorsement tracking and reference sheet','🏅'],
