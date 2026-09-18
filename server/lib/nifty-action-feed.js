@@ -1,4 +1,5 @@
 import { niftyMcp } from './nifty-mcp-client.js';
+import { nifty } from './nifty-integration.js';
 import * as unifiedInbox from './unified-inbox.js';
 
 const AFFILIATE_PROJECT_ID = process.env.NIFTY_AFFILIATE_PROJECT_ID || 'SYXYZ5G8j!';
@@ -21,6 +22,31 @@ function rowsFrom(payload) {
     if (Array.isArray(payload[key])) return payload[key];
   }
   return [];
+}
+
+const AFFILIATE_STATUS_NAMES = {
+  Q7qYLVy_gu: 'To Do',
+  '2_ZhA!qcyP': 'In Progress',
+  D8q5DohYsN: 'Waiting / Blocked'
+};
+
+function normalizeRestTask(task) {
+  const niceId = String(task?.nice_id || task?.niceId || '').replace(/^[A-Z]+-/, '');
+  const statusId = task?.statusId || task?.task_group || null;
+  const projectId = task?.projectId || task?.project || AFFILIATE_PROJECT_ID;
+  const listId = task?.listId || task?.milestone || null;
+  return {
+    ...task,
+    niceId: niceId || null,
+    projectId,
+    parentTaskId: task?.parentTaskId || task?.parent_task_id || null,
+    statusId,
+    status: task?.status || (statusId ? { id: statusId, name: AFFILIATE_STATUS_NAMES[statusId] || 'To Do' } : null),
+    listId,
+    list: task?.list || (listId ? { id: listId, name: 'Affiliate Career' } : null),
+    dueAt: task?.dueAt || task?.due_date || null,
+    startAt: task?.startAt || task?.start_date || null
+  };
 }
 
 function taskPriority(task) {
@@ -55,27 +81,44 @@ async function getTaskQueryTool() {
     || tools.find(tool => /task.*query|task.*list/i.test(tool.name));
 }
 
-export async function getAffiliateTasks({ limit = 200 } = {}) {
-  if (!niftyMcp.configured) {
-    return { tasks: [], source: 'nifty-mcp', configured: false, error: 'Nifty MCP is not configured.' };
+export async function getAffiliateTasks({ limit = 200, includeCompleted = false } = {}) {
+  const safeLimit = Math.min(Number(limit) || 200, 250);
+  let rawTasks = [];
+  let source = 'nifty-api';
+  let mcpError = null;
+
+  if (niftyMcp.configured) {
+    try {
+      const tool = await getTaskQueryTool();
+      if (!tool) throw new Error('Nifty MCP task reads are unavailable.');
+      const result = await niftyMcp.callTool(tool.name, {
+        resource: 'task',
+        operation: 'list',
+        projectId: AFFILIATE_PROJECT_ID,
+        limit: safeLimit,
+        includeTotal: true,
+        expand: 'status,list,subtasks,checklists,customFields'
+      });
+      rawTasks = rowsFrom(unwrapToolResult(result));
+      source = 'nifty-mcp';
+    } catch (error) {
+      mcpError = error;
+    }
   }
 
-  const tool = await getTaskQueryTool();
-  if (!tool) {
-    return { tasks: [], source: 'nifty-mcp', configured: true, error: 'Nifty MCP task reads are unavailable.' };
+  if (source !== 'nifty-mcp') {
+    const tokenStatus = nifty.getTokenStatus();
+    if (!tokenStatus.authenticated) {
+      return {
+        tasks: [], source: 'nifty-unavailable', configured: false,
+        error: mcpError?.message || 'Nifty API is not authenticated.'
+      };
+    }
+    rawTasks = rowsFrom(await nifty.getTasks(AFFILIATE_PROJECT_ID)).map(normalizeRestTask);
   }
 
-  const result = await niftyMcp.callTool(tool.name, {
-    resource: 'task',
-    operation: 'list',
-    projectId: AFFILIATE_PROJECT_ID,
-    limit: Math.min(Number(limit) || 200, 250),
-    includeTotal: true,
-    expand: 'status,list,subtasks,checklists,customFields'
-  });
-
-  const tasks = rowsFrom(unwrapToolResult(result))
-    .filter(task => task && task.archived !== true && task.completed !== true)
+  const tasks = rawTasks
+    .filter(task => task && task.archived !== true && (includeCompleted || task.completed !== true))
     .map(task => ({
       ...task,
       priority: taskPriority(task)
@@ -85,9 +128,13 @@ export async function getAffiliateTasks({ limit = 200 } = {}) {
       const aDue = a.dueAt ? new Date(a.dueAt).getTime() : Number.MAX_SAFE_INTEGER;
       const bDue = b.dueAt ? new Date(b.dueAt).getTime() : Number.MAX_SAFE_INTEGER;
       return aDue - bDue;
-    });
+    })
+    .slice(0, safeLimit);
 
-  return { tasks, source: 'nifty-mcp', configured: true, projectId: AFFILIATE_PROJECT_ID };
+  return {
+    tasks, source, configured: true, projectId: AFFILIATE_PROJECT_ID,
+    fallback: source === 'nifty-api', mcpError: mcpError?.message || null
+  };
 }
 
 export async function syncAffiliateTasksToInbox({ limit = 200 } = {}) {
@@ -112,7 +159,7 @@ export async function syncAffiliateTasksToInbox({ limit = 200 } = {}) {
         dueAt: task.dueAt || null,
         startAt: task.startAt || null,
         niceId: task.niceId || null,
-        source: 'nifty-mcp'
+        source: result.source
       }
     });
     synced++;

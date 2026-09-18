@@ -46,7 +46,16 @@ export function registerNiftyRoutes(app) {
   app.get('/api/nifty/auth/status', (req, res) => { try { const status = nifty.getTokenStatus(); const redirectUri = process.env.NIFTY_REDIRECT_URI || 'Not configured'; res.json({ ...status, authenticated: status.hasAccessToken && !status.isExpired, redirectUri, configNote: redirectUri.includes('localhost') ? `Add this redirect URI to your Nifty OAuth app: ${redirectUri}` : null }); } catch (error) { res.status(500).json({ error: error.message }); } });
   app.post('/api/nifty/auth/tokens', (req, res) => { try { const { accessToken, refreshToken, expiresIn } = req.body; nifty.setTokens(accessToken, refreshToken, expiresIn); res.json({ success: true }); } catch (error) { res.status(500).json({ error: error.message }); } });
 
-  app.get('/api/nifty/projects', async (req, res) => { try { res.json(activeProjectsOnly(await nifty.getProjects())); } catch (error) { res.status(500).json({ error: error.message }); } });
+  app.get('/api/nifty/projects', async (req, res) => {
+    try {
+      const filtered = activeProjectsOnly(await nifty.getProjects());
+      const rows = Array.isArray(filtered) ? filtered : filtered?.projects || filtered?.data || [];
+      if (rows.length) return res.json(filtered);
+      const affiliateProjectId = process.env.NIFTY_AFFILIATE_PROJECT_ID || 'SYXYZ5G8j!';
+      const project = await nifty.getProject(affiliateProjectId);
+      return res.json({ projects: project ? [project] : [], hasMore: false, fallback: true });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+  });
   app.get('/api/nifty/projects/:projectId', async (req, res) => { try { res.json(await nifty.getProject(req.params.projectId)); } catch (error) { res.status(500).json({ error: error.message }); } });
   app.post('/api/nifty/projects', async (req, res) => { try { res.json(await nifty.createProject(req.body)); } catch (error) { res.status(500).json({ error: error.message }); } });
   app.put('/api/nifty/projects/:projectId', async (req, res) => { try { res.json(await nifty.updateProject(req.params.projectId, req.body)); } catch (error) { res.status(500).json({ error: error.message }); } });

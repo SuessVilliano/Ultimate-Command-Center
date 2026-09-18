@@ -1,8 +1,38 @@
 import { niftyMcp } from '../lib/nifty-mcp-client.js';
+import { nifty } from '../lib/nifty-integration.js';
 import * as unifiedInbox from '../lib/unified-inbox.js';
 import { getAffiliateTasks, syncAffiliateTasksToInbox } from '../lib/nifty-action-feed.js';
 
 const ACTIVE_PORTFOLIO_ID = process.env.NIFTY_ACTIVE_PORTFOLIO_ID || 'u45ydW04vO';
+const AFFILIATE_PROJECT_ID = process.env.NIFTY_AFFILIATE_PROJECT_ID || 'SYXYZ5G8j!';
+
+function apiAuthenticated() {
+  return nifty.getTokenStatus().authenticated;
+}
+
+function restChatId(projectId = AFFILIATE_PROJECT_ID) {
+  return `project:${projectId}`;
+}
+
+function projectIdFromChat(chatId) {
+  return String(chatId || '').startsWith('project:') ? String(chatId).slice(8) : null;
+}
+
+function normalizeRestMessage(message, projectId = AFFILIATE_PROJECT_ID) {
+  return {
+    id: message.id,
+    content: message.content || message.text || '',
+    text: message.text || message.content || '',
+    author_name: message.author_name || message.author?.name || message.user?.name || 'Nifty teammate',
+    author_type: message.author_type || 'user',
+    author_id: message.author_id || message.authorId || message.user?.id || null,
+    created_at: message.created_at || message.createdAt || message.updated_at || message.updatedAt,
+    createdAt: message.createdAt || message.created_at || message.updatedAt || message.updated_at,
+    taskId: message.taskId || message.task_id || null,
+    projectId,
+    metadata: { source: 'nifty-api', projectId, taskId: message.taskId || message.task_id || null }
+  };
+}
 
 function unwrapToolResult(result) {
   if (!result) return null;
@@ -53,11 +83,30 @@ async function getTaskMutateTool() {
 }
 
 export function registerNiftyMcpRoutes(app) {
-  app.get('/api/nifty/mcp/status', (req, res) => res.json(niftyMcp.status()));
+  app.get('/api/nifty/mcp/status', (req, res) => {
+    const mcp = niftyMcp.status();
+    const rest = apiAuthenticated();
+    res.json({
+      ...mcp,
+      configured: mcp.configured || rest,
+      connected: mcp.initialized || rest,
+      source: mcp.configured ? 'nifty-mcp' : rest ? 'nifty-api' : 'unavailable',
+      mcpConfigured: mcp.configured,
+      apiAuthenticated: rest,
+      fallbackActive: !mcp.configured && rest
+    });
+  });
 
   app.get('/api/nifty/mcp/tasks', async (req, res) => {
     try {
-      if (!niftyMcp.configured) return res.status(503).json({ error: 'Nifty MCP is not configured.', tasks: [] });
+      if (!niftyMcp.configured) {
+        const result = await getAffiliateTasks({
+          limit: req.query.limit,
+          includeCompleted: req.query.includeCompleted === 'true'
+        });
+        if (!result.configured) return res.status(503).json(result);
+        return res.json({ ...result, total: result.tasks.length, scope: 'affiliate-project' });
+      }
       const tool = await getTaskQueryTool();
       if (!tool) return res.status(501).json({ error: 'Nifty MCP task reads are unavailable.', tasks: [] });
 
@@ -107,6 +156,10 @@ export function registerNiftyMcpRoutes(app) {
 
   app.post('/api/nifty/mcp/tasks/:taskId/complete', async (req, res) => {
     try {
+      if (!niftyMcp.configured && apiAuthenticated()) {
+        const result = await nifty.completeTask(req.params.taskId);
+        return res.json({ success: true, source: 'nifty-api', result });
+      }
       const tool = await getTaskMutateTool();
       if (!tool) return res.status(501).json({ error: 'Nifty MCP task writes are unavailable.' });
       const result = await niftyMcp.callTool(tool.name, {
@@ -136,6 +189,18 @@ export function registerNiftyMcpRoutes(app) {
 
   app.get('/api/nifty/mcp/chats', async (req, res) => {
     try {
+      if (!niftyMcp.configured && apiAuthenticated()) {
+        let project = null;
+        try { project = await nifty.getProject(AFFILIATE_PROJECT_ID); } catch {}
+        return res.json({
+          chats: [{
+            id: restChatId(), name: project?.name || 'Affiliate Career',
+            description: 'Nifty project conversation via REST API', type: 'project',
+            projectId: AFFILIATE_PROJECT_ID, source: 'nifty-api'
+          }],
+          source: 'nifty-api', fallback: true, scope: 'affiliate-project'
+        });
+      }
       const tool = await getCommunicationTool('query');
       if (!tool) return res.status(501).json({ error: 'Nifty MCP communication reads are unavailable.' });
       const result = await niftyMcp.callTool(tool.name, {
@@ -160,6 +225,14 @@ export function registerNiftyMcpRoutes(app) {
 
   app.get('/api/nifty/mcp/chats/:chatId/messages', async (req, res) => {
     try {
+      if (!niftyMcp.configured && apiAuthenticated()) {
+        const projectId = projectIdFromChat(req.params.chatId) || AFFILIATE_PROJECT_ID;
+        const payload = await nifty.getMessages(projectId, { limit: Math.min(Number(req.query.limit) || 100, 200) });
+        return res.json({
+          messages: rowsFrom(payload).map(message => normalizeRestMessage(message, projectId)),
+          source: 'nifty-api', fallback: true
+        });
+      }
       const tool = await getCommunicationTool('query');
       if (!tool) return res.status(501).json({ error: 'Nifty MCP communication reads are unavailable.' });
       const result = await niftyMcp.callTool(tool.name, {
@@ -183,6 +256,22 @@ export function registerNiftyMcpRoutes(app) {
 
   app.post('/api/nifty/mcp/sync-inbox', async (req, res) => {
     try {
+      if (!niftyMcp.configured && apiAuthenticated()) {
+        const limit = Math.min(Number(req.body?.limit) || 100, 250);
+        const payload = await nifty.getMessages(AFFILIATE_PROJECT_ID, { limit });
+        const messages = rowsFrom(payload).map(message => normalizeRestMessage(message));
+        let synced = 0;
+        for (const message of messages) {
+          if (!message.id || !message.content) continue;
+          unifiedInbox.addToInbox({
+            type: 'conversation', itemId: String(message.id), source: 'nifty',
+            title: `${message.author_name} · Affiliate Career`, preview: message.content.slice(0, 240),
+            priority: message.taskId ? 2 : 1, metadata: message.metadata
+          });
+          synced++;
+        }
+        return res.json({ success: true, synced, fetched: messages.length, source: 'nifty-api', fallback: true, scope: 'affiliate-project' });
+      }
       const commTool = await getCommunicationTool('query');
       if (!commTool) return res.status(501).json({ error: 'This Nifty MCP server does not expose communication/message reads.' });
       const limit = Math.min(Number(req.body?.limit) || 100, 250);
@@ -219,6 +308,13 @@ export function registerNiftyMcpRoutes(app) {
 
   app.post('/api/nifty/mcp/message', async (req, res) => {
     try {
+      if (!niftyMcp.configured && apiAuthenticated()) {
+        const { text, chatId, taskId } = req.body || {};
+        if (!text) return res.status(400).json({ error: 'text is required' });
+        const projectId = projectIdFromChat(chatId) || AFFILIATE_PROJECT_ID;
+        const result = await nifty.createMessage(projectId, text, { taskId });
+        return res.json({ success: true, source: 'nifty-api', fallback: true, result });
+      }
       const commTool = await getCommunicationTool('mutate');
       if (!commTool) return res.status(501).json({ error: 'Nifty MCP message writes are unavailable.' });
       const { text, chatId, taskId, documentId, fileId, parentMessageId, recipientMemberId } = req.body || {};

@@ -91,7 +91,7 @@ export default function ActionFeed() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || `Nifty action feed HTTP ${response.status}`);
       setTasks(Array.isArray(data.tasks) ? data.tasks : []);
-      if (data.configured === false) setError('Nifty MCP is not configured on the server yet.');
+      if (data.configured === false) setError('Nifty is not connected on the server yet.');
     } catch (e) {
       setError(e.message || 'Could not load Nifty work.');
     } finally {
