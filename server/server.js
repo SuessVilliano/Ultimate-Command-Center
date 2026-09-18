@@ -38,6 +38,7 @@ import * as orchestrator from './lib/agent-orchestrator.js';
 import { registerNiftyRoutes } from './routes/nifty-routes.js';
 import { registerScraperRoutes } from './routes/scraper-routes.js';
 import { registerHighestSelfRoutes } from './routes/highest-self-routes.js';
+import { registerHealthMetricsRoutes } from './routes/health-metrics-routes.js';
 import { registerAgentMailRoutes } from './routes/agentmail-routes.js';
 import * as highestSelf from './lib/highest-self-db.js';
 import * as scrapers from './lib/scrapers.js';
@@ -5880,6 +5881,7 @@ app.get('/api/clickup/status', (req, res) => {
 // Register Nifty routes
 registerNiftyRoutes(app);
 registerHighestSelfRoutes(app);
+registerHealthMetricsRoutes(app);
 registerAgentMailRoutes(app);
 
 // Register Scraper routes (RapidAPI + Apify)

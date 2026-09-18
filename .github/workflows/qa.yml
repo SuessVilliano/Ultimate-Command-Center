@@ -76,7 +76,7 @@ jobs:
         run: npm ci
       - name: Backend module import smoke test
         working-directory: server
-        run: node -e "import('./routes/time-intelligence-routes.js').then(()=>import('./routes/local-ai-routes.js')).then(()=>import('./routes/mac-ai-bridge-routes.js')).then(()=>import('./routes/highest-self-routes.js')).then(()=>import('./routes/shortcut-routes.js')).then(()=>import('./routes/local-workspace-mcp-routes.js')).then(()=>import('./routes/liv8-connect-mcp-routes.js')).then(()=>import('./routes/trading-guardian-routes.js')).then(()=>import('./routes/vertical-readiness-routes.js')).then(()=>import('./routes/connected-ops-routes.js')).then(()=>import('./routes/operator-assistant-routes.js')).then(()=>import('./routes/highlevel-company-health-routes.js')).then(()=>import('./routes/highlevel-company-capability-routes.js')).then(()=>console.log('backend route imports ok'))"
+        run: node -e "import('./routes/time-intelligence-routes.js').then(()=>import('./routes/local-ai-routes.js')).then(()=>import('./routes/mac-ai-bridge-routes.js')).then(()=>import('./routes/highest-self-routes.js')).then(()=>import('./routes/health-metrics-routes.js')).then(()=>import('./routes/shortcut-routes.js')).then(()=>import('./routes/local-workspace-mcp-routes.js')).then(()=>import('./routes/liv8-connect-mcp-routes.js')).then(()=>import('./routes/trading-guardian-routes.js')).then(()=>import('./routes/vertical-readiness-routes.js')).then(()=>import('./routes/connected-ops-routes.js')).then(()=>import('./routes/operator-assistant-routes.js')).then(()=>import('./routes/highlevel-company-health-routes.js')).then(()=>import('./routes/highlevel-company-capability-routes.js')).then(()=>console.log('backend route imports ok'))"
       - name: LIV8 MCP contract tests
         working-directory: server
         run: node --test test/liv8-mcp-contract.test.js
@@ -116,6 +116,10 @@ jobs:
             exit 1
           fi
           cat /tmp/ucc-health.json
+
+          echo '--- Health metrics route registration ---'
+          curl -fsS 'http://127.0.0.1:3005/api/hs/health/metrics/live?days=7' | tee /tmp/health-metrics.json
+          grep -q '"ok":true' /tmp/health-metrics.json
 
           echo '--- Operator guard ---'
           code=$(curl -s -o /tmp/operator.json -w '%{http_code}' -X POST http://127.0.0.1:3005/api/operator/chat -H 'Content-Type: application/json' -d '{}')
