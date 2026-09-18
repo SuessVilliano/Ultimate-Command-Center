@@ -45,7 +45,7 @@ const latestBy = (rows, key = 'day') => [...rows].sort((a, b) => String(a?.[key]
 /** Pull readiness + sleep + activity for a date range and normalize by day. */
 export async function fetchDaily({ days = 14 } = {}) {
   if (!isConfigured()) return { configured: false, days: [] };
-  const start = isoDaysAgo(days), end = isoDaysAgo(-1);
+  const start = isoDaysAgo(days), end = isoDaysAgo(0);
   const params = { start_date: start, end_date: end };
   const [readiness, sleep, activity] = await Promise.all([
     get('daily_readiness', params), get('daily_sleep', params), get('daily_activity', params),
@@ -89,7 +89,7 @@ export async function fetchDaily({ days = 14 } = {}) {
 export async function details({ days = 14 } = {}) {
   if (!isConfigured()) return { configured: false, endpoints: {}, daily: [], heartRate: [], sleepSessions: [], workouts: [] };
   const boundedDays = Math.max(1, Math.min(Number(days) || 14, 90));
-  const startDate = isoDaysAgo(boundedDays), endDate = isoDaysAgo(-1);
+  const startDate = isoDaysAgo(boundedDays), endDate = isoDaysAgo(0);
   const dateParams = { start_date: startDate, end_date: endDate };
   const timeParams = { start_datetime: isoDateTimeDaysAgo(boundedDays), end_datetime: new Date().toISOString() };
 
@@ -140,7 +140,7 @@ export async function details({ days = 14 } = {}) {
     days: boundedDays,
     generatedAt: new Date().toISOString(),
     endpoints: {
-      daily: { ok: true, reason: daily.unauthorized ? 'unauthorized' : null },
+      daily: { ok: Object.values(daily.endpointStatus || {}).some(x => x?.ok), reason: daily.unauthorized ? 'unauthorized' : (Object.values(daily.endpointStatus || {}).find(x => x?.reason)?.reason || null) },
       heartrate: endpoint(heartRate),
       sleep_sessions: endpoint(sleepSessions),
       stress: endpoint(stress),
