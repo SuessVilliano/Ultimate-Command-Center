@@ -6,7 +6,7 @@
  * Nothing here triggers external writes.
  */
 
-import { API_URL, CLOUD_API_URL } from '../config';
+import { CLOUD_API_URL } from '../config';
 
 const LS = 'hs_local_v1';
 
