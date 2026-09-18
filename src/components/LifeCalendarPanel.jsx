@@ -42,7 +42,7 @@ export default function LifeCalendarPanel() {
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
         const result = attempt.map(data);
-        if (result.events.length || (attempt.label === 'cloud calendar cache' && !lastError)) {
+        if (result.events.length || attempt.label === 'MCP calendar connector' || (attempt.label === 'cloud calendar cache' && !lastError)) {
           setEvents(result.events);
           setSource(attempt.label);
           if (result.warning && !result.events.length) setError(result.warning);
