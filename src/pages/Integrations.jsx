@@ -178,6 +178,7 @@ export default function Integrations() {
   const totalProjects = useMemo(() => niftyProjects.length, [niftyProjects]);
   const cardText = isDark ? 'text-gray-400' : 'text-gray-600';
   const connectorReady = !!connectedOps?.connector?.configured;
+  const connectorLive = !!(connectedOps?.connector?.gmail || connectedOps?.connector?.calendar || connectedOps?.connector?.drive);
   const twilioReady = !!connectedOps?.twilio?.configured;
 
   return <div className="space-y-6 animate-slide-in">
@@ -187,11 +188,21 @@ export default function Integrations() {
     {error && <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">{error}</div>}
 
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-      <Card isDark={isDark} title="Connector Gateway" subtitle="Composio / TaskMagic / any MCP bridge" icon={Plug} status={<StatusBadge connected={connectorReady} configured={connectorReady}/>}> 
+      <Card isDark={isDark} title="Connector Gateway" subtitle="Composio / TaskMagic / any MCP bridge" icon={Plug} status={<StatusBadge connected={connectorLive} configured={connectorReady}/>}> 
         <div className={`space-y-2 text-sm ${cardText}`}>
-          <p>{connectorReady ? `Gateway mode: ${connectedOps.connector.mode}. Gmail and Calendar can now be fetched/written through the connector layer.` : 'Add either a bridge URL or MCP server URL on the backend. Once configured, Gmail and Calendar feed Conversations and Life Calendar automatically.'}</p>
-          <div className="grid grid-cols-2 gap-2 text-xs"><div className={`rounded-lg border px-2 py-2 ${connectedOps?.connector?.gmail?'border-emerald-500/20 text-emerald-400':'border-white/10 text-gray-500'}`}><Mail className="mr-1 inline h-3.5 w-3.5"/>Gmail {connectedOps?.connector?.gmail?'ready':'waiting'}</div><div className={`rounded-lg border px-2 py-2 ${connectedOps?.connector?.calendar?'border-emerald-500/20 text-emerald-400':'border-white/10 text-gray-500'}`}><Calendar className="mr-1 inline h-3.5 w-3.5"/>Calendar {connectedOps?.connector?.calendar?'ready':'waiting'}</div></div>
-          {!connectorReady && <p className="text-xs text-amber-400">Backend vars: CONNECTOR_BRIDGE_URL or CONNECTOR_MCP_URL, optional token, plus Gmail/Calendar tool names for direct MCP mode.</p>}
+          <p>{connectorReady ? `Gateway mode: ${connectedOps.connector.mode}. Authorize each Google source below; live status comes from the deployed backend.` : 'Add a connector on the backend. Once configured, Gmail, Calendar and Drive feed the Command Center automatically.'}</p>
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            <div className={`rounded-lg border px-2 py-2 ${connectedOps?.connector?.gmail?'border-emerald-500/20 text-emerald-400':'border-white/10 text-gray-500'}`}><Mail className="mr-1 inline h-3.5 w-3.5"/>Gmail {connectedOps?.connector?.gmail?'live':'auth needed'}</div>
+            <div className={`rounded-lg border px-2 py-2 ${connectedOps?.connector?.calendar?'border-emerald-500/20 text-emerald-400':'border-white/10 text-gray-500'}`}><Calendar className="mr-1 inline h-3.5 w-3.5"/>Calendar {connectedOps?.connector?.calendar?'live':'auth needed'}</div>
+            <div className={`rounded-lg border px-2 py-2 ${connectedOps?.connector?.drive?'border-emerald-500/20 text-emerald-400':'border-white/10 text-gray-500'}`}><FolderKanban className="mr-1 inline h-3.5 w-3.5"/>Drive {connectedOps?.connector?.drive?'live':'auth needed'}</div>
+          </div>
+          {connectedOps?.connector?.provider==='composio' && <div className="flex flex-wrap gap-2 pt-1">
+            {!connectedOps?.connector?.gmail && <a href={`${API_URL}/api/connectors/composio/connect/gmail`} target="_blank" rel="noreferrer" className="rounded-lg border border-cyan-500/25 px-3 py-2 text-xs font-semibold text-cyan-300 hover:bg-cyan-500/10">Connect Gmail</a>}
+            {!connectedOps?.connector?.calendar && <a href={`${API_URL}/api/connectors/composio/connect/googlecalendar`} target="_blank" rel="noreferrer" className="rounded-lg border border-cyan-500/25 px-3 py-2 text-xs font-semibold text-cyan-300 hover:bg-cyan-500/10">Connect Calendar</a>}
+            {!connectedOps?.connector?.drive && <a href={`${API_URL}/api/connectors/composio/connect/googledrive`} target="_blank" rel="noreferrer" className="rounded-lg border border-cyan-500/25 px-3 py-2 text-xs font-semibold text-cyan-300 hover:bg-cyan-500/10">Connect Drive</a>}
+          </div>}
+          {connectedOps?.connector?.connectionError && <p className="text-xs text-amber-400">{connectedOps.connector.connectionError}</p>}
+          {!connectorReady && <p className="text-xs text-amber-400">Backend vars: COMPOSIO_API_KEY, CONNECTOR_BRIDGE_URL, or CONNECTOR_MCP_URL.</p>}
         </div>
       </Card>
 
