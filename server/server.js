@@ -38,6 +38,7 @@ import * as orchestrator from './lib/agent-orchestrator.js';
 import { registerNiftyRoutes } from './routes/nifty-routes.js';
 import { registerScraperRoutes } from './routes/scraper-routes.js';
 import { registerHighestSelfRoutes } from './routes/highest-self-routes.js';
+import { registerAgentMailRoutes } from './routes/agentmail-routes.js';
 import * as highestSelf from './lib/highest-self-db.js';
 import * as scrapers from './lib/scrapers.js';
 import { taskmagicMCP } from './lib/taskmagic-mcp.js';
@@ -4567,9 +4568,9 @@ app.post('/api/team/run', async (req, res) => {
   }
 });
 
-app.post('/api/team/tasks/:id/approve', (req, res) => {
+app.post('/api/team/tasks/:id/approve', async (req, res) => {
   try {
-    const result = teamWorkspace.approveWorkItem(parseInt(req.params.id));
+    const result = await teamWorkspace.approveWorkItem(parseInt(req.params.id));
     res.status(result.success ? 200 : 409).json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -5879,6 +5880,7 @@ app.get('/api/clickup/status', (req, res) => {
 // Register Nifty routes
 registerNiftyRoutes(app);
 registerHighestSelfRoutes(app);
+registerAgentMailRoutes(app);
 
 // Register Scraper routes (RapidAPI + Apify)
 registerScraperRoutes(app);

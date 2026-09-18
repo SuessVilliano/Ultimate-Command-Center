@@ -92,7 +92,11 @@ export function resolveAction(message = '', requestedAction, requestedParams = {
   if (/\b(?:add|create|schedule|put)\b.*\b(?:calendar|event|appointment|meeting)\b/i.test(text)) {
     return { name: 'calendar.create', params: { ...parseCalendar(text), ...requestedParams }, confidence: .91 };
   }
-  if (/\b(?:start|begin)\b.*\b(?:obs\s+)?record/i.test(text)) return { name: 'obs.record.start', params: {}, confidence: .95 };
+  if (/\b(?:send|approve)\b.*\b(?:agentmail|email)\b.*\bdraft\b/i.test(text)) {
+    const draftId = clean(text.match(/\bdraft\s+(?:id\s*)?[:#]?\s*([A-Za-z0-9._:-]+)/i)?.[1], 300);
+    if (draftId) return { name: 'agentmail.draft.send', params: { draftId }, confidence: .96 };
+  }
+    if (/\b(?:start|begin)\b.*\b(?:obs\s+)?record/i.test(text)) return { name: 'obs.record.start', params: {}, confidence: .95 };
   if (/\b(?:stop|end)\b.*\b(?:obs\s+)?record/i.test(text)) return { name: 'obs.record.stop', params: {}, confidence: .95 };
   if (/\b(?:switch|change)\b.*\bscene\b/i.test(text)) return { name: 'obs.scene.switch', params: { sceneName: clean(text.match(/\bscene\s+(?:to\s+)?["']?(.+?)["']?$/i)?.[1], 160) }, confidence: .88 };
   if (/\b(?:trade|order|buy|sell|long|short)\b/i.test(text) && /\b(?:preview|paper|live|execute|place|submit|buy|sell|long|short)\b/i.test(text)) {
@@ -149,6 +153,9 @@ const definitions = [
   { name: 'obs.scene.switch', policy: ACTION_POLICIES.AUTO_TASK_WRITE, required: ['sceneName'], execute: p => externalJson(process.env.OBS_BRIDGE_URL && `${process.env.OBS_BRIDGE_URL.replace(/\/$/, '')}/scene`, p, process.env.OBS_BRIDGE_KEY ? { Authorization: `Bearer ${process.env.OBS_BRIDGE_KEY}` } : {}) },
   { name: 'calendar.create', policy: ACTION_POLICIES.CONFIRM, required: ['summary', 'start', 'end'], execute: p => localFetch('/api/connectors/calendar/events', { method: 'POST', body: p }) },
   { name: 'gmail.send', policy: ACTION_POLICIES.CONFIRM, required: ['to', 'subject', 'body'], execute: p => localFetch('/api/connectors/gmail/send', { method: 'POST', body: p }) },
+  { name: 'agentmail.draft.create', policy: ACTION_POLICIES.AUTO_PRIVATE_WRITE, execute: p => localFetch('/api/agentmail/drafts', { method: 'POST', body: p, headers: process.env.JUNO_GATEWAY_KEY ? { 'x-juno-key': process.env.JUNO_GATEWAY_KEY } : {} }) },
+  { name: 'agentmail.draft.send', policy: ACTION_POLICIES.CONFIRM, required: ['draftId'], execute: p => localFetch(`/api/agentmail/drafts/${encodeURIComponent(p.draftId)}/send`, { method: 'POST', body: { addLabels: p.addLabels, removeLabels: p.removeLabels }, headers: process.env.JUNO_GATEWAY_KEY ? { 'x-juno-key': process.env.JUNO_GATEWAY_KEY } : {} }) },
+  { name: 'agentmail.send', policy: ACTION_POLICIES.CONFIRM, required: ['to', 'subject'], execute: p => localFetch('/api/agentmail/send', { method: 'POST', body: p, headers: process.env.JUNO_GATEWAY_KEY ? { 'x-juno-key': process.env.JUNO_GATEWAY_KEY } : {} }) },
   { name: 'github.patch', policy: ACTION_POLICIES.REPORT_AFTER_WRITE, required: ['repository', 'patch'], execute: p => externalJson(process.env.GITHUB_WRITE_ADAPTER_URL, p, process.env.GITHUB_WRITE_ADAPTER_KEY ? { Authorization: `Bearer ${process.env.GITHUB_WRITE_ADAPTER_KEY}` } : {}) },
   { name: 'hybrid.trade.preview', policy: ACTION_POLICIES.AUTO_READ, execute: p => localFetch('/api/trading/hybrid-journal/order-preview', { method: 'POST', body: p }) },
   { name: 'hybrid.trade.paper', policy: ACTION_POLICIES.AUTO_TASK_WRITE, execute: p => localFetch('/api/trading/hybrid-journal/order-paper', { method: 'POST', body: { ...p, mode: 'paper' } }) },

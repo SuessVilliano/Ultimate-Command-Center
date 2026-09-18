@@ -26,6 +26,7 @@ const mainItems = [
   { id: 'api-builder', label: 'API / MCP Builder', icon: Terminal },
   { id: 'agent-team', label: 'Agent Team', icon: Bot },
   { id: 'inbox', label: 'Conversations', icon: MessageSquare },
+  { id: 'team-inbox', label: 'Juno Mail', icon: Inbox },
   { id: 'github', label: 'GitHub', icon: Github },
   { id: 'integrations', label: 'Integrations', icon: Plug },
   { id: 'glasses', label: 'Glasses Mode', icon: Glasses },

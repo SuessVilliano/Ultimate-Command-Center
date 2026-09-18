@@ -10,7 +10,7 @@ const STATUS_STYLES = {
 
 function Inbox() {
   const [channels, setChannels] = useState([]);
-  const [activeChannel, setActiveChannel] = useState('general');
+  const [activeChannel, setActiveChannel] = useState('juno-mail');
   const [messages, setMessages] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [status, setStatus] = useState(null);

@@ -4,12 +4,14 @@
  */
 import * as db from './database.js';
 import * as orchestrator from './agent-orchestrator.js';
+import { executeAction } from './juno-action-registry.js';
 
 const DEFAULT_CHANNELS = [
   ['general', 'General', 'Company-wide coordination'],
   ['agent-ops', 'Agent Operations', 'Autonomous work, handoffs, and blockers'],
   ['development', 'Development', 'Engineering work and code reviews'],
   ['support', 'Support', 'Customer support and escalations'],
+  ['juno-mail', 'Juno Mail', 'AgentMail inbox, triage, drafts, and sent replies'],
   ['approvals', 'Approvals', 'Actions waiting for Jamaur\'s approval']
 ];
 
@@ -245,8 +247,41 @@ export async function executeWorkItem(id) {
   }
 }
 
-export function approveWorkItem(id) {
-  const result = db.getDb().prepare(`
+export async function approveWorkItem(id) {
+  const database = db.getDb();
+  const raw = database.prepare('SELECT * FROM agent_work_items WHERE id = ?').get(id);
+  const item = parseRow(raw);
+  if (!item || item.status !== 'awaiting_approval') return { success: false, error: 'Item is not awaiting approval' };
+
+  const approvalAction = item.metadata?.approvalAction;
+  if (approvalAction?.name) {
+    try {
+      database.prepare(`UPDATE agent_work_items SET status = 'working', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(id);
+      const executed = await executeAction(approvalAction, { approvedBy: 'jamaur', workItemId: Number(id) });
+      database.prepare(`
+        UPDATE agent_work_items
+        SET status = 'completed', requires_approval = 0, result = ?, error = NULL,
+            completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(JSON.stringify(executed.data || executed), id);
+      addMessage('agent-ops', {
+        authorId: 'jamaur', authorName: 'Jamaur', authorType: 'user',
+        content: `Approved and executed work item #${id}: ${approvalAction.name}.`,
+        metadata: { workItemId: Number(id), status: 'completed', action: approvalAction.name }
+      });
+      return { success: true, executed: true, action: approvalAction.name, result: executed.data };
+    } catch (error) {
+      database.prepare(`UPDATE agent_work_items SET status = 'blocked', error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(error.message, id);
+      addMessage('agent-ops', {
+        authorId: 'juno', authorName: 'Juno',
+        content: `Approved work item #${id} failed during ${approvalAction.name}: ${error.message}`,
+        metadata: { workItemId: Number(id), status: 'blocked', action: approvalAction.name }
+      });
+      return { success: false, error: error.message };
+    }
+  }
+
+  const result = database.prepare(`
     UPDATE agent_work_items SET status = 'approved', requires_approval = 0, updated_at = CURRENT_TIMESTAMP
     WHERE id = ? AND status = 'awaiting_approval'
   `).run(id);
@@ -255,7 +290,7 @@ export function approveWorkItem(id) {
     authorId: 'jamaur', authorName: 'Jamaur', authorType: 'user',
     content: `Approved work item #${id}.`, metadata: { workItemId: Number(id), status: 'approved' }
   });
-  return { success: true };
+  return { success: true, executed: false };
 }
 
 export function getTeamStatus() {
