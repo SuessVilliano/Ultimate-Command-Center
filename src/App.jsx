@@ -23,6 +23,7 @@ import Trading from './pages/Trading';
 import AgentTeamLive from './pages/AgentTeamLive';
 import Integrations from './pages/Integrations';
 import TradingProcessLive from './pages/TradingProcessLive';
+import TradingHub from './pages/TradingHub';
 import VoiceAgents from './pages/VoiceAgents';
 import APIBuilder from './pages/APIBuilder';
 import Glasses from './pages/Glasses';
@@ -104,7 +105,7 @@ function AppContent() {
       case 'voice-agents': return <VoiceAgents />;
       case 'domains': return <Domains />;
       case 'valuation': return <Valuation />;
-      case 'trading': return <TradingProcessLive />;
+      case 'trading': return <TradingHub />;
       case 'api-builder': return <APIBuilder />;
       case 'admin': return <AdminPanel />;
       case 'content-engine': return <CreatorControlRoomLive />;
