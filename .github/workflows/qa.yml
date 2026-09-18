@@ -134,6 +134,13 @@ jobs:
           grep -q 'CLOUD_API_URL' ../src/components/HealthMetricsDashboard.jsx
           grep -q 'CLOUD_API_URL' ../src/components/LifeCalendarPanel.jsx
 
+          echo '--- Cloud owner auth fallback ---'
+          curl -fsS http://127.0.0.1:3005/api/app-auth/status | tee /tmp/app-auth-status.json
+          grep -q '"ok":true' /tmp/app-auth-status.json
+          grep -q '"configured":false' /tmp/app-auth-status.json
+          code=$(curl -s -o /tmp/app-auth-login.json -w '%{http_code}' -X POST http://127.0.0.1:3005/api/app-auth/login -H 'Content-Type: application/json' -d '{"username":"owner","password":"not-used-in-ci"}')
+          test "$code" = '503'
+
           echo '--- Operator guard ---'
           code=$(curl -s -o /tmp/operator.json -w '%{http_code}' -X POST http://127.0.0.1:3005/api/operator/chat -H 'Content-Type: application/json' -d '{}')
           test "$code" = '400'
