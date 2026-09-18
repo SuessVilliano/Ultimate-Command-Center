@@ -160,6 +160,18 @@ export function registerHealthMetricsRoutes(app) {
       res.status(500).json({ ok: false, error: error?.message || 'Could not save training' });
     }
   });
+  console.log(`Health Metrics routes registered | oura=${oura.isConfigured()} | appleHealth=${appleHealth.isConfigured()}`);
+  if (oura.isConfigured()) {
+    setImmediate(async () => {
+      try {
+        const check = await oura.details({ days: 3 });
+        const endpoints = Object.fromEntries(Object.entries(check.endpoints || {}).map(([k, v]) => [k, { ok: !!v?.ok, reason: v?.reason || null }]));
+        console.log('[Oura] cloud provider check', JSON.stringify({ configured: check.configured, endpoints }));
+      } catch (error) {
+        console.warn('[Oura] cloud provider check failed:', error.message);
+      }
+    });
+  }
 }
 
 export default registerHealthMetricsRoutes;
