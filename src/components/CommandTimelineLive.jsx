@@ -1,5 +1,5 @@
 import React,{useEffect,useMemo,useState} from 'react';
-import { API_URL } from '../config';
+import { API_URL, CLOUD_API_URL } from '../config';
 import { CalendarDays, RefreshCw, Sparkles, Target, Trophy, AlertTriangle, Zap, FolderKanban, HeartPulse, LineChart, CheckCircle2, Clock3 } from 'lucide-react';
 
 const PERIODS=[['yesterday','Yesterday'],['today','Today'],['tomorrow','Tomorrow'],['last_week','Last week'],['this_week','This week'],['next_week','Next week'],['last_month','Last month'],['this_month','This month'],['next_month','Next month'],['this_quarter','This quarter'],['this_year','This year']];
@@ -25,7 +25,7 @@ export default function CommandTimelineLive(){
      const span=Math.max(1,Math.ceil((new Date(w.end)-new Date(w.start))/86400000)+1);
      const calPath=period==='today'?'/api/calendar/today':(period.includes('next')||period==='tomorrow'||period.startsWith('this_'))?`/api/calendar/upcoming?hours=${Math.min(span*24,1440)}`:null;
      if(calPath){try{const r=await fetch(`${API_URL}${calPath}`);setCalendar(r.ok?rows(await r.json()):[])}catch{setCalendar([])}} else setCalendar([]);
-     try{const r=await fetch(`${API_URL}/api/hs/health/oura/snapshot`);setOura(r.ok?await r.json():null)}catch{setOura(null)}
+     try{const r=await fetch(`${CLOUD_API_URL}/api/hs/health/oura/snapshot`);setOura(r.ok?await r.json():null)}catch{setOura(null)}
      try{const r=await fetch(`${API_URL}/api/trading/hybrid-journal/status`);setTrading(r.ok?await r.json():null)}catch{setTrading(null)}
      try{const r=await fetch(`${API_URL}/api/intelligence/period`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({period})});setAi(r.ok?await r.json():null)}catch{setAi(null)}
    }catch(e){setError(e.message||'Timeline sources unavailable')}finally{setLoading(false)}
