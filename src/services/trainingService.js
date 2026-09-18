@@ -1,4 +1,4 @@
-import { API_URL, CLOUD_API_URL } from '../config';
+import { CLOUD_API_URL } from '../config';
 
 const LS_KEY = 'liv8-health-training-log-v1';
 
