@@ -44,10 +44,14 @@ async function composioExecute(toolSlug,args={},retry=true){
 
 async function composioConnectionStatus(){
   const sessionId=await ensureComposioSession();
-  const data=await composioApi('/api/v3.1/tool_router/session/'+encodeURIComponent(sessionId)+'/search',{method:'POST',body:{queries:[{use_case:'Read recent Gmail messages'},{use_case:'List upcoming Google Calendar events'},{use_case:'Find files in Google Drive'}]}});
-  const statuses=Array.isArray(data?.toolkit_connection_statuses)?data.toolkit_connection_statuses:[];
-  const pick=slug=>statuses.find(s=>String(s?.toolkit||'').toLowerCase()===slug);
-  return {gmail:pick('gmail')||null,calendar:pick('googlecalendar')||null,drive:pick('googledrive')||null};
+  const data=await composioApi('/api/v3.1/tool_router/session/'+encodeURIComponent(sessionId)+'/toolkits?limit=50&toolkits=gmail,googlecalendar,googledrive');
+  const items=Array.isArray(data?.items)?data.items:[];
+  const pick=slug=>{
+    const item=items.find(row=>String(row?.slug||'').toLowerCase()===slug)||null;
+    if(!item)return null;
+    return {...item,has_active_connection:String(item?.connected_account?.status||'').toUpperCase()==='ACTIVE'};
+  };
+  return {gmail:pick('gmail'),calendar:pick('googlecalendar'),drive:pick('googledrive')};
 }
 
 async function composioConnect(toolkits=[]){
@@ -154,7 +158,7 @@ export function registerConnectedOpsRoutes(app){
       try{connections=await composioConnectionStatus();}
       catch(error){connectionError=error.message||'Composio status unavailable';}
     }
-    const connected=value=>Boolean(value&&(value.connected===true||value.is_connected===true||/active|connected|ready|success/i.test(String(value.status||value.connection_status||''))));
+    const connected=value=>Boolean(value&&(value.has_active_connection===true||value.connected===true||value.is_connected===true||/active|connected|ready|success/i.test(String(value.status||value.connection_status||value.connected_account?.status||''))));
     res.json({connector:{
       configured:!!(cfg.bridgeUrl||cfg.composioApiKey||cfg.mcpUrl),mode,provider:mode,
       gmail:cfg.composioApiKey?connected(connections?.gmail):!!cfg.gmailListTool||!!cfg.bridgeUrl,
