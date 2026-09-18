@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { CalendarDays, Plus, RefreshCw } from 'lucide-react';
-import { API_URL } from '../config';
+import { API_URL, CLOUD_API_URL } from '../config';
 import * as hs from '../services/highestSelfService';
 
 const localDateTime = (date, time) => new Date(`${date}T${time || '09:00'}:00`).toISOString();
@@ -18,7 +18,7 @@ export default function LifeCalendarPanel() {
     setLoading(true); setError('');
     try {
       const now = new Date(); const end = new Date(now.getTime() + 120*86400000);
-      const r = await fetch(`${API_URL}/api/connectors/calendar/events?start=${encodeURIComponent(now.toISOString())}&end=${encodeURIComponent(end.toISOString())}&limit=150`);
+      const r = await fetch(`${CLOUD_API_URL}/api/connectors/calendar/events?start=${encodeURIComponent(now.toISOString())}&end=${encodeURIComponent(end.toISOString())}&limit=150`);
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || 'Calendar connector unavailable');
       setEvents(data.events || []);
@@ -33,7 +33,7 @@ export default function LifeCalendarPanel() {
     if (!form.title || !form.date) return;
     const start = localDateTime(form.date, form.start); const end = localDateTime(form.date, form.end);
     try {
-      const r = await fetch(`${API_URL}/api/connectors/calendar/events`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ summary: form.title, start, end, description: `[${form.category.toUpperCase()}] ${form.description || ''}`.trim() }) });
+      const r = await fetch(`${CLOUD_API_URL}/api/connectors/calendar/events`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ summary: form.title, start, end, description: `[${form.category.toUpperCase()}] ${form.description || ''}`.trim() }) });
       const data = await r.json(); if (!r.ok) throw new Error(data.error || 'Could not create calendar event');
       if (form.category === 'family') {
         try { await hs.addFamilyEvent({ person_id: null, title: form.title, event_type: 'family', date_start: form.date, date_end: form.date, notes: form.description, source: 'calendar' }); } catch {}
