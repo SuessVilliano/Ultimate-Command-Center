@@ -4,7 +4,7 @@ import {
   Mail, MessageCircle, Plug, RefreshCw, ShieldCheck, Smartphone, XCircle, Zap
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
-import { API_URL } from '../config';
+import { API_URL, CLOUD_API_URL } from '../config';
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value;
@@ -57,8 +57,17 @@ export default function Integrations() {
   }, []);
 
   const loadGoogle = useCallback(async () => {
-    try { const r = await fetchWithTimeout(`${API_URL}/api/google/status`); if (r.ok) setGoogleStatus(await safeJson(r)); }
-    catch (e) { console.warn('Google status unavailable:', e?.message); }
+    try {
+      const r = await fetchWithTimeout(`${CLOUD_API_URL}/api/calendar/status`);
+      if (r.ok) {
+        const data = await safeJson(r);
+        setGoogleStatus({
+          ...data,
+          configured: !!(data.clientIdConfigured && data.clientSecretConfigured),
+          connected: !!data.directGoogleConfigured,
+        });
+      }
+    } catch (e) { console.warn('Google status unavailable:', e?.message); }
   }, [fetchWithTimeout]);
 
   const loadNifty = useCallback(async () => {
@@ -118,10 +127,28 @@ export default function Integrations() {
     if (params.get('nifty_connected') === 'true') setConnectionNotice('Nifty connected. Refreshing project and task access.');
     if (params.get('nifty_error')) setError(`Nifty connection failed: ${params.get('nifty_error')}`);
 
+    const code = params.get('code');
+    if (code) {
+      const redirectUri = `${window.location.origin}${window.location.pathname}?page=integrations`;
+      fetch(`${CLOUD_API_URL}/api/calendar/oauth/exchange`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, redirectUri }),
+      }).then(async response => {
+        const data = await safeJson(response);
+        if (!response.ok) throw new Error(data?.error || `HTTP ${response.status}`);
+        setGoogleStatus(prev => ({ ...prev, ...data, configured: true, connected: true, directGoogleConfigured: true }));
+        setConnectionNotice('Google Calendar connected persistently across browser and desktop.');
+        window.history.replaceState({}, '', redirectUri);
+      }).catch(e => setError(`Google connection failed: ${e?.message || 'Unknown error'}`));
+      return;
+    }
+
+    // Legacy one-hour token support during migration.
     const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
     const accessToken = hash.get('access_token');
     if (!accessToken) return;
-    fetch(`${API_URL}/api/google/connect-token`, {
+    fetch(`${CLOUD_API_URL}/api/google/connect-token`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessToken }),
     }).then(safeJson).then(data => {
       if (data?.connected) { setGoogleStatus(data); setConnectionNotice(`Google Workspace connected${data.email ? `: ${data.email}` : ''}.`); }
@@ -132,7 +159,7 @@ export default function Integrations() {
   const connectGoogle = async () => {
     try {
       const redirectUri = `${window.location.origin}${window.location.pathname}?page=integrations`;
-      const r = await fetchWithTimeout(`${API_URL}/api/calendar/oauth-url?redirect_uri=${encodeURIComponent(redirectUri)}`);
+      const r = await fetchWithTimeout(`${CLOUD_API_URL}/api/calendar/oauth-url?redirect_uri=${encodeURIComponent(redirectUri)}`);
       const data = await safeJson(r);
       if (!r.ok || !data?.url) { setError(data?.error || 'Google OAuth is not configured on the Command Center API. Add the Google OAuth client on the deployed API, then reconnect here.'); return; }
       window.location.assign(data.url);
