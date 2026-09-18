@@ -44,7 +44,7 @@ async function composioExecute(toolSlug,args={},retry=true){
 
 async function composioConnectionStatus(){
   const sessionId=await ensureComposioSession();
-  const data=await composioApi('/api/v3.1/tool_router/session/'+encodeURIComponent(sessionId)+'/search',{method:'POST',body:{queries:[{use_case:'Read recent Gmail messages'},{use_case:'List upcoming Google Calendar events'}]}});
+  const data=await composioApi('/api/v3.1/tool_router/session/'+encodeURIComponent(sessionId)+'/search',{method:'POST',body:{queries:[{use_case:'Read recent Gmail messages'},{use_case:'List upcoming Google Calendar events'},{use_case:'Find files in Google Drive'}]}});
   const statuses=Array.isArray(data?.toolkit_connection_statuses)?data.toolkit_connection_statuses:[];
   const pick=slug=>statuses.find(s=>String(s?.toolkit||'').toLowerCase()===slug);
   return {gmail:pick('gmail')||null,calendar:pick('googlecalendar')||null,drive:pick('googledrive')||null};
