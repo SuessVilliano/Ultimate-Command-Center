@@ -103,6 +103,7 @@ export default function Today({ onNavigate }) {
   const [health, setHealth] = useState(null);
   const [mcp, setMcp] = useState(null);
   const [mcpError, setMcpError] = useState('');
+  const [connectors, setConnectors] = useState(null);
   const [niftyTasks, setNiftyTasks] = useState([]);
   const [niftySource, setNiftySource] = useState('');
   const [niftyError, setNiftyError] = useState('');
@@ -111,7 +112,7 @@ export default function Today({ onNavigate }) {
 
   const load = async () => {
     setLoading(true);
-    const [b, o, h, t, n] = await Promise.allSettled([
+    const [b, o, h, t, n, co] = await Promise.allSettled([
       svc.getTodayBrief(date),
       svc.getOuraSnapshot(),
       svc.getHealthSnapshot(),
@@ -121,6 +122,7 @@ export default function Today({ onNavigate }) {
         return payload;
       }),
       fetchNiftyTasks(),
+      jsonFetch(`${API_URL}/api/connectors/status`),
     ]);
 
     setBrief(b.status === 'fulfilled' ? b.value : null);
@@ -134,6 +136,8 @@ export default function Today({ onNavigate }) {
       setMcp(null);
       setMcpError(t.reason?.message || 'Unavailable');
     }
+
+    setConnectors(co.status === 'fulfilled' ? co.value : null);
 
     if (n.status === 'fulfilled') {
       setNiftyTasks(n.value.tasks || []);
@@ -195,6 +199,10 @@ export default function Today({ onNavigate }) {
 
   const mcpConnected = !!(mcp?.connected || mcp?.mcp?.hasSession || (mcp?.mcp?.initialized && mcp?.tools?.length));
   const niftyConnected = Boolean(niftySource);
+  const gmailConnected = !!connectors?.connector?.gmail;
+  const calendarConnected = !!connectors?.connector?.calendar;
+  const driveConnected = !!connectors?.connector?.drive;
+  const connectorConfigured = !!connectors?.connector?.configured;
   const ouraConfigured = !!oura?.configured;
   const ouraLive = ouraConfigured && [readiness, sleepScore, activityScore].some(value => value != null);
   const healthLive = !!(health?.latestMetrics || health?.metrics?.length);
@@ -203,9 +211,10 @@ export default function Today({ onNavigate }) {
     { label: 'Apple Health', state: healthLive ? 'INGESTED' : 'AWAITING SYNC', tone: healthLive ? 'emerald' : 'amber', icon: Heart, nav: 'health-os' },
     { label: 'Hybrid MCP', state: mcpConnected ? 'CONNECTED' : 'OFFLINE', tone: mcpConnected ? 'emerald' : 'rose', icon: TrendingUp, nav: 'trading-process' },
     { label: 'Nifty', state: niftyConnected ? 'LIVE' : 'AUTH NEEDED', tone: niftyConnected ? 'emerald' : 'rose', icon: ListTodo, nav: 'actions' },
-    { label: 'Calendar', state: 'BRIDGE REQUIRED', tone: 'amber', icon: CalendarDays, nav: 'integrations' },
+    { label: 'Calendar', state: calendarConnected ? 'LIVE' : connectorConfigured ? 'AUTH NEEDED' : 'NOT CONFIGURED', tone: calendarConnected ? 'emerald' : 'amber', icon: CalendarDays, nav: 'integrations' },
     { label: 'GHL', state: affiliateBookLoaded ? 'PORTFOLIO LOADED' : 'AUTH REQUIRED', tone: affiliateBookLoaded ? 'emerald' : 'rose', icon: Briefcase, nav: 'tickets' },
-    { label: 'Gmail', state: 'BRIDGE REQUIRED', tone: 'amber', icon: Mail, nav: 'integrations' },
+    { label: 'Gmail', state: gmailConnected ? 'LIVE' : connectorConfigured ? 'AUTH NEEDED' : 'NOT CONFIGURED', tone: gmailConnected ? 'emerald' : 'amber', icon: Mail, nav: 'integrations' },
+    { label: 'Google Drive', state: driveConnected ? 'LIVE' : connectorConfigured ? 'AUTH NEEDED' : 'NOT CONFIGURED', tone: driveConnected ? 'emerald' : 'amber', icon: ShieldCheck, nav: 'integrations' },
   ];
 
   const operatorNote = readiness != null
