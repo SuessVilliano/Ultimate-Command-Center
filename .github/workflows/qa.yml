@@ -38,14 +38,20 @@ jobs:
           import { chromium } from 'playwright';
           const browser = await chromium.launch({headless:true});
           const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 });
-          await page.addInitScript(() => {
-            localStorage.setItem('liv8_current_user', JSON.stringify({
-              id:'ci_visual', username:'ci', name:'Visual QA', email:'ci@example.com', role:'admin', agentName:'Visual QA'
-            }));
-            localStorage.setItem('liv8_admin_setup', 'true');
-            localStorage.setItem('liv8_auth_users', '[]');
+          await page.route('**/api/auth/session', async route => {
+            await route.fulfill({
+              status: 200,
+              contentType: 'application/json',
+              body: JSON.stringify({
+                authenticated: true,
+                user: { id:'admin_001', username:'admin', name:'Visual QA', email:'ci@example.com', role:'admin', agentName:'Visual QA', permissions:['*'] }
+              })
+            });
           });
-          await page.goto('http://127.0.0.1:4173', { waitUntil: 'networkidle' });
+          await page.addInitScript(() => {
+            localStorage.setItem('liv8_owner_session_v1', 'ci-visual-session');
+          });
+          await page.goto('http://127.0.0.1:4173', { waitUntil: 'domcontentloaded' });
           const rail = page.locator('[data-testid="god-view-rail"]');
           await rail.waitFor({ state: 'visible', timeout: 15000 });
           const img = rail.locator('img').first();
