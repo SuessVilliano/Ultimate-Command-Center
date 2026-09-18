@@ -6,7 +6,7 @@
  * Nothing here triggers external writes.
  */
 
-import { API_URL } from '../config';
+import { API_URL, CLOUD_API_URL } from '../config';
 
 const LS = 'hs_local_v1';
 
@@ -21,7 +21,7 @@ function writeLocal(patch) {
 }
 
 async function api(path, { method = 'GET', body } = {}) {
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`${CLOUD_API_URL}${path}`, {
     method,
     headers: { 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
