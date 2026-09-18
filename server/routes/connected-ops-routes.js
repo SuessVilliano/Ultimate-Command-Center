@@ -55,6 +55,13 @@ async function composioConnect(toolkits=[]){
   if(!normalized.length)throw new Error('Choose gmail and/or googlecalendar');
   return composioExecute('COMPOSIO_MANAGE_CONNECTIONS',{toolkits:normalized,reinitiate_all:false});
 }
+function findComposioConnectUrl(value,depth=0){
+  if(depth>6||value==null)return '';
+  if(typeof value==='string')return /^https:\/\/connect\.composio\.dev\//i.test(value)?value:'';
+  if(Array.isArray(value)){for(const item of value){const found=findComposioConnectUrl(item,depth+1);if(found)return found;}return '';}
+  if(typeof value==='object'){for(const item of Object.values(value)){const found=findComposioConnectUrl(item,depth+1);if(found)return found;}}
+  return '';
+}
 
 async function composioAction(action,args={}){
   if(action==='gmail.list')return composioExecute('GMAIL_FETCH_EMAILS',{max_results:Math.min(Math.max(Number(args.limit)||50,1),100),query:args.query||'',include_payload:true});
@@ -134,6 +141,7 @@ export function registerConnectedOpsRoutes(app){
   app.get('/api/connectors/status',(_req,res)=>{const cfg=connectorConfig(),tw=twilioConfig(),personal=highlevel.getConfigStatus('personal'),company=highlevel.getConfigStatus('company');res.json({connector:{configured:!!(cfg.bridgeUrl||cfg.composioApiKey||cfg.mcpUrl),mode:cfg.bridgeUrl?'bridge':cfg.composioApiKey?'composio':cfg.mcpUrl?'mcp':'none',provider:cfg.composioApiKey?'composio':cfg.bridgeUrl?'bridge':cfg.mcpUrl?'mcp':'none',gmail:!!cfg.composioApiKey||!!cfg.gmailListTool||!!cfg.bridgeUrl,calendar:!!cfg.composioApiKey||!!cfg.calendarListTool||!!cfg.bridgeUrl},highlevel:{personal:{configured:personal.configured,primaryPhoneNumber:personal.primaryPhoneNumber},company:{configured:company.configured,staffUserConfigured:company.staffUserConfigured,primaryPhoneNumber:company.primaryPhoneNumber}},twilio:{configured:!!(tw.accountSid&&tw.authToken),sms:!!tw.phoneNumber,whatsapp:!!tw.whatsappNumber,fallbackOnly:true}});});
   app.get('/api/connectors/composio/status',async(_req,res)=>{const cfg=connectorConfig();if(!cfg.composioApiKey)return res.status(503).json({configured:false,error:'COMPOSIO_API_KEY is not configured'});try{const connections=await composioConnectionStatus();res.json({configured:true,provider:'composio',connections});}catch(e){res.status(503).json({configured:true,provider:'composio',error:e.message,connections:{gmail:null,calendar:null}});}});
   app.post('/api/connectors/composio/connect',async(req,res)=>{const cfg=connectorConfig();if(!cfg.composioApiKey)return res.status(503).json({configured:false,error:'COMPOSIO_API_KEY is not configured'});try{const data=await composioConnect(req.body?.toolkits||['gmail','googlecalendar']);res.json({ok:true,provider:'composio',data});}catch(e){res.status(503).json({ok:false,error:e.message});}});
+  app.get('/api/connectors/composio/connect/:toolkit',async(req,res)=>{const cfg=connectorConfig();if(!cfg.composioApiKey)return res.status(503).json({configured:false,error:'COMPOSIO_API_KEY is not configured'});try{const toolkit=String(req.params.toolkit||'').toLowerCase();const data=await composioConnect([toolkit]);const url=findComposioConnectUrl(data);if(url)return res.redirect(302,url);res.json({ok:true,provider:'composio',toolkit,connected:true,message:'No authorization link was required. The Composio connection may already be active.'});}catch(e){res.status(503).json({ok:false,error:e.message});}});
   app.get('/api/connectors/gmail/messages',async(req,res)=>{try{const cfg=connectorConfig();const data=await connectorAction('gmail.list',cfg.gmailListTool,{limit:Number(req.query.limit)||50,query:req.query.query||''});res.json({messages:unwrapRows(data)});}catch(e){res.status(503).json({error:e.message,messages:[]});}});
   app.post('/api/connectors/gmail/send',async(req,res)=>{try{const cfg=connectorConfig();const data=await connectorAction('gmail.send',cfg.gmailSendTool,{to:req.body.to,subject:req.body.subject,body:req.body.body});res.json({ok:true,data});}catch(e){res.status(503).json({error:e.message});}});
   app.get('/api/connectors/calendar/events',async(req,res)=>{try{const cfg=connectorConfig();const data=await connectorAction('calendar.list',cfg.calendarListTool,{start:req.query.start,end:req.query.end,limit:Number(req.query.limit)||100});res.json({events:unwrapRows(data)});}catch(e){res.status(503).json({error:e.message,events:[]});}});
