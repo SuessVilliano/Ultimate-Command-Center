@@ -7,7 +7,7 @@ import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis
 } from 'recharts';
-import { API_URL, CLOUD_API_URL } from '../config';
+import { CLOUD_API_URL } from '../config';
 import { useTheme } from '../context/ThemeContext';
 
 const TABS = [
