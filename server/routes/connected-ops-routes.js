@@ -1,6 +1,8 @@
 import { highlevel } from '../lib/highlevel-integration.js';
 
 const safeJson = (v, fallback = {}) => { try { return JSON.parse(v); } catch { return fallback; } };
+const COMPOSIO_API_BASE = process.env.COMPOSIO_API_BASE_URL || 'https://backend.composio.dev';
+let composioSessionCache = null;
 const companyAssignmentCache = new Map();
 const COMPANY_ASSIGNMENT_TTL_MS = 5 * 60 * 1000;
 const normalizeAccount = value => String(value || 'personal').toLowerCase() === 'company' ? 'company' : 'personal';
@@ -9,9 +11,62 @@ function connectorConfig() {
   return {
     bridgeUrl: process.env.CONNECTOR_BRIDGE_URL || '', bridgeKey: process.env.CONNECTOR_BRIDGE_KEY || '',
     mcpUrl: process.env.CONNECTOR_MCP_URL || '', mcpToken: process.env.CONNECTOR_MCP_TOKEN || process.env.TASKMAGIC_MCP_TOKEN || '',
-    mcpHeaders: safeJson(process.env.CONNECTOR_MCP_HEADERS_JSON || '{}', {}), gmailListTool: process.env.CONNECTOR_GMAIL_LIST_TOOL || '',
+    mcpHeaders: safeJson(process.env.CONNECTOR_MCP_HEADERS_JSON || '{}', {}), composioApiKey: process.env.COMPOSIO_API_KEY || '', composioUserId: process.env.COMPOSIO_USER_ID || 'liv8-owner', gmailListTool: process.env.CONNECTOR_GMAIL_LIST_TOOL || '',
     gmailSendTool: process.env.CONNECTOR_GMAIL_SEND_TOOL || '', calendarListTool: process.env.CONNECTOR_CALENDAR_LIST_TOOL || '', calendarCreateTool: process.env.CONNECTOR_CALENDAR_CREATE_TOOL || '',
   };
+}
+
+async function composioApi(path,{method='GET',body}={}) {
+  const cfg=connectorConfig(); if(!cfg.composioApiKey) throw new Error('COMPOSIO_API_KEY is not configured');
+  const response=await fetch(COMPOSIO_API_BASE+path,{method,headers:{'Content-Type':'application/json','x-api-key':cfg.composioApiKey},...(body!==undefined?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(25000)});
+  const data=await response.json().catch(async()=>({text:await response.text().catch(()=> '')}));
+  if(!response.ok) throw new Error(data?.error?.message||data?.error||data?.message||`Composio HTTP ${response.status}`); return data;
+}
+
+async function ensureComposioSession(force=false){
+  if(!force&&composioSessionCache?.id&&Date.now()-composioSessionCache.at<6*60*60*1000)return composioSessionCache.id;
+  const cfg=connectorConfig();
+  const session=await composioApi('/api/v3.1/tool_router/session',{method:'POST',body:{
+    user_id:cfg.composioUserId,
+    toolkits:{enabled:['gmail','googlecalendar']},
+    manage_connections:{enabled:true,enable_wait_for_connections:false,enable_connection_removal:true},
+    tools:{gmail:{enabled:['GMAIL_FETCH_EMAILS','GMAIL_SEND_EMAIL']},googlecalendar:{enabled:['GOOGLECALENDAR_EVENTS_LIST','GOOGLECALENDAR_CREATE_EVENT']}},
+    preload:{tools:['GMAIL_FETCH_EMAILS','GMAIL_SEND_EMAIL','GOOGLECALENDAR_EVENTS_LIST','GOOGLECALENDAR_CREATE_EVENT']}
+  }});
+  const id=session?.session_id||session?.id; if(!id)throw new Error('Composio session did not return a session_id'); composioSessionCache={id,at:Date.now()}; return id;
+}
+
+async function composioExecute(toolSlug,args={},retry=true){
+  const sessionId=await ensureComposioSession();
+  try{return await composioApi('/api/v3.1/tool_router/session/'+encodeURIComponent(sessionId)+'/execute',{method:'POST',body:{tool_slug:toolSlug,arguments:args}});}
+  catch(e){if(retry&&/session|404|not found/i.test(String(e?.message||''))){composioSessionCache=null;await ensureComposioSession(true);return composioExecute(toolSlug,args,false);}throw e;}
+}
+
+async function composioConnectionStatus(){
+  const sessionId=await ensureComposioSession();
+  const data=await composioApi('/api/v3.1/tool_router/session/'+encodeURIComponent(sessionId)+'/search',{method:'POST',body:{queries:[{use_case:'Read recent Gmail messages'},{use_case:'List upcoming Google Calendar events'}]}});
+  const statuses=Array.isArray(data?.toolkit_connection_statuses)?data.toolkit_connection_statuses:[];
+  const pick=slug=>statuses.find(s=>String(s?.toolkit||'').toLowerCase()===slug);
+  return {gmail:pick('gmail')||null,calendar:pick('googlecalendar')||null};
+}
+
+async function composioConnect(toolkits=[]){
+  const normalized=[...new Set((toolkits||[]).map(x=>String(x||'').toLowerCase()).filter(x=>['gmail','googlecalendar'].includes(x)))];
+  if(!normalized.length)throw new Error('Choose gmail and/or googlecalendar');
+  return composioExecute('COMPOSIO_MANAGE_CONNECTIONS',{toolkits:normalized,reinitiate_all:false});
+}
+
+async function composioAction(action,args={}){
+  if(action==='gmail.list')return composioExecute('GMAIL_FETCH_EMAILS',{max_results:Math.min(Math.max(Number(args.limit)||50,1),100),query:args.query||'',include_payload:true});
+  if(action==='gmail.send')return composioExecute('GMAIL_SEND_EMAIL',{recipient_email:args.to,subject:args.subject||'',body:args.body||'',is_html:false});
+  if(action==='calendar.list')return composioExecute('GOOGLECALENDAR_EVENTS_LIST',{calendarId:'primary',maxResults:Math.min(Math.max(Number(args.limit)||100,1),250),timeMin:args.start||undefined,timeMax:args.end||undefined,singleEvents:true,orderBy:'startTime'});
+  if(action==='calendar.create'){
+    const start=new Date(args.start),end=new Date(args.end); const total=Math.max(1,Math.round((end-start)/60000));
+    const payload={calendar_id:args.calendarId||'primary',summary:args.summary||'',description:args.description||'',start_datetime:args.start,event_duration_minutes:total%60};
+    if(total>=60)payload.event_duration_hour=Math.floor(total/60);
+    return composioExecute('GOOGLECALENDAR_CREATE_EVENT',payload);
+  }
+  throw new Error(`Unsupported Composio action: ${action}`);
 }
 
 async function parseMcpResponse(response) {
@@ -36,8 +91,8 @@ async function bridgeCall(action,payload={}) {
   const data=await response.json().catch(async()=>({text:await response.text().catch(()=> '')})); if(!response.ok) throw new Error(data?.error || `Connector bridge HTTP ${response.status}`); return data;
 }
 
-async function connectorAction(action,toolName,args={}) { const cfg=connectorConfig(); return cfg.bridgeUrl ? bridgeCall(action,{args}) : mcpToolCall(toolName,args); }
-function unwrapRows(payload){ if(Array.isArray(payload))return payload; const direct=payload?.items||payload?.messages||payload?.events||payload?.data||payload?.result; if(Array.isArray(direct))return direct; const content=payload?.content; if(Array.isArray(content)){for(const part of content){if(part?.json&&Array.isArray(part.json))return part.json;if(typeof part?.text==='string'){const parsed=safeJson(part.text,null);if(Array.isArray(parsed))return parsed;if(Array.isArray(parsed?.items))return parsed.items;if(Array.isArray(parsed?.messages))return parsed.messages;if(Array.isArray(parsed?.events))return parsed.events;}}} return []; }
+async function connectorAction(action,toolName,args={}) { const cfg=connectorConfig(); return cfg.bridgeUrl ? bridgeCall(action,{args}) : cfg.composioApiKey ? composioAction(action,args) : mcpToolCall(toolName,args); }
+function unwrapRows(payload,depth=0){ if(depth>5)return[]; if(Array.isArray(payload))return payload; const direct=payload?.items||payload?.messages||payload?.events; if(Array.isArray(direct))return direct; for(const nested of [payload?.data,payload?.result]){if(nested&&nested!==payload){const rows=unwrapRows(nested,depth+1);if(rows.length)return rows;}} const content=payload?.content; if(Array.isArray(content)){for(const part of content){if(part?.json&&Array.isArray(part.json))return part.json;if(typeof part?.text==='string'){const parsed=safeJson(part.text,null);if(Array.isArray(parsed))return parsed;if(Array.isArray(parsed?.items))return parsed.items;if(Array.isArray(parsed?.messages))return parsed.messages;if(Array.isArray(parsed?.events))return parsed.events;}}} return []; }
 function twilioConfig(){return{accountSid:process.env.TWILIO_ACCOUNT_SID||'',authToken:process.env.TWILIO_AUTH_TOKEN||'',phoneNumber:process.env.TWILIO_PHONE_NUMBER||'',whatsappNumber:process.env.TWILIO_WHATSAPP_NUMBER||''};}
 function twilioAuth(){const cfg=twilioConfig();if(!cfg.accountSid||!cfg.authToken)throw new Error('TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN are required');return{cfg,Authorization:`Basic ${Buffer.from(`${cfg.accountSid}:${cfg.authToken}`).toString('base64')}`};}
 
@@ -76,7 +131,9 @@ async function sendBusinessMessage({source,contactId,to,body,subject,replyMessag
 }
 
 export function registerConnectedOpsRoutes(app){
-  app.get('/api/connectors/status',(_req,res)=>{const cfg=connectorConfig(),tw=twilioConfig(),personal=highlevel.getConfigStatus('personal'),company=highlevel.getConfigStatus('company');res.json({connector:{configured:!!(cfg.bridgeUrl||cfg.mcpUrl),mode:cfg.bridgeUrl?'bridge':cfg.mcpUrl?'mcp':'none',gmail:!!cfg.gmailListTool||!!cfg.bridgeUrl,calendar:!!cfg.calendarListTool||!!cfg.bridgeUrl},highlevel:{personal:{configured:personal.configured,primaryPhoneNumber:personal.primaryPhoneNumber},company:{configured:company.configured,staffUserConfigured:company.staffUserConfigured,primaryPhoneNumber:company.primaryPhoneNumber}},twilio:{configured:!!(tw.accountSid&&tw.authToken),sms:!!tw.phoneNumber,whatsapp:!!tw.whatsappNumber,fallbackOnly:true}});});
+  app.get('/api/connectors/status',(_req,res)=>{const cfg=connectorConfig(),tw=twilioConfig(),personal=highlevel.getConfigStatus('personal'),company=highlevel.getConfigStatus('company');res.json({connector:{configured:!!(cfg.bridgeUrl||cfg.composioApiKey||cfg.mcpUrl),mode:cfg.bridgeUrl?'bridge':cfg.composioApiKey?'composio':cfg.mcpUrl?'mcp':'none',provider:cfg.composioApiKey?'composio':cfg.bridgeUrl?'bridge':cfg.mcpUrl?'mcp':'none',gmail:!!cfg.composioApiKey||!!cfg.gmailListTool||!!cfg.bridgeUrl,calendar:!!cfg.composioApiKey||!!cfg.calendarListTool||!!cfg.bridgeUrl},highlevel:{personal:{configured:personal.configured,primaryPhoneNumber:personal.primaryPhoneNumber},company:{configured:company.configured,staffUserConfigured:company.staffUserConfigured,primaryPhoneNumber:company.primaryPhoneNumber}},twilio:{configured:!!(tw.accountSid&&tw.authToken),sms:!!tw.phoneNumber,whatsapp:!!tw.whatsappNumber,fallbackOnly:true}});});
+  app.get('/api/connectors/composio/status',async(_req,res)=>{const cfg=connectorConfig();if(!cfg.composioApiKey)return res.status(503).json({configured:false,error:'COMPOSIO_API_KEY is not configured'});try{const connections=await composioConnectionStatus();res.json({configured:true,provider:'composio',connections});}catch(e){res.status(503).json({configured:true,provider:'composio',error:e.message,connections:{gmail:null,calendar:null}});}});
+  app.post('/api/connectors/composio/connect',async(req,res)=>{const cfg=connectorConfig();if(!cfg.composioApiKey)return res.status(503).json({configured:false,error:'COMPOSIO_API_KEY is not configured'});try{const data=await composioConnect(req.body?.toolkits||['gmail','googlecalendar']);res.json({ok:true,provider:'composio',data});}catch(e){res.status(503).json({ok:false,error:e.message});}});
   app.get('/api/connectors/gmail/messages',async(req,res)=>{try{const cfg=connectorConfig();const data=await connectorAction('gmail.list',cfg.gmailListTool,{limit:Number(req.query.limit)||50,query:req.query.query||''});res.json({messages:unwrapRows(data)});}catch(e){res.status(503).json({error:e.message,messages:[]});}});
   app.post('/api/connectors/gmail/send',async(req,res)=>{try{const cfg=connectorConfig();const data=await connectorAction('gmail.send',cfg.gmailSendTool,{to:req.body.to,subject:req.body.subject,body:req.body.body});res.json({ok:true,data});}catch(e){res.status(503).json({error:e.message});}});
   app.get('/api/connectors/calendar/events',async(req,res)=>{try{const cfg=connectorConfig();const data=await connectorAction('calendar.list',cfg.calendarListTool,{start:req.query.start,end:req.query.end,limit:Number(req.query.limit)||100});res.json({events:unwrapRows(data)});}catch(e){res.status(503).json({error:e.message,events:[]});}});
