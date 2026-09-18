@@ -1,173 +1,106 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { CLOUD_API_URL } from '../config';
 
 const AuthContext = createContext(null);
 
-// Storage keys
-const AUTH_KEYS = {
-  USERS: 'liv8_auth_users',
-  CURRENT_USER: 'liv8_current_user',
-  ADMIN_SETUP: 'liv8_admin_setup'
-};
+const AUTH_TOKEN_KEY = 'liv8_owner_session_v1';
+const PROFILE_CACHE_KEY = 'liv8_owner_profile_v1';
+const LEGACY_KEYS = ['liv8_auth_users', 'liv8_current_user', 'liv8_admin_setup'];
 
-// Default admin account
-const DEFAULT_ADMIN = {
-  id: 'admin_001',
-  username: 'admin',
-  password: 'LIV8Command2026!', // Change this after first login
-  name: 'SV',
-  email: 'liv8ent@gmail.com',
-  role: 'admin',
-  agentName: 'SV - GoHighLevel Support',
-  createdAt: new Date().toISOString(),
-  lastLogin: null
-};
+function readToken() {
+  try { return localStorage.getItem(AUTH_TOKEN_KEY) || ''; } catch { return ''; }
+}
+
+function cacheProfile(user) {
+  try {
+    if (user) localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(user));
+    else localStorage.removeItem(PROFILE_CACHE_KEY);
+  } catch {}
+}
+
+function clearLegacyAuth() {
+  try { LEGACY_KEYS.forEach(key => localStorage.removeItem(key)); } catch {}
+}
+
+async function safeJson(response) {
+  try { return await response.json(); } catch { return {}; }
+}
 
 export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
-  const [users, setUsers] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Initialize auth state
   useEffect(() => {
-    const storedUsers = localStorage.getItem(AUTH_KEYS.USERS);
-    const storedCurrentUser = localStorage.getItem(AUTH_KEYS.CURRENT_USER);
-    const adminSetup = localStorage.getItem(AUTH_KEYS.ADMIN_SETUP);
+    clearLegacyAuth();
 
-    // Initialize with default admin if first time
-    if (!adminSetup) {
-      const initialUsers = [DEFAULT_ADMIN];
-      localStorage.setItem(AUTH_KEYS.USERS, JSON.stringify(initialUsers));
-      localStorage.setItem(AUTH_KEYS.ADMIN_SETUP, 'true');
-      setUsers(initialUsers);
-    } else if (storedUsers) {
-      setUsers(JSON.parse(storedUsers));
-    }
-
-    // Restore session if exists
-    if (storedCurrentUser) {
-      setCurrentUser(JSON.parse(storedCurrentUser));
-    }
-
-    setIsLoading(false);
-  }, []);
-
-  // Login function
-  const login = (username, password) => {
-    const user = users.find(
-      u => u.username.toLowerCase() === username.toLowerCase() && u.password === password
-    );
-
-    if (user) {
-      const updatedUser = { ...user, lastLogin: new Date().toISOString() };
-      setCurrentUser(updatedUser);
-      localStorage.setItem(AUTH_KEYS.CURRENT_USER, JSON.stringify(updatedUser));
-
-      // Update last login in users list
-      const updatedUsers = users.map(u =>
-        u.id === user.id ? updatedUser : u
-      );
-      setUsers(updatedUsers);
-      localStorage.setItem(AUTH_KEYS.USERS, JSON.stringify(updatedUsers));
-
-      return { success: true, user: updatedUser };
-    }
-
-    return { success: false, error: 'Invalid username or password' };
-  };
-
-  // Logout function
-  const logout = () => {
-    setCurrentUser(null);
-    localStorage.removeItem(AUTH_KEYS.CURRENT_USER);
-  };
-
-  // Create new user (admin only)
-  const createUser = (userData) => {
-    if (currentUser?.role !== 'admin') {
-      return { success: false, error: 'Only admins can create users' };
-    }
-
-    // Check if username exists
-    if (users.some(u => u.username.toLowerCase() === userData.username.toLowerCase())) {
-      return { success: false, error: 'Username already exists' };
-    }
-
-    const newUser = {
-      id: `user_${Date.now()}`,
-      username: userData.username,
-      password: userData.password,
-      name: userData.name,
-      email: userData.email || '',
-      role: userData.role || 'member',
-      agentName: userData.agentName || userData.name,
-      createdAt: new Date().toISOString(),
-      lastLogin: null,
-      permissions: userData.permissions || ['tickets', 'dashboard']
+    const restore = async () => {
+      const token = readToken();
+      if (!token) {
+        setIsLoading(false);
+        return;
+      }
+      try {
+        const response = await fetch(`${CLOUD_API_URL}/api/auth/session`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        });
+        const data = await safeJson(response);
+        if (!response.ok || !data?.authenticated || !data?.user) throw new Error('Session expired');
+        setCurrentUser(data.user);
+        cacheProfile(data.user);
+      } catch {
+        try { localStorage.removeItem(AUTH_TOKEN_KEY); } catch {}
+        cacheProfile(null);
+        setCurrentUser(null);
+      } finally {
+        setIsLoading(false);
+      }
     };
 
-    const updatedUsers = [...users, newUser];
-    setUsers(updatedUsers);
-    localStorage.setItem(AUTH_KEYS.USERS, JSON.stringify(updatedUsers));
+    restore();
+  }, []);
 
-    return { success: true, user: newUser };
+  const login = async (username, password) => {
+    try {
+      const response = await fetch(`${CLOUD_API_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await safeJson(response);
+      if (!response.ok || !data?.success || !data?.token || !data?.user) {
+        return { success: false, error: data?.error || 'Login failed' };
+      }
+
+      try { localStorage.setItem(AUTH_TOKEN_KEY, data.token); } catch {}
+      setCurrentUser(data.user);
+      cacheProfile(data.user);
+      clearLegacyAuth();
+      return { success: true, user: data.user };
+    } catch (error) {
+      return { success: false, error: error?.message || 'Cloud login unavailable' };
+    }
   };
 
-  // Update user
-  const updateUser = (userId, updates) => {
-    if (currentUser?.role !== 'admin' && currentUser?.id !== userId) {
-      return { success: false, error: 'Permission denied' };
+  const logout = async () => {
+    const token = readToken();
+    setCurrentUser(null);
+    try { localStorage.removeItem(AUTH_TOKEN_KEY); } catch {}
+    cacheProfile(null);
+    if (token) {
+      fetch(`${CLOUD_API_URL}/api/auth/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
     }
-
-    const updatedUsers = users.map(u =>
-      u.id === userId ? { ...u, ...updates } : u
-    );
-    setUsers(updatedUsers);
-    localStorage.setItem(AUTH_KEYS.USERS, JSON.stringify(updatedUsers));
-
-    // Update current user if it's the same user
-    if (currentUser?.id === userId) {
-      const updatedCurrentUser = { ...currentUser, ...updates };
-      setCurrentUser(updatedCurrentUser);
-      localStorage.setItem(AUTH_KEYS.CURRENT_USER, JSON.stringify(updatedCurrentUser));
-    }
-
-    return { success: true };
   };
 
-  // Delete user (admin only)
-  const deleteUser = (userId) => {
-    if (currentUser?.role !== 'admin') {
-      return { success: false, error: 'Only admins can delete users' };
-    }
+  const unsupported = () => ({
+    success: false,
+    error: 'Accounts are now managed by the shared Command Center owner login.',
+  });
 
-    if (userId === currentUser?.id) {
-      return { success: false, error: 'Cannot delete your own account' };
-    }
-
-    const updatedUsers = users.filter(u => u.id !== userId);
-    setUsers(updatedUsers);
-    localStorage.setItem(AUTH_KEYS.USERS, JSON.stringify(updatedUsers));
-
-    return { success: true };
-  };
-
-  // Reset password (admin or self)
-  const resetPassword = (userId, newPassword) => {
-    if (currentUser?.role !== 'admin' && currentUser?.id !== userId) {
-      return { success: false, error: 'Permission denied' };
-    }
-
-    return updateUser(userId, { password: newPassword });
-  };
-
-  // Change own password
-  const changePassword = (currentPassword, newPassword) => {
-    if (currentUser?.password !== currentPassword) {
-      return { success: false, error: 'Current password is incorrect' };
-    }
-
-    return updateUser(currentUser.id, { password: newPassword });
-  };
+  const users = useMemo(() => currentUser ? [currentUser] : [], [currentUser]);
 
   const value = {
     currentUser,
@@ -177,25 +110,22 @@ export function AuthProvider({ children }) {
     isAdmin: currentUser?.role === 'admin',
     login,
     logout,
-    createUser,
-    updateUser,
-    deleteUser,
-    resetPassword,
-    changePassword
+    createUser: unsupported,
+    updateUser: unsupported,
+    deleteUser: unsupported,
+    resetPassword: unsupported,
+    changePassword: () => ({
+      success: false,
+      error: 'Password changes are managed server-side so credentials stay off browser storage.',
+    }),
   };
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 }
 

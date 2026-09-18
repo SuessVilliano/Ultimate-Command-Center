@@ -38,14 +38,20 @@ jobs:
           import { chromium } from 'playwright';
           const browser = await chromium.launch({headless:true});
           const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 });
-          await page.addInitScript(() => {
-            localStorage.setItem('liv8_current_user', JSON.stringify({
-              id:'ci_visual', username:'ci', name:'Visual QA', email:'ci@example.com', role:'admin', agentName:'Visual QA'
-            }));
-            localStorage.setItem('liv8_admin_setup', 'true');
-            localStorage.setItem('liv8_auth_users', '[]');
+          await page.route('**/api/auth/session', async route => {
+            await route.fulfill({
+              status: 200,
+              contentType: 'application/json',
+              body: JSON.stringify({
+                authenticated: true,
+                user: { id:'admin_001', username:'admin', name:'Visual QA', email:'ci@example.com', role:'admin', agentName:'Visual QA', permissions:['*'] }
+              })
+            });
           });
-          await page.goto('http://127.0.0.1:4173', { waitUntil: 'networkidle' });
+          await page.addInitScript(() => {
+            localStorage.setItem('liv8_owner_session_v1', 'ci-visual-session');
+          });
+          await page.goto('http://127.0.0.1:4173', { waitUntil: 'domcontentloaded' });
           const rail = page.locator('[data-testid="god-view-rail"]');
           await rail.waitFor({ state: 'visible', timeout: 15000 });
           const img = rail.locator('img').first();
@@ -94,6 +100,9 @@ jobs:
           LOCAL_WORKSPACE_WRITE_ENABLED: 'false'
           LIV8_MAC_BRIDGE_TOKEN: 'ci-bridge-token'
           LIV8_MCP_API_KEY: 'ci-mcp-key'
+          COMMAND_CENTER_OWNER_USERNAME: 'admin'
+          COMMAND_CENTER_OWNER_PASSWORD: 'ci-owner-password'
+          COMMAND_CENTER_AUTH_SECRET: 'ci-command-center-auth-secret'
         run: |
           set -e
           node server.js > /tmp/ucc-server.log 2>&1 &
@@ -116,6 +125,16 @@ jobs:
             exit 1
           fi
           cat /tmp/ucc-health.json
+
+          echo '--- Shared owner auth ---'
+          curl -fsS http://127.0.0.1:3005/api/auth/status | tee /tmp/auth-status.json
+          grep -q '"configured":true' /tmp/auth-status.json
+          curl -fsS -X POST http://127.0.0.1:3005/api/auth/login             -H 'Content-Type: application/json'             -d '{"username":"admin","password":"ci-owner-password"}' | tee /tmp/auth-login.json
+          grep -q '"success":true' /tmp/auth-login.json
+          token=$(node -e "const fs=require('fs'); const d=JSON.parse(fs.readFileSync('/tmp/auth-login.json','utf8')); process.stdout.write(d.token)")
+          curl -fsS http://127.0.0.1:3005/api/auth/session -H "Authorization: Bearer $token" | tee /tmp/auth-session.json
+          grep -q '"authenticated":true' /tmp/auth-session.json
+          ! grep -q 'LIV8Command2026!' ../src/context/AuthContext.jsx
 
           echo '--- Health metrics route registration ---'
           curl -fsS 'http://127.0.0.1:3005/api/hs/health/metrics/live?days=7' | tee /tmp/health-metrics.json
