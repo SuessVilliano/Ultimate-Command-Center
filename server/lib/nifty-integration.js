@@ -9,6 +9,7 @@
  */
 
 const NIFTY_API_BASE = 'https://openapi.niftypm.com/api/v1.0';
+const NIFTY_API_V3_BASE = 'https://openapi.niftypm.com/api/v3';
 const NIFTY_TOKEN_URL = 'https://openapi.niftypm.com/oauth/token';
 
 // Runtime token storage. Environment tokens are used as a boot fallback only;
@@ -139,6 +140,30 @@ async function niftyRequest(endpoint, options = {}, retried = false) {
   return response.json();
 }
 
+/** Make a request to Nifty's current v3 API with the same bearer token. */
+async function niftyV3Request(endpoint, options = {}, retried = false) {
+  const accessToken = await getAccessToken();
+  const response = await fetch(`${NIFTY_API_V3_BASE}${endpoint}`, {
+    ...options,
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+      ...options.headers
+    }
+  });
+
+  if (!response.ok) {
+    if (response.status === 401 && tokenStore.refreshToken && !retried) {
+      await refreshAccessToken();
+      return niftyV3Request(endpoint, options, true);
+    }
+    const errorText = await response.text();
+    throw new Error(`Nifty API v3 error: ${response.status} - ${errorText}`);
+  }
+
+  return response.json();
+}
+
 function getAuthorizationUrl() {
   const clientId = process.env.NIFTY_CLIENT_ID;
   const redirectUri = process.env.NIFTY_REDIRECT_URI;
@@ -205,6 +230,30 @@ export const nifty = {
     return niftyRequest(`/messages?project_id=${projectId}${queryStr ? '&' + queryStr : ''}`);
   },
   async createMessage(projectId, content, options = {}) { return niftyRequest('/messages', { method: 'POST', body: JSON.stringify({ project_id: projectId, content, ...(options.taskId && { task_id: options.taskId }) }) }); },
+
+  async getChats(options = {}) {
+    const query = new URLSearchParams();
+    query.append('limit', Math.min(Number(options.limit) || 50, 200));
+    if (options.cursor) query.append('cursor', options.cursor);
+    if (options.includeTotal) query.append('includeTotal', 'true');
+    if (options.expand) query.append('expand', options.expand);
+    return niftyV3Request(`/chats?${query.toString()}`);
+  },
+  async getChatMessages(chatId, options = {}) {
+    const query = new URLSearchParams();
+    query.append('chatId[eq]', chatId);
+    query.append('limit', Math.min(Number(options.limit) || 100, 200));
+    if (options.cursor) query.append('cursor', options.cursor);
+    query.append('expand', options.expand || 'author');
+    return niftyV3Request(`/messages?${query.toString()}`);
+  },
+  async createChatMessage(chatId, text) {
+    return niftyV3Request('/messages', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      body: JSON.stringify({ chatId, text })
+    });
+  },
 
   async getDocuments(projectId) { return niftyRequest(`/docs?project_id=${projectId}`); },
   async getMembers(projectId) { return niftyRequest(`/projects/${projectId}/members`); },
