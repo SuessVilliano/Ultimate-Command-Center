@@ -26,14 +26,7 @@ async function composioApi(path,{method='GET',body}={}) {
 async function ensureComposioSession(force=false){
   if(!force&&composioSessionCache?.id&&Date.now()-composioSessionCache.at<6*60*60*1000)return composioSessionCache.id;
   const cfg=connectorConfig();
-  const session=await composioApi('/api/v3.1/tool_router/session',{method:'POST',body:{
-    user_id:cfg.composioUserId,
-    toolkits:{enabled:['gmail','googlecalendar','googledrive']},
-    manage_connections:{enable:true,enable_wait_for_connections:false,enable_connection_removal:true},
-    multi_account:{enable:true,max_accounts_per_toolkit:5,require_explicit_selection:false},
-    tools:{gmail:{enabled:['GMAIL_FETCH_EMAILS','GMAIL_SEND_EMAIL']},googlecalendar:{enabled:['GOOGLECALENDAR_EVENTS_LIST','GOOGLECALENDAR_CREATE_EVENT']},googledrive:{enabled:['GOOGLEDRIVE_FIND_FILE']} },
-    preload:{tools:['GMAIL_FETCH_EMAILS','GMAIL_SEND_EMAIL','GOOGLECALENDAR_EVENTS_LIST','GOOGLECALENDAR_CREATE_EVENT','GOOGLEDRIVE_FIND_FILE']}
-  }});
+  const session=await composioApi('/api/v3.1/tool_router/session',{method:'POST',body:{user_id:cfg.composioUserId}});
   const id=session?.session_id||session?.id; if(!id)throw new Error('Composio session did not return a session_id'); composioSessionCache={id,at:Date.now()}; return id;
 }
 
