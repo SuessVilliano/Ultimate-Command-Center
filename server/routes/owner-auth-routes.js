@@ -64,6 +64,24 @@ function bearer(req) {
   return auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
 }
 
+export function requireOwnerSession(req, res, next) {
+  const payload = verify(bearer(req));
+  if (!payload) return res.status(401).json({ error: 'Authenticated owner session required' });
+  req.ownerSession = payload;
+  return next();
+}
+
+export function createInternalOwnerSessionToken() {
+  const now = Math.floor(Date.now() / 1000);
+  return sign({
+    kind: 'owner-session',
+    sub: 'internal-mcp',
+    username: 'internal-mcp',
+    iat: now,
+    exp: now + 60,
+  });
+}
+
 export function registerOwnerAuthRoutes(app) {
   app.get('/api/auth/status', (_req, res) => {
     const owner = ownerConfig();

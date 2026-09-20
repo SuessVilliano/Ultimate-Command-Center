@@ -3,11 +3,13 @@ import { Activity, Bot, ExternalLink, Send, ShieldCheck, Wrench } from 'lucide-r
 import { API_URL } from '../config';
 import TradingCommandCenter from './TradingCommandCenter';
 import TradingProcessLive from './TradingProcessLive';
+import KrakenCommandGuide from './KrakenCommandGuide';
 
 const ABATEV_URL = import.meta.env.VITE_ABATEV_URL || 'https://abatev.tradehybrid.co';
 
 const TABS = [
   ['terminal', 'Trade Terminal'],
+  ['kraken', 'Kraken Shortcuts'],
   ['abatev', 'ABATEV'],
   ['chat', 'Trader Chat'],
   ['ecosystem', 'Ecosystem'],
@@ -49,6 +51,7 @@ export default function TradingHub() {
       </section>
 
       {tab === 'terminal' && <TradingCommandCenter />}
+      {tab === 'kraken' && <KrakenCommandGuide />}
       {tab === 'abatev' && <AbatevPanel />}
       {tab === 'chat' && <TradingLeadChat />}
       {tab === 'ecosystem' && <TradingProcessLive />}

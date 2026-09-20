@@ -1,6 +1,7 @@
 import { status as workspaceStatus, list, read, search, stat, write, mkdir } from '../lib/local-workspace.js';
 import { hybridTradingMcp } from '../lib/hybrid-trading-mcp-client.js';
 import { registerVerticalReadinessRoutes } from './vertical-readiness-routes.js';
+import { createInternalOwnerSessionToken } from './owner-auth-routes.js';
 
 const MCP_PROTOCOL = process.env.LOCAL_MCP_PROTOCOL_VERSION || '2025-11-25';
 const PORT = () => process.env.PORT || 3005;
@@ -50,7 +51,7 @@ function assertAllowedBroker(broker) {
 async function internal(path, { method = 'GET', body } = {}) {
   const response = await fetch(`http://127.0.0.1:${PORT()}${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${createInternalOwnerSessionToken()}` },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(25000),
   });
@@ -105,6 +106,7 @@ export const LOCAL_WORKSPACE_MCP_TOOLS = [
   { name: 'trading_execution_status', title: 'Trading Execution Status', description: 'Show live-trading arm state, direct Hybrid execution gateway readiness, Hybrid Trading MCP readiness, confirmation requirements, and broker allowlist.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
   { name: 'trading_mcp_capabilities', title: 'Hybrid Trading MCP Capabilities', description: 'Read the downstream Hybrid Trading MCP platforms, integrations, risk limits, kill switch and operating mode.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
   { name: 'trading_accounts', title: 'Trading Accounts', description: 'List connected trading accounts from the Hybrid Trading MCP across futures and crypto providers.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
+  { name: 'trading_account_snapshot', title: 'Trading Account Snapshot', description: 'Read verified balances, positions and open orders for a Kraken paper or funded live account through the execution gateway.', inputSchema: { type: 'object', properties: { broker: { type: 'string', default: 'kraken' }, mode: { type: 'string', enum: ['paper', 'live'], default: 'paper' } }, additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
   { name: 'trading_positions', title: 'Trading Positions', description: 'Read open/current positions. CrossTrade/Tradovate can use the Hybrid Trading MCP; Kraken and other execution-gateway brokers use the direct execution gateway.', inputSchema: { type: 'object', properties: { broker: { type: 'string' }, mode: { type: 'string', enum: ['paper', 'live'] }, provider: { type: 'string', enum: ['auto', 'execution', 'hybrid-mcp'] } }, additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
   { name: 'trading_orders', title: 'Trading Orders', description: 'Read orders from the direct execution gateway for a broker and mode.', inputSchema: { type: 'object', properties: { broker: { type: 'string' }, mode: { type: 'string', enum: ['paper', 'live'] } }, additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
   { name: 'trading_validate', title: 'Validate Trade Risk', description: 'Run the Hybrid Trading MCP pre-trade risk check without placing an order.', inputSchema: { type: 'object', properties: flexibleTradeSchema, additionalProperties: true }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
@@ -146,6 +148,11 @@ export async function callLocalWorkspaceMcpTool(name, args = {}) {
       return { status: hybridTradingMcp.status(), capabilities: await hybridTradingMcp.callTool('get_capabilities') };
     case 'trading_accounts':
       return hybridTradingMcp.callTool('list_accounts');
+    case 'trading_account_snapshot': {
+      const broker = encodeURIComponent(normalizedBroker(args.broker || 'kraken'));
+      const mode = encodeURIComponent(String(args.mode || 'paper'));
+      return internal(`/api/trading/execution/account-snapshot?broker=${broker}&mode=${mode}`);
+    }
     case 'trading_positions': {
       const broker = normalizedBroker(args.broker || 'kraken');
       const provider = String(args.provider || 'auto').toLowerCase();
