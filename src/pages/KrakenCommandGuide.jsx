@@ -8,6 +8,7 @@ const SECTIONS = [
     subtitle: 'Install once, confirm the CLI, then prove your API key can read the funded account.',
     commands: [
       ['Install Kraken CLI', "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/krakenfx/kraken-cli/releases/latest/download/kraken-cli-installer.sh | sh", 'setup'],
+      ['Interactive credential setup', 'kraken setup', 'setup'],
       ['Check CLI + exchange', 'kraken status -o json', 'safe'],
       ['Show credential source', 'kraken auth show -o json', 'safe'],
       ['Test live authentication', 'kraken auth test -o json', 'read'],
