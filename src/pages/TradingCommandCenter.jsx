@@ -124,6 +124,7 @@ export default function TradingCommandCenter() {
   const [listening, setListening] = useState(false);
   const [error, setError] = useState('');
   const recognitionRef = useRef(null);
+  const liveTradeAcceptedRef = useRef(false);
 
   const api = useCallback(async (path, options = {}) => {
     const response = await fetch(`${API_URL}${path}`, {
@@ -171,7 +172,15 @@ export default function TradingCommandCenter() {
         setAccountErrors(current => ({ ...current, live: '' }));
       }
       await Promise.allSettled(checks);
-    } catch (e) { setError(e.message); }
+    } catch (e) {
+      setStatus(null);
+      setAccountSnapshots({ paper: null, live: null });
+      setExecutionMode('paper');
+      setOrderPreview(null);
+      setExecutionResult(null);
+      setLiveConfirmed(false);
+      setError(e.message);
+    }
   }, [api, loadAccountSnapshot]);
 
   useEffect(() => { loadStatus(); }, [loadStatus]);
@@ -195,7 +204,8 @@ export default function TradingCommandCenter() {
     if (executionMode !== 'live' || (gatewayReady && liveReady)) return;
     setExecutionMode('paper');
     setOrderPreview(null);
-    setExecutionResult(null);
+    if (liveTradeAcceptedRef.current) liveTradeAcceptedRef.current = false;
+    else setExecutionResult(null);
     setLiveConfirmed(false);
   }, [executionMode, gatewayReady, liveReady]);
 
@@ -261,7 +271,14 @@ export default function TradingCommandCenter() {
       : { broker, text: orderText, confirmation: 'CONFIRM_LIVE_TRADE' };
     const data = await post('/api/trading/hybrid-journal/order-execute', payload);
     setExecutionResult(data.result);
-    if (broker === 'kraken') await loadAccountSnapshot('live');
+    if (broker === 'kraken') {
+      liveTradeAcceptedRef.current = true;
+      try {
+        await loadAccountSnapshot('live');
+      } catch (refreshError) {
+        setError(`Live order accepted, but the account refresh failed: ${refreshError.message}. Do not retry until you verify Kraken open orders.`);
+      }
+    }
   };
 
   const loadKrakenState = async () => {
