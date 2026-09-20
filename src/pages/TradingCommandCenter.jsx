@@ -156,7 +156,14 @@ export default function TradingCommandCenter() {
       const next = await api('/api/trading/hybrid-journal/status');
       setStatus(next);
       const verified = Boolean(next?.executionGateway?.reachable && next?.executionGateway?.verified);
-      if (!verified) return;
+      if (!verified) {
+        setAccountSnapshots({ paper: null, live: null });
+        setExecutionMode('paper');
+        setOrderPreview(null);
+        setExecutionResult(null);
+        setLiveConfirmed(false);
+        return;
+      }
       const checks = [loadAccountSnapshot('paper')];
       if (next?.executionGateway?.kraken?.liveConfigured) checks.push(loadAccountSnapshot('live'));
       else {
@@ -185,12 +192,12 @@ export default function TradingCommandCenter() {
   const liveReady = Boolean(accountSnapshots.live?.ok);
 
   useEffect(() => {
-    if (executionMode !== 'live' || liveReady) return;
+    if (executionMode !== 'live' || (gatewayReady && liveReady)) return;
     setExecutionMode('paper');
     setOrderPreview(null);
     setExecutionResult(null);
     setLiveConfirmed(false);
-  }, [executionMode, liveReady]);
+  }, [executionMode, gatewayReady, liveReady]);
 
   const resetTradeState = () => {
     setOrderPreview(null);
@@ -248,7 +255,7 @@ export default function TradingCommandCenter() {
   };
 
   const executeLive = async () => {
-    if (broker === 'kraken' && !liveReady) throw new Error('Kraken live account verification was lost. Reconnect and preview the order again.');
+    if (broker === 'kraken' && (!gatewayReady || !liveReady)) throw new Error('Kraken live account verification was lost. Reconnect and preview the order again.');
     const payload = broker === 'kraken'
       ? { broker, intent: orderPreview, confirmation: 'CONFIRM_LIVE_TRADE' }
       : { broker, text: orderText, confirmation: 'CONFIRM_LIVE_TRADE' };
@@ -372,7 +379,7 @@ export default function TradingCommandCenter() {
             <button disabled={busy === 'paper'} onClick={() => run('paper', executePaper)} className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white text-sm">Execute paper trade</button>}
 
           {orderPreview && executionMode === 'live' && <label className="flex items-center gap-2 text-sm text-gray-300"><input type="checkbox" checked={liveConfirmed} onChange={e => setLiveConfirmed(e.target.checked)} /> I reviewed this exact order and want it sent live.</label>}
-          {orderPreview && executionMode === 'live' && <button disabled={!liveConfirmed || !liveReady || busy === 'execute'} onClick={() => run('execute', executeLive)} className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-30 text-white text-sm">Execute live trade</button>}
+          {orderPreview && executionMode === 'live' && <button disabled={!liveConfirmed || !gatewayReady || !liveReady || busy === 'execute'} onClick={() => run('execute', executeLive)} className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-30 text-white text-sm">Execute live trade</button>}
         </div>
 
         <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
