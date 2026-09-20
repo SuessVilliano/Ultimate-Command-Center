@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 
 process.env.HYBRID_EXECUTION_URL = 'https://gateway.test';
 process.env.HYBRID_EXECUTION_API_KEY = 'test-execution-key';
+process.env.COMMAND_CENTER_AUTH_SECRET = 'test-owner-session-secret';
 
 const { registerHybridJournalMcpRoutes } = await import('../routes/hybrid-journal-mcp-routes.js');
+const { createInternalOwnerSessionToken, requireOwnerSession: verifyOwnerSession } = await import('../routes/owner-auth-routes.js');
 
 function fakeApp() {
   const routes = new Map();
@@ -20,6 +22,35 @@ function fakeResponse() {
     json(value) { this.body = value; return this; },
   };
 }
+
+const requireOwnerSession = (_req, _res, next) => next();
+
+test('trading routes are mounted behind owner authentication', () => {
+  const app = fakeApp();
+  registerHybridJournalMcpRoutes(app, { requireOwnerSession });
+
+  for (const route of [
+    'GET /api/trading/hybrid-journal/status',
+    'GET /api/trading/execution/account-snapshot',
+    'GET /api/trading/execution/positions',
+    'GET /api/trading/execution/orders',
+    'POST /api/trading/hybrid-journal/order-execute',
+  ]) {
+    assert.equal(app.routes.get(route)?.[0], requireOwnerSession, `${route} must require owner auth`);
+  }
+});
+
+test('internal MCP account reads use a short-lived valid owner session', () => {
+  const denied = fakeResponse();
+  let accepted = false;
+  verifyOwnerSession({ headers: {} }, denied, () => { accepted = true; });
+  assert.equal(denied.statusCode, 401);
+  assert.equal(accepted, false);
+
+  const allowed = fakeResponse();
+  verifyOwnerSession({ headers: { authorization: `Bearer ${createInternalOwnerSessionToken()}` } }, allowed, () => { accepted = true; });
+  assert.equal(accepted, true);
+});
 
 async function invoke(app, method, path, req = {}) {
   const handlers = app.routes.get(`${method} ${path}`);
@@ -38,7 +69,7 @@ test('gateway status rejects the SPA HTML catch-all instead of reporting a false
 
   try {
     const app = fakeApp();
-    registerHybridJournalMcpRoutes(app);
+    registerHybridJournalMcpRoutes(app, { requireOwnerSession });
     const res = await invoke(app, 'GET', '/api/trading/hybrid-journal/status');
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.executionGateway.reachable, false);
@@ -65,7 +96,7 @@ test('account snapshot proxy returns typed Kraken paper account data', async () 
 
   try {
     const app = fakeApp();
-    registerHybridJournalMcpRoutes(app);
+    registerHybridJournalMcpRoutes(app, { requireOwnerSession });
     const res = await invoke(app, 'GET', '/api/trading/execution/account-snapshot', { query: { broker: 'kraken', mode: 'paper' } });
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.ok, true);
