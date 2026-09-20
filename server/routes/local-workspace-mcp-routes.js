@@ -1,6 +1,7 @@
 import { status as workspaceStatus, list, read, search, stat, write, mkdir } from '../lib/local-workspace.js';
 import { hybridTradingMcp } from '../lib/hybrid-trading-mcp-client.js';
 import { registerVerticalReadinessRoutes } from './vertical-readiness-routes.js';
+import { createInternalOwnerSessionToken } from './owner-auth-routes.js';
 
 const MCP_PROTOCOL = process.env.LOCAL_MCP_PROTOCOL_VERSION || '2025-11-25';
 const PORT = () => process.env.PORT || 3005;
@@ -50,7 +51,7 @@ function assertAllowedBroker(broker) {
 async function internal(path, { method = 'GET', body } = {}) {
   const response = await fetch(`http://127.0.0.1:${PORT()}${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${createInternalOwnerSessionToken()}` },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(25000),
   });
