@@ -1,3 +1,5 @@
+import { createInternalOwnerSessionToken } from '../routes/owner-auth-routes.js';
+
 const PORT = () => process.env.PORT || 3005;
 
 export const ACTION_POLICIES = Object.freeze({
@@ -110,7 +112,7 @@ export function resolveAction(message = '', requestedAction, requestedParams = {
 async function localFetch(path, { method = 'GET', body, headers = {} } = {}) {
   const response = await fetch(`http://127.0.0.1:${PORT()}${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json', ...headers },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${createInternalOwnerSessionToken()}`, ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(20000),
   });
