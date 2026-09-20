@@ -11,6 +11,11 @@ function readToken() {
   try { return localStorage.getItem(AUTH_TOKEN_KEY) || ''; } catch { return ''; }
 }
 
+export function ownerSessionHeaders() {
+  const token = readToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 function cacheProfile(user) {
   try {
     if (user) localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(user));
