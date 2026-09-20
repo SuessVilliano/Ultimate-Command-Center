@@ -1,6 +1,7 @@
 import { nifty } from '../lib/nifty-integration.js';
 import { registerNiftyMcpRoutes } from './nifty-mcp-routes.js';
 import { registerHybridJournalMcpRoutes } from './hybrid-journal-mcp-routes.js';
+import { requireOwnerSession } from './owner-auth-routes.js';
 import { registerAppleHealthRoutes } from './apple-health-routes.js';
 import { registerLocalAiRoutes } from './local-ai-routes.js';
 import { registerMacAiBridgeRoutes } from './mac-ai-bridge-routes.js';
@@ -25,7 +26,7 @@ function activeProjectsOnly(payload) {
 
 export function registerNiftyRoutes(app) {
   registerNiftyMcpRoutes(app);
-  registerHybridJournalMcpRoutes(app);
+  registerHybridJournalMcpRoutes(app, { requireOwnerSession });
   registerAppleHealthRoutes(app);
   registerLocalAiRoutes(app);
   registerMacAiBridgeRoutes(app);
