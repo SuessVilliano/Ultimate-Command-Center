@@ -37,9 +37,26 @@ async function execution(path, { method = 'GET', body } = {}) {
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(20000),
   });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || data.errors?.join('; ') || `Execution gateway HTTP ${response.status}`);
+  const raw = await response.text();
+  let data;
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    const error = new Error(`Execution gateway returned a non-JSON response for ${path}. Check HYBRID_EXECUTION_URL and the deployed /api/execution routes.`);
+    error.status = 502;
+    throw error;
+  }
+  if (!response.ok) {
+    const error = new Error(data.error || data.errors?.join('; ') || `Execution gateway HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
   return data;
+}
+
+function responseStatus(error, fallback = 500) {
+  const status = Number(error?.status);
+  return status >= 400 && status <= 599 ? status : fallback;
 }
 
 function wantsKraken(body = {}) {
@@ -67,7 +84,15 @@ export function registerHybridJournalMcpRoutes(app) {
       catch (error) { mcpError = error.message; }
     }
     if (executionGateway.configured) {
-      try { executionGateway = { ...executionGateway, reachable: true, ...(await execution('/api/execution/status')) }; }
+      try {
+        const remote = await execution('/api/execution/status');
+        if (remote?.ok !== true || remote?.gateway !== 'hybrid-execution') {
+          const error = new Error('Execution gateway contract verification failed. The configured URL did not identify itself as hybrid-execution.');
+          error.status = 502;
+          throw error;
+        }
+        executionGateway = { ...executionGateway, ...remote, reachable: true, verified: true };
+      }
       catch (error) { executionGateway.error = error.message; }
     }
     const connected = Boolean(mcp.hasSession || (mcp.initialized && tools.length));
@@ -91,7 +116,7 @@ export function registerHybridJournalMcpRoutes(app) {
         return res.json({ preview: data.preview, broker: 'kraken', gateway: true, live: false });
       }
       res.json({ preview: await call('place_trade', { ...(req.body || {}), dry_run: true }), broker: req.body?.broker || 'hybrid-journal', live: false });
-    } catch (error) { res.status(500).json({ error: error.message }); }
+    } catch (error) { res.status(responseStatus(error)).json({ error: error.message }); }
   });
 
   app.post('/api/trading/hybrid-journal/order-paper', async (req, res) => {
@@ -99,7 +124,7 @@ export function registerHybridJournalMcpRoutes(app) {
       const intent = await krakenIntentFromBody(req.body || {}, 'paper');
       const data = await execution('/api/execution/intents/execute', { method: 'POST', body: { ...intent, mode: 'paper', confirmation: 'preview' } });
       res.json({ result: data, broker: 'kraken', live: false });
-    } catch (error) { res.status(500).json({ error: error.message }); }
+    } catch (error) { res.status(responseStatus(error)).json({ error: error.message }); }
   });
 
   app.post('/api/trading/hybrid-journal/order-execute', async (req, res) => {
@@ -112,11 +137,12 @@ export function registerHybridJournalMcpRoutes(app) {
         return res.json({ result: data, broker: 'kraken', live: true });
       }
       res.json({ result: await call('place_trade', { ...order, dry_run: false }), broker: order.broker || 'hybrid-journal', live: true });
-    } catch (error) { res.status(500).json({ error: error.message }); }
+    } catch (error) { res.status(responseStatus(error)).json({ error: error.message }); }
   });
 
-  app.get('/api/trading/execution/positions', async (req, res) => { try { const broker=req.query.broker||'kraken', mode=req.query.mode||'paper'; res.json(await execution(`/api/execution/positions?broker=${encodeURIComponent(broker)}&mode=${encodeURIComponent(mode)}`)); } catch(e){res.status(500).json({error:e.message});} });
-  app.get('/api/trading/execution/orders', async (req, res) => { try { const broker=req.query.broker||'kraken', mode=req.query.mode||'paper'; res.json(await execution(`/api/execution/orders?broker=${encodeURIComponent(broker)}&mode=${encodeURIComponent(mode)}`)); } catch(e){res.status(500).json({error:e.message});} });
+  app.get('/api/trading/execution/account-snapshot', async (req, res) => { try { const broker=req.query.broker||'kraken', mode=req.query.mode||'paper'; res.json(await execution(`/api/execution/account-snapshot?broker=${encodeURIComponent(broker)}&mode=${encodeURIComponent(mode)}`)); } catch(e){res.status(responseStatus(e)).json({error:e.message});} });
+  app.get('/api/trading/execution/positions', async (req, res) => { try { const broker=req.query.broker||'kraken', mode=req.query.mode||'paper'; res.json(await execution(`/api/execution/positions?broker=${encodeURIComponent(broker)}&mode=${encodeURIComponent(mode)}`)); } catch(e){res.status(responseStatus(e)).json({error:e.message});} });
+  app.get('/api/trading/execution/orders', async (req, res) => { try { const broker=req.query.broker||'kraken', mode=req.query.mode||'paper'; res.json(await execution(`/api/execution/orders?broker=${encodeURIComponent(broker)}&mode=${encodeURIComponent(mode)}`)); } catch(e){res.status(responseStatus(e)).json({error:e.message});} });
 
   app.post('/api/trading/hybrid-journal/mcp/call', async (req, res) => {
     try {
