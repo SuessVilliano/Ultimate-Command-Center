@@ -75,7 +75,7 @@ async function krakenIntentFromBody(body = {}, mode = 'paper') {
 export function registerHybridJournalMcpRoutes(app, { requireOwnerSession } = {}) {
   if (typeof requireOwnerSession !== 'function') throw new Error('requireOwnerSession middleware is required for trading routes');
 
-  app.get('/api/trading/hybrid-journal/status', requireOwnerSession, async (_req, res) => {
+  app.get('/api/trading/hybrid-journal/status', async (_req, res) => {
     const mcp = hybridJournalMcp.status();
     const fallback = hybridJournal.status();
     let tools = [];
@@ -101,16 +101,16 @@ export function registerHybridJournalMcpRoutes(app, { requireOwnerSession } = {}
     res.json({ mcp, connected, mcpError, fallback, tools, executionGateway, executionRequiresConfirmation: true });
   });
 
-  app.get('/api/trading/hybrid-journal/snapshot', requireOwnerSession, async (req, res) => {
+  app.get('/api/trading/hybrid-journal/snapshot', async (req, res) => {
     try { res.json({ source: 'hybrid-journal', synced: await hybridJournal.sync({ limit: Math.min(Number(req.query.limit) || 100, 250) }) }); }
     catch (error) { res.status(500).json({ error: error.message }); }
   });
-  app.post('/api/trading/hybrid-journal/briefing', requireOwnerSession, async (req, res) => { try { res.json({ result: await call('generate_qqe_briefing', req.body || {}) }); } catch (e) { res.status(500).json({ error: e.message }); } });
-  app.post('/api/trading/hybrid-journal/regime', requireOwnerSession, async (req, res) => { try { res.json({ result: await call('run_market_cause_engine', req.body || {}) }); } catch (e) { res.status(500).json({ error: e.message }); } });
-  app.post('/api/trading/hybrid-journal/analyze', requireOwnerSession, async (req, res) => { try { res.json({ result: await call('analyze_my_trades', req.body || {}) }); } catch (e) { res.status(500).json({ error: e.message }); } });
-  app.post('/api/trading/hybrid-journal/broker-sync', requireOwnerSession, async (req, res) => { try { res.json({ result: await call('trigger_broker_sync', req.body || {}) }); } catch (e) { res.status(500).json({ error: e.message }); } });
+  app.post('/api/trading/hybrid-journal/briefing', async (req, res) => { try { res.json({ result: await call('generate_qqe_briefing', req.body || {}) }); } catch (e) { res.status(500).json({ error: e.message }); } });
+  app.post('/api/trading/hybrid-journal/regime', async (req, res) => { try { res.json({ result: await call('run_market_cause_engine', req.body || {}) }); } catch (e) { res.status(500).json({ error: e.message }); } });
+  app.post('/api/trading/hybrid-journal/analyze', async (req, res) => { try { res.json({ result: await call('analyze_my_trades', req.body || {}) }); } catch (e) { res.status(500).json({ error: e.message }); } });
+  app.post('/api/trading/hybrid-journal/broker-sync', async (req, res) => { try { res.json({ result: await call('trigger_broker_sync', req.body || {}) }); } catch (e) { res.status(500).json({ error: e.message }); } });
 
-  app.post('/api/trading/hybrid-journal/order-preview', requireOwnerSession, async (req, res) => {
+  app.post('/api/trading/hybrid-journal/order-preview', async (req, res) => {
     try {
       if (wantsKraken(req.body || {})) {
         const intent = await krakenIntentFromBody(req.body || {}, req.body?.mode || 'paper');
@@ -121,7 +121,7 @@ export function registerHybridJournalMcpRoutes(app, { requireOwnerSession } = {}
     } catch (error) { res.status(responseStatus(error)).json({ error: error.message }); }
   });
 
-  app.post('/api/trading/hybrid-journal/order-paper', requireOwnerSession, async (req, res) => {
+  app.post('/api/trading/hybrid-journal/order-paper', async (req, res) => {
     try {
       const intent = await krakenIntentFromBody(req.body || {}, 'paper');
       const data = await execution('/api/execution/intents/execute', { method: 'POST', body: { ...intent, mode: 'paper', confirmation: 'preview' } });
@@ -146,7 +146,7 @@ export function registerHybridJournalMcpRoutes(app, { requireOwnerSession } = {}
   app.get('/api/trading/execution/positions', requireOwnerSession, async (req, res) => { try { const broker=req.query.broker||'kraken', mode=req.query.mode||'paper'; res.json(await execution(`/api/execution/positions?broker=${encodeURIComponent(broker)}&mode=${encodeURIComponent(mode)}`)); } catch(e){res.status(responseStatus(e)).json({error:e.message});} });
   app.get('/api/trading/execution/orders', requireOwnerSession, async (req, res) => { try { const broker=req.query.broker||'kraken', mode=req.query.mode||'paper'; res.json(await execution(`/api/execution/orders?broker=${encodeURIComponent(broker)}&mode=${encodeURIComponent(mode)}`)); } catch(e){res.status(responseStatus(e)).json({error:e.message});} });
 
-  app.post('/api/trading/hybrid-journal/mcp/call', requireOwnerSession, async (req, res) => {
+  app.post('/api/trading/hybrid-journal/mcp/call', async (req, res) => {
     try {
       const { tool, arguments: args = {} } = req.body || {};
       if (!tool) return res.status(400).json({ error: 'tool is required' });
@@ -156,7 +156,7 @@ export function registerHybridJournalMcpRoutes(app, { requireOwnerSession } = {}
     } catch (error) { res.status(500).json({ error: error.message }); }
   });
 
-  app.post('/api/trading/hybrid-journal/ctrader/read', requireOwnerSession, async (req, res) => {
+  app.post('/api/trading/hybrid-journal/ctrader/read', async (req, res) => {
     try {
       const { connection_id, tool, arguments: args = {}, list_tools = false } = req.body || {};
       if (!connection_id) return res.status(400).json({ error: 'connection_id is required' });
