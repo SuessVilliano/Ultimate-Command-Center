@@ -39,7 +39,7 @@ test('advertised MCP tools unify operator, workspace, direct execution and feder
   assert.ok(tools.length >= 32, 'expected broad unified operating + federated trading tool surface');
   for (const expected of [
     'command_center_today','nifty_list_tasks','affiliate_brief','calendar_today','trading_snapshot',
-    'trading_execution_status','trading_mcp_capabilities','trading_accounts','trading_positions','trading_orders',
+    'trading_execution_status','trading_mcp_capabilities','trading_accounts','trading_account_snapshot','trading_positions','trading_orders',
     'trading_validate','trading_order_preview','trading_order_paper','trading_live_execute','trading_close_position',
     'trading_copy_to_followers','trading_prop_firm_status','trading_ctrader_mcp_read',
     'workspace_search','workspace_read','workspace_write',
