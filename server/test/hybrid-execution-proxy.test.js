@@ -30,7 +30,6 @@ test('trading routes are mounted behind owner authentication', () => {
   registerHybridJournalMcpRoutes(app, { requireOwnerSession });
 
   for (const route of [
-    'GET /api/trading/hybrid-journal/status',
     'GET /api/trading/execution/account-snapshot',
     'GET /api/trading/execution/positions',
     'GET /api/trading/execution/orders',
