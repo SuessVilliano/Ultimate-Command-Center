@@ -152,6 +152,10 @@ services:
         sync: false
       - key: HYBRID_JOURNAL_MCP_PROTOCOL_VERSION
         value: "2025-06-18"
+      - key: HYBRID_EXECUTION_URL
+        value: https://hybridzone-api.onrender.com
+      - key: HYBRID_EXECUTION_API_KEY
+        sync: false
       - key: APPLE_HEALTH_INGEST_TOKEN
         sync: false
       - key: OURA_ACCESS_TOKEN
