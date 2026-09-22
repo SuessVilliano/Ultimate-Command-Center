@@ -2,13 +2,15 @@
 export const HYBRID_EXECUTION_VERSION = '2026-08-29';
 
 export function createTradeIntent(i = {}) {
+  const broker = String(i.broker || 'kraken').toLowerCase();
   return {
     version: HYBRID_EXECUTION_VERSION,
     intentId: i.intentId || crypto.randomUUID(),
     source: i.source || window.location.host,
-    broker: String(i.broker || 'kraken').toLowerCase(),
+    broker,
     accountId: i.accountId || null,
-    mode: String(i.mode || 'paper').toLowerCase(),
+    instrumentType: i.instrumentType || i.assetClass || i.metadata?.instrumentType || i.metadata?.assetClass || null,
+    mode: String(i.mode || (broker === 'public' ? 'live' : 'paper')).toLowerCase(),
     symbol: String(i.symbol || i.pair || '').toUpperCase().replace('/', ''),
     side: String(i.side || '').toLowerCase(),
     orderType: String(i.orderType || i.type || 'market').toLowerCase(),
@@ -16,6 +18,7 @@ export function createTradeIntent(i = {}) {
     price: i.price == null ? null : Number(i.price),
     stopLoss: i.stopLoss == null ? null : Number(i.stopLoss),
     takeProfit: i.takeProfit == null ? null : Number(i.takeProfit),
+    openCloseIndicator: i.openCloseIndicator || i.metadata?.openCloseIndicator || null,
     riskUsd: i.riskUsd == null ? null : Number(i.riskUsd),
     rationale: i.rationale || null,
     strategy: i.strategy || null,
@@ -66,8 +69,54 @@ export class HybridExecutionClient {
   preview(intent) { return this.request('/api/execution/intents/preview', { method: 'POST', body: createTradeIntent(intent) }); }
   paperExecute(intent) { return this.request('/api/execution/intents/execute', { method: 'POST', body: createTradeIntent({ ...intent, mode: 'paper', confirmation: 'preview' }) }); }
   liveExecute(intent) { return this.request('/api/execution/intents/execute', { method: 'POST', body: createTradeIntent({ ...intent, mode: 'live', confirmation: 'CONFIRM_LIVE_TRADE' }) }); }
-  positions({ broker = 'kraken', mode = 'paper' } = {}) { return this.request(`/api/execution/positions?broker=${encodeURIComponent(broker)}&mode=${encodeURIComponent(mode)}`); }
-  orders({ broker = 'kraken', mode = 'paper' } = {}) { return this.request(`/api/execution/orders?broker=${encodeURIComponent(broker)}&mode=${encodeURIComponent(mode)}`); }
+  accountSnapshot({ broker = 'kraken', mode, accountId } = {}) {
+    const resolvedMode = mode || (broker === 'public' ? 'live' : 'paper');
+    const qs = new URLSearchParams({ broker, mode: resolvedMode });
+    if (accountId) qs.set('accountId', accountId);
+    return this.request(`/api/execution/account-snapshot?${qs}`);
+  }
+  positions({ broker = 'kraken', mode, accountId } = {}) {
+    const resolvedMode = mode || (broker === 'public' ? 'live' : 'paper');
+    const qs = new URLSearchParams({ broker, mode: resolvedMode });
+    if (accountId) qs.set('accountId', accountId);
+    return this.request(`/api/execution/positions?${qs}`);
+  }
+  orders({ broker = 'kraken', mode, accountId } = {}) {
+    const resolvedMode = mode || (broker === 'public' ? 'live' : 'paper');
+    const qs = new URLSearchParams({ broker, mode: resolvedMode });
+    if (accountId) qs.set('accountId', accountId);
+    return this.request(`/api/execution/orders?${qs}`);
+  }
+  history({ broker = 'public', accountId, start, end, pageSize, nextToken } = {}) {
+    const qs = new URLSearchParams({ broker });
+    if (accountId) qs.set('accountId', accountId);
+    if (start) qs.set('start', start);
+    if (end) qs.set('end', end);
+    if (pageSize) qs.set('pageSize', String(pageSize));
+    if (nextToken) qs.set('nextToken', nextToken);
+    return this.request(`/api/execution/history?${qs}`);
+  }
+  optionExpirations({ symbol, broker = 'public', accountId, instrumentType = 'EQUITY' } = {}) {
+    const qs = new URLSearchParams({ broker, instrumentType });
+    if (accountId) qs.set('accountId', accountId);
+    return this.request(`/api/execution/options/${encodeURIComponent(symbol)}/expirations?${qs}`);
+  }
+  optionChain({ symbol, expirationDate, broker = 'public', accountId, instrumentType = 'EQUITY' } = {}) {
+    const qs = new URLSearchParams({ broker, expirationDate, instrumentType });
+    if (accountId) qs.set('accountId', accountId);
+    return this.request(`/api/execution/options/${encodeURIComponent(symbol)}/chain?${qs}`);
+  }
+  orderStatus(orderId, { broker = 'public', accountId } = {}) {
+    const qs = new URLSearchParams({ broker });
+    if (accountId) qs.set('accountId', accountId);
+    return this.request(`/api/execution/orders/${encodeURIComponent(orderId)}?${qs}`);
+  }
+  cancelOrder(orderId, { broker = 'public', accountId } = {}) {
+    return this.request(`/api/execution/orders/${encodeURIComponent(orderId)}/cancel`, { method: 'POST', body: { broker, accountId } });
+  }
+  replaceOrder(orderId, replacement, { broker = 'public', accountId } = {}) {
+    return this.request(`/api/execution/orders/${encodeURIComponent(orderId)}/replace`, { method: 'POST', body: { broker, accountId, replacement, confirmation: 'CONFIRM_LIVE_TRADE' } });
+  }
 }
 
 export function speechRecognitionSupported() { return Boolean(window.SpeechRecognition || window.webkitSpeechRecognition); }
