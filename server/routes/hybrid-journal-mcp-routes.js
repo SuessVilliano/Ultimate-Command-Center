@@ -59,16 +59,32 @@ function responseStatus(error, fallback = 500) {
   return status >= 400 && status <= 599 ? status : fallback;
 }
 
-function wantsKraken(body = {}) {
-  if (String(body.broker || '').toLowerCase() === 'kraken') return true;
+function gatewayBroker(body = {}) {
+  const explicit = String(body.broker || body.intent?.broker || '').toLowerCase();
+  if (['kraken', 'public'].includes(explicit)) return explicit;
   const text = String(body.text || body.rationale || '').toLowerCase();
-  return /\b(kraken|bitcoin|btc|xbt|ethereum|eth|solana|sol|xrp|doge|ada)\b/.test(text);
+  if (/\b(kraken|bitcoin|btc|xbt|ethereum|eth|solana|sol|xrp|doge|ada)\b/.test(text)) return 'kraken';
+  return null;
 }
 
-async function krakenIntentFromBody(body = {}, mode = 'paper') {
-  if (body.intent && typeof body.intent === 'object') return { ...body.intent, broker: 'kraken', mode, source: body.intent.source || 'command-center' };
-  if (!body.text) throw new Error('text or intent is required for Kraken execution');
-  const parsed = await execution('/api/execution/parse', { method: 'POST', body: { text: body.text, broker: 'kraken', mode, source: 'command-center' } });
+async function gatewayIntentFromBody(body = {}, broker = 'kraken', mode) {
+  const resolvedMode = mode || (broker === 'public' ? 'live' : 'paper');
+  if (body.intent && typeof body.intent === 'object') {
+    return { ...body.intent, broker, mode: resolvedMode, source: body.intent.source || 'command-center' };
+  }
+  if (!body.text) throw new Error(`text or intent is required for ${broker} execution`);
+  const parsed = await execution('/api/execution/parse', {
+    method: 'POST',
+    body: {
+      text: body.text,
+      broker,
+      mode: resolvedMode,
+      source: 'command-center',
+      symbol: body.symbol,
+      instrumentType: body.instrumentType,
+      openCloseIndicator: body.openCloseIndicator,
+    },
+  });
   return parsed.intent;
 }
 
@@ -112,10 +128,12 @@ export function registerHybridJournalMcpRoutes(app, { requireOwnerSession } = {}
 
   app.post('/api/trading/hybrid-journal/order-preview', async (req, res) => {
     try {
-      if (wantsKraken(req.body || {})) {
-        const intent = await krakenIntentFromBody(req.body || {}, req.body?.mode || 'paper');
+      const broker = gatewayBroker(req.body || {});
+      if (broker) {
+        const mode = req.body?.mode || (broker === 'public' ? 'live' : 'paper');
+        const intent = await gatewayIntentFromBody(req.body || {}, broker, mode);
         const data = await execution('/api/execution/intents/preview', { method: 'POST', body: intent });
-        return res.json({ preview: data.preview, broker: 'kraken', gateway: true, live: false });
+        return res.json({ preview: data.preview, preflight: data.preflight || null, broker, gateway: true, live: false });
       }
       res.json({ preview: await call('place_trade', { ...(req.body || {}), dry_run: true }), broker: req.body?.broker || 'hybrid-journal', live: false });
     } catch (error) { res.status(responseStatus(error)).json({ error: error.message }); }
@@ -123,9 +141,11 @@ export function registerHybridJournalMcpRoutes(app, { requireOwnerSession } = {}
 
   app.post('/api/trading/hybrid-journal/order-paper', async (req, res) => {
     try {
-      const intent = await krakenIntentFromBody(req.body || {}, 'paper');
+      const broker = gatewayBroker(req.body || {}) || 'kraken';
+      if (broker === 'public') return res.status(409).json({ error: 'Public does not provide a paper brokerage environment. Use Public preflight for a non-executing preview.' });
+      const intent = await gatewayIntentFromBody(req.body || {}, broker, 'paper');
       const data = await execution('/api/execution/intents/execute', { method: 'POST', body: { ...intent, mode: 'paper', confirmation: 'preview' } });
-      res.json({ result: data, broker: 'kraken', live: false });
+      res.json({ result: data, broker, live: false });
     } catch (error) { res.status(responseStatus(error)).json({ error: error.message }); }
   });
 
@@ -133,18 +153,33 @@ export function registerHybridJournalMcpRoutes(app, { requireOwnerSession } = {}
     try {
       const { confirmation, ...order } = req.body || {};
       if (confirmation !== 'CONFIRM_LIVE_TRADE') return res.status(409).json({ error: 'Explicit live-trade confirmation required.', requiredConfirmation: 'CONFIRM_LIVE_TRADE' });
-      if (wantsKraken(order)) {
-        const intent = await krakenIntentFromBody(order, 'live');
+      const broker = gatewayBroker(order);
+      if (broker) {
+        const intent = await gatewayIntentFromBody(order, broker, 'live');
         const data = await execution('/api/execution/intents/execute', { method: 'POST', body: { ...intent, mode: 'live', confirmation: 'CONFIRM_LIVE_TRADE' } });
-        return res.json({ result: data, broker: 'kraken', live: true });
+        return res.json({ result: data, broker, live: true });
       }
       res.json({ result: await call('place_trade', { ...order, dry_run: false }), broker: order.broker || 'hybrid-journal', live: true });
     } catch (error) { res.status(responseStatus(error)).json({ error: error.message }); }
   });
 
-  app.get('/api/trading/execution/account-snapshot', requireOwnerSession, async (req, res) => { try { const broker=req.query.broker||'kraken', mode=req.query.mode||'paper'; res.json(await execution(`/api/execution/account-snapshot?broker=${encodeURIComponent(broker)}&mode=${encodeURIComponent(mode)}`)); } catch(e){res.status(responseStatus(e)).json({error:e.message});} });
-  app.get('/api/trading/execution/positions', requireOwnerSession, async (req, res) => { try { const broker=req.query.broker||'kraken', mode=req.query.mode||'paper'; res.json(await execution(`/api/execution/positions?broker=${encodeURIComponent(broker)}&mode=${encodeURIComponent(mode)}`)); } catch(e){res.status(responseStatus(e)).json({error:e.message});} });
-  app.get('/api/trading/execution/orders', requireOwnerSession, async (req, res) => { try { const broker=req.query.broker||'kraken', mode=req.query.mode||'paper'; res.json(await execution(`/api/execution/orders?broker=${encodeURIComponent(broker)}&mode=${encodeURIComponent(mode)}`)); } catch(e){res.status(responseStatus(e)).json({error:e.message});} });
+  function executionQuery(req, defaultBroker = 'kraken') {
+    const broker = String(req.query.broker || defaultBroker).toLowerCase();
+    const mode = String(req.query.mode || (broker === 'public' ? 'live' : 'paper')).toLowerCase();
+    const qs = new URLSearchParams({ broker, mode });
+    if (req.query.accountId) qs.set('accountId', String(req.query.accountId));
+    return { broker, mode, qs };
+  }
+
+  app.get('/api/trading/execution/account-snapshot', requireOwnerSession, async (req, res) => { try { const {qs}=executionQuery(req); res.json(await execution(`/api/execution/account-snapshot?${qs}`)); } catch(e){res.status(responseStatus(e)).json({error:e.message});} });
+  app.get('/api/trading/execution/positions', requireOwnerSession, async (req, res) => { try { const {qs}=executionQuery(req); res.json(await execution(`/api/execution/positions?${qs}`)); } catch(e){res.status(responseStatus(e)).json({error:e.message});} });
+  app.get('/api/trading/execution/orders', requireOwnerSession, async (req, res) => { try { const {qs}=executionQuery(req); res.json(await execution(`/api/execution/orders?${qs}`)); } catch(e){res.status(responseStatus(e)).json({error:e.message});} });
+  app.get('/api/trading/execution/history', requireOwnerSession, async (req, res) => { try { const qs=new URLSearchParams({broker:String(req.query.broker||'public')}); for(const key of ['accountId','start','end','pageSize','nextToken'])if(req.query[key])qs.set(key,String(req.query[key])); res.json(await execution(`/api/execution/history?${qs}`)); } catch(e){res.status(responseStatus(e)).json({error:e.message});} });
+  app.get('/api/trading/execution/options/:symbol/expirations', requireOwnerSession, async (req,res)=>{try{const qs=new URLSearchParams({broker:String(req.query.broker||'public')});if(req.query.accountId)qs.set('accountId',String(req.query.accountId));if(req.query.instrumentType)qs.set('instrumentType',String(req.query.instrumentType));res.json(await execution(`/api/execution/options/${encodeURIComponent(req.params.symbol)}/expirations?${qs}`));}catch(e){res.status(responseStatus(e)).json({error:e.message});}});
+  app.get('/api/trading/execution/options/:symbol/chain', requireOwnerSession, async (req,res)=>{try{if(!req.query.expirationDate)return res.status(400).json({error:'expirationDate is required'});const qs=new URLSearchParams({broker:String(req.query.broker||'public'),expirationDate:String(req.query.expirationDate)});if(req.query.accountId)qs.set('accountId',String(req.query.accountId));if(req.query.instrumentType)qs.set('instrumentType',String(req.query.instrumentType));res.json(await execution(`/api/execution/options/${encodeURIComponent(req.params.symbol)}/chain?${qs}`));}catch(e){res.status(responseStatus(e)).json({error:e.message});}});
+  app.get('/api/trading/execution/orders/:orderId', requireOwnerSession, async (req,res)=>{try{const qs=new URLSearchParams({broker:String(req.query.broker||'public')});if(req.query.accountId)qs.set('accountId',String(req.query.accountId));res.json(await execution(`/api/execution/orders/${encodeURIComponent(req.params.orderId)}?${qs}`));}catch(e){res.status(responseStatus(e)).json({error:e.message});}});
+  app.post('/api/trading/execution/orders/:orderId/cancel', requireOwnerSession, async (req,res)=>{try{res.json(await execution(`/api/execution/orders/${encodeURIComponent(req.params.orderId)}/cancel`,{method:'POST',body:req.body||{broker:'public'}}));}catch(e){res.status(responseStatus(e)).json({error:e.message});}});
+  app.post('/api/trading/execution/orders/:orderId/replace', requireOwnerSession, async (req,res)=>{try{if(req.body?.confirmation!=='CONFIRM_LIVE_TRADE')return res.status(409).json({error:'Explicit live-trade confirmation required.'});res.json(await execution(`/api/execution/orders/${encodeURIComponent(req.params.orderId)}/replace`,{method:'POST',body:req.body}));}catch(e){res.status(responseStatus(e)).json({error:e.message});}});
 
   app.post('/api/trading/hybrid-journal/mcp/call', async (req, res) => {
     try {
