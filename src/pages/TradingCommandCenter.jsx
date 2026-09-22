@@ -102,6 +102,59 @@ function KrakenAccountCard({ mode, snapshot, error, loading, configured, gateway
   );
 }
 
+
+function PublicAccountCard({ snapshot, error, loading, configured, gatewayVerified, onRefresh }) {
+  const connected = Boolean(snapshot?.ok);
+  const account = snapshot?.account || {};
+  const totalValue = money(account.totalAccountValue ?? account.equity);
+  const cash = money(account.cash);
+  const buyingPower = money(account.buyingPower);
+  let label = 'Not checked';
+  let tone = 'border-white/10 bg-white/[.03] text-gray-400';
+  if (loading) label = 'Checking broker…';
+  else if (connected) { label = 'Connected'; tone = 'border-emerald-500/25 bg-emerald-500/[.06] text-emerald-300'; }
+  else if (!gatewayVerified) { label = 'Gateway unavailable'; tone = 'border-red-500/25 bg-red-500/[.06] text-red-300'; }
+  else if (!configured) { label = 'Public not configured'; tone = 'border-amber-500/25 bg-amber-500/[.06] text-amber-300'; }
+  else if (error) { label = 'Account read failed'; tone = 'border-red-500/25 bg-red-500/[.06] text-red-300'; }
+
+  return (
+    <article className={`rounded-2xl border p-4 ${tone}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[10px] uppercase tracking-[.18em] opacity-75">Public live</div>
+          <div className="mt-1 text-base font-semibold text-white">Multi-asset brokerage</div>
+        </div>
+        <span className="rounded-full border border-current/20 px-2.5 py-1 text-[11px] font-semibold">{label}</span>
+      </div>
+
+      {connected ? (
+        <>
+          <div className="mt-5 text-2xl font-bold text-white">{totalValue || cash || 'Account connected'}</div>
+          <div className="mt-1 text-xs text-gray-400 break-words">
+            {[buyingPower ? `Buying power ${buyingPower}` : null, cash ? `Cash ${cash}` : null, account.accountType || null].filter(Boolean).join(' · ')}
+          </div>
+          <div className="mt-4 flex gap-4 text-xs text-gray-400">
+            <span>{collectionSize(snapshot.positions)} positions</span>
+            <span>{collectionSize(snapshot.orders)} open orders</span>
+          </div>
+        </>
+      ) : (
+        <div className="mt-5 min-h-[68px] text-sm text-gray-300">
+          {error || (!configured
+            ? 'Configure the Public Secret Token on the Hybrid Execution service. The token never belongs in Command Center or browser code.'
+            : 'Waiting for the verified Hybrid Execution gateway.')}
+        </div>
+      )}
+
+      <div className="mt-4">
+        <button onClick={onRefresh} disabled={loading || !gatewayVerified || !configured} className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-gray-200 disabled:opacity-35">
+          <RefreshCw className={`mr-1.5 inline h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />Recheck
+        </button>
+      </div>
+    </article>
+  );
+}
+
 export default function TradingCommandCenter() {
   const [status, setStatus] = useState(null);
   const [symbol, setSymbol] = useState('MNQ');
@@ -121,6 +174,9 @@ export default function TradingCommandCenter() {
   const [accountSnapshots, setAccountSnapshots] = useState({ paper: null, live: null });
   const [accountErrors, setAccountErrors] = useState({ paper: '', live: '' });
   const [accountLoading, setAccountLoading] = useState({ paper: false, live: false });
+  const [publicSnapshot, setPublicSnapshot] = useState(null);
+  const [publicError, setPublicError] = useState('');
+  const [publicLoading, setPublicLoading] = useState(false);
   const [listening, setListening] = useState(false);
   const [error, setError] = useState('');
   const recognitionRef = useRef(null);
@@ -152,6 +208,22 @@ export default function TradingCommandCenter() {
     }
   }, [api]);
 
+  const loadPublicSnapshot = useCallback(async () => {
+    setPublicLoading(true);
+    setPublicError('');
+    try {
+      const data = await api('/api/trading/execution/account-snapshot?broker=public&mode=live');
+      setPublicSnapshot(data);
+      return data;
+    } catch (e) {
+      setPublicSnapshot(null);
+      setPublicError(e.message);
+      throw e;
+    } finally {
+      setPublicLoading(false);
+    }
+  }, [api]);
+
   const loadStatus = useCallback(async () => {
     try {
       const next = await api('/api/trading/hybrid-journal/status');
@@ -159,7 +231,8 @@ export default function TradingCommandCenter() {
       const verified = Boolean(next?.executionGateway?.reachable && next?.executionGateway?.verified);
       if (!verified) {
         setAccountSnapshots({ paper: null, live: null });
-        setExecutionMode('paper');
+        setPublicSnapshot(null);
+        setExecutionMode(broker === 'public' ? 'live' : 'paper');
         setOrderPreview(null);
         setExecutionResult(null);
         setLiveConfirmed(false);
@@ -171,17 +244,20 @@ export default function TradingCommandCenter() {
         setAccountSnapshots(current => ({ ...current, live: null }));
         setAccountErrors(current => ({ ...current, live: '' }));
       }
+      if (next?.executionGateway?.public?.liveConfigured) checks.push(loadPublicSnapshot());
+      else { setPublicSnapshot(null); setPublicError(''); }
       await Promise.allSettled(checks);
     } catch (e) {
       setStatus(null);
       setAccountSnapshots({ paper: null, live: null });
-      setExecutionMode('paper');
+      setPublicSnapshot(null);
+      setExecutionMode(broker === 'public' ? 'live' : 'paper');
       setOrderPreview(null);
       setExecutionResult(null);
       setLiveConfirmed(false);
       setError(e.message);
     }
-  }, [api, loadAccountSnapshot]);
+  }, [api, broker, loadAccountSnapshot, loadPublicSnapshot]);
 
   useEffect(() => { loadStatus(); }, [loadStatus]);
   useEffect(() => () => recognitionRef.current?.stop?.(), []);
@@ -199,15 +275,22 @@ export default function TradingCommandCenter() {
   const paperReady = Boolean(accountSnapshots.paper?.ok);
   const liveConfigured = Boolean(status?.executionGateway?.kraken?.liveConfigured);
   const liveReady = Boolean(accountSnapshots.live?.ok);
+  const publicConfigured = Boolean(status?.executionGateway?.public?.liveConfigured);
+  const publicReady = Boolean(publicSnapshot?.ok);
+  const selectedLiveReady = broker === 'public' ? publicReady : broker === 'kraken' ? liveReady : true;
 
   useEffect(() => {
-    if (executionMode !== 'live' || (gatewayReady && liveReady)) return;
+    if (broker === 'public') {
+      if (executionMode !== 'live') setExecutionMode('live');
+      return;
+    }
+    if (broker !== 'kraken' || executionMode !== 'live' || (gatewayReady && liveReady)) return;
     setExecutionMode('paper');
     setOrderPreview(null);
     if (liveTradeAcceptedRef.current) liveTradeAcceptedRef.current = false;
     else setExecutionResult(null);
     setLiveConfirmed(false);
-  }, [executionMode, gatewayReady, liveReady]);
+  }, [broker, executionMode, gatewayReady, liveReady]);
 
   const resetTradeState = () => {
     setOrderPreview(null);
@@ -265,24 +348,28 @@ export default function TradingCommandCenter() {
   };
 
   const executeLive = async () => {
-    if (broker === 'kraken' && (!gatewayReady || !liveReady)) throw new Error('Kraken live account verification was lost. Reconnect and preview the order again.');
-    const payload = broker === 'kraken'
+    if (['kraken', 'public'].includes(broker) && (!gatewayReady || !selectedLiveReady)) {
+      throw new Error(`${broker === 'public' ? 'Public' : 'Kraken'} live account verification was lost. Reconnect and preview the order again.`);
+    }
+    const payload = ['kraken', 'public'].includes(broker)
       ? { broker, intent: orderPreview, confirmation: 'CONFIRM_LIVE_TRADE' }
       : { broker, text: orderText, confirmation: 'CONFIRM_LIVE_TRADE' };
     const data = await post('/api/trading/hybrid-journal/order-execute', payload);
     setExecutionResult(data.result);
-    if (broker === 'kraken') {
+    if (['kraken', 'public'].includes(broker)) {
       liveTradeAcceptedRef.current = true;
       try {
-        await loadAccountSnapshot('live');
+        if (broker === 'public') await loadPublicSnapshot();
+        else await loadAccountSnapshot('live');
       } catch (refreshError) {
-        setError(`Live order accepted, but the account refresh failed: ${refreshError.message}. Do not retry until you verify Kraken open orders.`);
+        setError(`Live order accepted, but the account refresh failed: ${refreshError.message}. Do not retry until you verify the broker's open orders.`);
       }
     }
   };
 
-  const loadKrakenState = async () => {
-    const query = `broker=kraken&mode=${encodeURIComponent(executionMode)}`;
+  const loadBrokerState = async () => {
+    const mode = broker === 'public' ? 'live' : executionMode;
+    const query = `broker=${encodeURIComponent(broker)}&mode=${encodeURIComponent(mode)}`;
     const [p, o] = await Promise.all([
       api(`/api/trading/execution/positions?${query}`),
       api(`/api/trading/execution/orders?${query}`),
@@ -298,13 +385,14 @@ export default function TradingCommandCenter() {
           <div>
             <div className="flex items-center gap-2 text-purple-300 text-xs font-semibold uppercase tracking-wider"><Zap className="w-4 h-4" /> Hybrid Trading OS</div>
             <h1 className="mt-2 text-2xl font-bold text-white">Trading Command Center</h1>
-            <p className="mt-1 text-sm text-gray-400 max-w-3xl">One operating surface for TradingView intelligence, Hybrid Journal, Kraken, cTrader and futures execution. Orders are normalized into a shared intent before they ever reach a broker.</p>
+            <p className="mt-1 text-sm text-gray-400 max-w-3xl">One operating surface for TradingView intelligence, Hybrid Journal, Public, Kraken, cTrader and futures execution. Orders are normalized into a shared intent before they ever reach a broker.</p>
           </div>
           <div className="flex flex-wrap gap-2 items-center">
             <span className={`px-3 py-1.5 rounded-full text-xs ${gatewayReady ? 'bg-green-500/15 text-green-300' : 'bg-red-500/15 text-red-300'}`}>{gatewayReady ? 'Execution Gateway verified' : 'Gateway not verified'}</span>
             <span className={`px-3 py-1.5 rounded-full text-xs ${connected ? 'bg-green-500/15 text-green-300' : 'bg-yellow-500/15 text-yellow-300'}`}>{connected ? 'Journal MCP connected' : 'Journal MCP needs config'}</span>
             <span className={`px-3 py-1.5 rounded-full text-xs ${paperReady ? 'bg-cyan-500/15 text-cyan-300' : 'bg-white/10 text-gray-400'}`}>{paperReady ? 'Kraken paper ready' : 'Paper unchecked'}</span>
             <span className={`px-3 py-1.5 rounded-full text-xs ${liveReady ? 'bg-emerald-500/15 text-emerald-300' : liveConfigured ? 'bg-amber-500/15 text-amber-300' : 'bg-white/10 text-gray-400'}`}>{liveReady ? 'Kraken live connected' : liveConfigured ? 'Live auth needs check' : 'Live key needed'}</span>
+            <span className={`px-3 py-1.5 rounded-full text-xs ${publicReady ? 'bg-emerald-500/15 text-emerald-300' : publicConfigured ? 'bg-amber-500/15 text-amber-300' : 'bg-white/10 text-gray-400'}`}>{publicReady ? 'Public live connected' : publicConfigured ? 'Public auth needs check' : 'Public not configured'}</span>
             <span className={`px-3 py-1.5 rounded-full text-xs ${fallback ? 'bg-cyan-500/15 text-cyan-300' : 'bg-white/10 text-gray-400'}`}>{fallback ? 'REST fallback ready' : 'Fallback off'}</span>
             <button onClick={() => run('connections', loadStatus)} className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300"><RefreshCw className={`w-4 h-4 ${busy === 'connections' ? 'animate-spin' : ''}`} /></button>
           </div>
@@ -345,14 +433,15 @@ export default function TradingCommandCenter() {
       <section className="rounded-2xl border border-cyan-500/15 bg-white/[0.025] p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2 text-white font-semibold"><WalletCards className="h-5 w-5 text-cyan-300" />Kraken accounts</div>
-            <p className="mt-1 text-sm text-gray-500">Paper and funded live are checked independently. “Connected” means a broker account read succeeded—not merely that a server answered.</p>
+            <div className="flex items-center gap-2 text-white font-semibold"><WalletCards className="h-5 w-5 text-cyan-300" />Broker accounts</div>
+            <p className="mt-1 text-sm text-gray-500">Kraken paper/live and Public live are checked independently. “Connected” means a broker account read succeeded—not merely that a server answered.</p>
           </div>
-          <button onClick={() => run('accounts', async () => { await Promise.allSettled([loadAccountSnapshot('paper'), ...(liveConfigured ? [loadAccountSnapshot('live')] : [])]); })} disabled={!gatewayReady || busy === 'accounts'} className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100 disabled:opacity-35"><RefreshCw className={`mr-1.5 inline h-3.5 w-3.5 ${busy === 'accounts' ? 'animate-spin' : ''}`} />Refresh both</button>
+          <button onClick={() => run('accounts', async () => { await Promise.allSettled([loadAccountSnapshot('paper'), ...(liveConfigured ? [loadAccountSnapshot('live')] : []), ...(publicConfigured ? [loadPublicSnapshot()] : [])]); })} disabled={!gatewayReady || busy === 'accounts'} className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100 disabled:opacity-35"><RefreshCw className={`mr-1.5 inline h-3.5 w-3.5 ${busy === 'accounts' ? 'animate-spin' : ''}`} />Refresh accounts</button>
         </div>
-        <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
           <KrakenAccountCard mode="paper" snapshot={accountSnapshots.paper} error={accountErrors.paper} loading={accountLoading.paper} configured gatewayVerified={gatewayReady} onRefresh={() => loadAccountSnapshot('paper').catch(() => {})} />
           <KrakenAccountCard mode="live" snapshot={accountSnapshots.live} error={accountErrors.live} loading={accountLoading.live} configured={liveConfigured} gatewayVerified={gatewayReady} onRefresh={() => loadAccountSnapshot('live').catch(() => {})} />
+          <PublicAccountCard snapshot={publicSnapshot} error={publicError} loading={publicLoading} configured={publicConfigured} gatewayVerified={gatewayReady} onRefresh={() => loadPublicSnapshot().catch(() => {})} />
         </div>
       </section>
 
@@ -367,22 +456,23 @@ export default function TradingCommandCenter() {
 
         <div className="mt-4 flex flex-wrap gap-3">
           <label className="text-xs text-gray-500 flex flex-col gap-1">Execution rail
-            <select value={broker} onChange={e => { setBroker(e.target.value); resetTradeState(); }} className="px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-white">
+            <select value={broker} onChange={e => { const next=e.target.value; setBroker(next); if(next==='public')setExecutionMode('live'); resetTradeState(); }} className="px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-white">
               <option value="kraken">Kraken</option>
+              <option value="public">Public — Stocks / ETFs / Options / Crypto</option>
               <option value="hybrid-journal">Hybrid Journal / Futures</option>
             </select>
           </label>
           <label className="text-xs text-gray-500 flex flex-col gap-1">Mode
             <select value={executionMode} onChange={e => { setExecutionMode(e.target.value); resetTradeState(); }} disabled={broker !== 'kraken'} className="px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-white disabled:opacity-50">
-              <option value="paper">Paper</option>
-              <option value="live" disabled={!liveReady}>Live{liveReady ? '' : ' (connect account first)'}</option>
+              {broker !== 'public' && <option value="paper">Paper</option>}
+              <option value="live" disabled={broker === 'kraken' && !liveReady}>Live{broker === 'kraken' && !liveReady ? ' (connect account first)' : ''}</option>
             </select>
           </label>
-          {broker === 'kraken' && <button disabled={!gatewayReady || (executionMode === 'live' && !liveReady)} onClick={() => run('account-state', loadKrakenState)} className="self-end px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-35 text-sm text-gray-300 flex items-center gap-2"><WalletCards className="w-4 h-4" /> Positions & orders</button>}
+          {['kraken','public'].includes(broker) && <button disabled={!gatewayReady || (executionMode === 'live' && !selectedLiveReady)} onClick={() => run('account-state', loadBrokerState)} className="self-end px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-35 text-sm text-gray-300 flex items-center gap-2"><WalletCards className="w-4 h-4" /> Positions & orders</button>}
         </div>
 
         <div className="mt-4 relative">
-          <textarea value={orderText} onChange={e => { setOrderText(e.target.value); resetTradeState(); }} rows={3} placeholder={broker === 'kraken' ? 'Example: Buy $500 of Bitcoin on Kraken, stop loss at 62000, target at 70000' : 'Example: Buy 1 MNQ with stop loss ...'} className="w-full p-3 pr-14 rounded-xl bg-black/30 border border-white/10 text-white placeholder-gray-600 outline-none focus:border-purple-500" />
+          <textarea value={orderText} onChange={e => { setOrderText(e.target.value); resetTradeState(); }} rows={3} placeholder={broker === 'kraken' ? 'Example: Buy $500 of Bitcoin on Kraken, stop loss at 62000, target at 70000' : broker === 'public' ? 'Example: Buy 5 AAPL on Public at market' : 'Example: Buy 1 MNQ with stop loss ...'} className="w-full p-3 pr-14 rounded-xl bg-black/30 border border-white/10 text-white placeholder-gray-600 outline-none focus:border-purple-500" />
           <button onClick={startVoice} title="Talk to trade" className={`absolute right-3 top-3 p-2 rounded-lg ${listening ? 'bg-red-500/20 text-red-300' : 'bg-white/5 text-cyan-300 hover:bg-white/10'}`}>
             {listening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
           </button>
@@ -390,20 +480,20 @@ export default function TradingCommandCenter() {
         {listening && <div className="mt-2 text-xs text-cyan-300">Listening… say the complete trade command.</div>}
 
         <div className="mt-3 flex flex-wrap gap-3 items-center">
-          <button disabled={!orderText.trim() || busy === 'preview' || (broker === 'kraken' && (!gatewayReady || (executionMode === 'live' && !liveReady)))} onClick={() => run('preview', previewOrder)} className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white text-sm flex items-center gap-2"><Target className="w-4 h-4" /> Preview order</button>
+          <button disabled={!orderText.trim() || busy === 'preview' || (['kraken','public'].includes(broker) && (!gatewayReady || (executionMode === 'live' && !selectedLiveReady)))} onClick={() => run('preview', previewOrder)} className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white text-sm flex items-center gap-2"><Target className="w-4 h-4" /> Preview order</button>
 
           {orderPreview && broker === 'kraken' && executionMode === 'paper' &&
             <button disabled={busy === 'paper'} onClick={() => run('paper', executePaper)} className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white text-sm">Execute paper trade</button>}
 
           {orderPreview && executionMode === 'live' && <label className="flex items-center gap-2 text-sm text-gray-300"><input type="checkbox" checked={liveConfirmed} onChange={e => setLiveConfirmed(e.target.checked)} /> I reviewed this exact order and want it sent live.</label>}
-          {orderPreview && executionMode === 'live' && <button disabled={!liveConfirmed || !gatewayReady || !liveReady || busy === 'execute'} onClick={() => run('execute', executeLive)} className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-30 text-white text-sm">Execute live trade</button>}
+          {orderPreview && executionMode === 'live' && <button disabled={!liveConfirmed || !gatewayReady || !selectedLiveReady || busy === 'execute'} onClick={() => run('execute', executeLive)} className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-30 text-white text-sm">Execute live trade</button>}
         </div>
 
         <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
           <ResultCard title="Order preview — NOT LIVE" result={orderPreview} />
           <ResultCard title="Execution result" result={executionResult} />
-          <ResultCard title={`Kraken ${executionMode} positions`} result={positions} />
-          <ResultCard title={`Kraken ${executionMode} orders`} result={orders} />
+          <ResultCard title={`${broker === 'public' ? 'Public' : broker === 'kraken' ? 'Kraken' : 'Broker'} ${executionMode} positions`} result={positions} />
+          <ResultCard title={`${broker === 'public' ? 'Public' : broker === 'kraken' ? 'Kraken' : 'Broker'} ${executionMode} orders`} result={orders} />
         </div>
         {executionResult && <div className="mt-3 text-xs text-green-300 flex items-center gap-1"><CheckCircle2 className="w-4 h-4" /> Execution returned successfully. Verify the broker/account state above before issuing a follow-up command.</div>}
       </section>
