@@ -32,7 +32,43 @@ const PORTFOLIO_SIGNALS = {
   },
   'khawajamuntazir22': {
     motion: 'Grow',
-    signal: 'Fresh production and one of the clearest active growth signals in the current book. Identify the acquisition motion and repeat it.',
+    currentMonthAttributedTrials: 4,
+    recentWeeklyAttributedTrials: [1, 3],
+    lifetimeTrialRankMin: 130,
+    lifetimeTrialRankMax: 133,
+    reportAsOf: '2026-09-23',
+    reportScope: 'Expand / Post-100 Credit attribution extract',
+    signal: 'Sep 23 attribution report shows 4 MTD trials and weekly acceleration from 1 trial (Sep 7–13) to 3 trials (Sep 14–20). Identify the acquisition motion and repeat it while momentum is fresh.',
+  },
+  'inspired johann': {
+    motion: 'Grow',
+    currentMonthAttributedTrials: 1,
+    recentWeeklyAttributedTrials: [1],
+    lifetimeTrialRankMin: 108,
+    lifetimeTrialRankMax: 108,
+    reportAsOf: '2026-09-23',
+    reportScope: 'Expand / Post-100 Credit attribution extract',
+    signal: 'One attributed trial in Sep 14–20. Identify what created the activity and whether it can repeat.',
+  },
+  'inspiredjohann': {
+    motion: 'Grow',
+    currentMonthAttributedTrials: 1,
+    recentWeeklyAttributedTrials: [1],
+    lifetimeTrialRankMin: 108,
+    lifetimeTrialRankMax: 108,
+    reportAsOf: '2026-09-23',
+    reportScope: 'Expand / Post-100 Credit attribution extract',
+    signal: 'One attributed trial in Sep 14–20. Identify what created the activity and whether it can repeat.',
+  },
+  'ahmmad': {
+    motion: 'Grow',
+    currentMonthAttributedTrials: 1,
+    recentWeeklyAttributedTrials: [1],
+    lifetimeTrialRankMin: 104,
+    lifetimeTrialRankMax: 104,
+    reportAsOf: '2026-09-23',
+    reportScope: 'Expand / Post-100 Credit attribution extract',
+    signal: 'One attributed trial in the current week (Sep 21–27). Capture what triggered the new activity and reinforce it quickly.',
   },
   'jono catliff': {
     motion: 'Grow / Content',
@@ -149,6 +185,7 @@ Rules:
 - Company CRM data must stay staff-scoped.
 - The 398-affiliate dataset is benchmark intelligence; Jamaur's assigned book is the operational focus.
 - For performance changes, avoid claiming causation without evidence.
+- Source guard for Sep 23, 2026: the new attribution extract contains 6 current-month trials across 3 producing Expand / Post-100 Credit affiliates (Khawajamuntazir22 4, Inspired Johann 1, Ahmmad 1). It is a narrow producer report, not a full-book snapshot. Never overwrite or directly compare the older broad 131 MTD figure with 6. Full-book commit-vs-pace remains pending until a current comparable full-book source and target are available.
 
 Client timezone: ${clientTimeZone || 'America/New_York'}
 
