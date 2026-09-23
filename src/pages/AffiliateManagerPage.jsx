@@ -52,6 +52,7 @@ const WORK_LINKS = [
   ['Gemini','https://gemini.google.com/gem/a3f972a495f7','Google Gemini AI','🌟'],
   ['Google Calendar','https://calendar.google.com/calendar/u/0/r?cid=jamaur.johnson@gohighlevel.com&pli=1','Partner calls, internal meetings and events','📅'],
   ['Weekly Affiliate Q&A','https://speakwith.us/affiliate-qa-page752776','Share this registration page with affiliates for the weekly sessions','🎙️'],
+  ['Jamaur’s Room','https://sqr.co/JamaursRoom/','Direct meeting room for affiliate, partner and internal meetings','🎥'],
   ['Slack','https://app.slack.com/client/E098GV8SRC2/GMBP6HAPM','GHL Slack workspace','💬'],
   ['Knowledgebase','https://help.gohighlevel.com/support/home','HighLevel Help Center','📚'],
   ['ClickUp','https://app.clickup.com','Project management','✅'],
