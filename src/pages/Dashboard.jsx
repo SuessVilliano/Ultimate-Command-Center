@@ -360,57 +360,123 @@ function AIMemoryCard() {
 }
 
 // Google Calendar Widget Component
+// Prefer Connector Gateway (Composio) — same live calendar Integrations already shows.
+// Direct Google OAuth remains an optional fallback only.
+function normalizeCalendarEvent(event) {
+  const startRaw = event?.start?.dateTime || event?.start?.date || event?.start || event?.start_time || event?.date_start || '';
+  const endRaw = event?.end?.dateTime || event?.end?.date || event?.end || event?.end_time || '';
+  const isAllDay = Boolean((event?.start?.date && !event?.start?.dateTime) || event?.isAllDay);
+  let date = event?.date || '';
+  let time = event?.time || '';
+  if (startRaw) {
+    const parsed = new Date(startRaw);
+    if (!Number.isNaN(parsed.getTime())) {
+      date = parsed.toLocaleDateString();
+      time = isAllDay ? '' : parsed.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    } else if (!date) {
+      date = String(startRaw).slice(0, 10);
+    }
+  }
+  return {
+    id: event?.id,
+    title: event?.title || event?.summary || event?.name || '(Untitled)',
+    date,
+    time,
+    isAllDay,
+    location: event?.location || '',
+    start: startRaw,
+    end: endRaw,
+  };
+}
+
 function GoogleCalendarWidget() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [source, setSource] = useState('');
   const [accessToken, setAccessToken] = useState(localStorage.getItem('google_access_token'));
 
   useEffect(() => {
-    if (accessToken) {
-      fetchCalendarEvents();
-    } else {
-      // Try to get cached events
-      fetchCachedEvents();
-    }
+    loadUpcomingEvents();
   }, [accessToken]);
 
-  const fetchCalendarEvents = async () => {
-    if (!accessToken) return;
+  const loadUpcomingEvents = async () => {
     setLoading(true);
+    try {
+      const gatewayEvents = await fetchGatewayEvents();
+      if (gatewayEvents.length) {
+        setEvents(gatewayEvents);
+        setSource('gateway');
+        setLoading(false);
+        return;
+      }
+      if (accessToken) {
+        const direct = await fetchCalendarEvents();
+        if (direct.length) {
+          setEvents(direct);
+          setSource('direct');
+          setLoading(false);
+          return;
+        }
+      }
+      const cached = await fetchCachedEvents();
+      setEvents(cached);
+      setSource(cached.length ? 'cache' : '');
+    } catch (e) {
+      setEvents([]);
+      setSource('');
+    }
+    setLoading(false);
+  };
+
+  const fetchGatewayEvents = async () => {
+    try {
+      const now = new Date();
+      const end = new Date(now.getTime() + 48 * 3600 * 1000);
+      const url = `${AI_SERVER_URL}/api/connectors/calendar/events?start=${encodeURIComponent(now.toISOString())}&end=${encodeURIComponent(end.toISOString())}&limit=50`;
+      const response = await fetch(url, { cache: 'no-store' });
+      if (!response.ok) return [];
+      const data = await response.json();
+      return (data.events || []).map(normalizeCalendarEvent);
+    } catch (e) {
+      return [];
+    }
+  };
+
+  const fetchCalendarEvents = async () => {
+    if (!accessToken) return [];
     try {
       const response = await fetch(`${AI_SERVER_URL}/api/calendar/fetch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ accessToken })
       });
-      if (response.ok) {
-        const data = await response.json();
-        setEvents(data.events || []);
-      }
+      if (!response.ok) return [];
+      const data = await response.json();
+      return (data.events || []).map(normalizeCalendarEvent);
     } catch (e) {
-      fetchCachedEvents();
+      return [];
     }
-    setLoading(false);
   };
 
   const fetchCachedEvents = async () => {
     try {
       const response = await fetch(`${AI_SERVER_URL}/api/calendar/upcoming?hours=48`);
-      if (response.ok) {
-        const data = await response.json();
-        setEvents(data.events || []);
-      }
-    } catch (e) {}
+      if (!response.ok) return [];
+      const data = await response.json();
+      return (data.events || []).map(normalizeCalendarEvent);
+    } catch (e) {
+      return [];
+    }
   };
 
   const handleGoogleAuth = () => {
-    // Google OAuth client-side flow
-    const clientId = ''; // User needs to add their client ID
+    // Legacy direct OAuth. Prefer Connector Gateway on Integrations.
+    const clientId = '';
     const redirectUri = window.location.origin + '/auth/callback';
     const scope = 'https://www.googleapis.com/auth/calendar.readonly';
 
     if (!clientId) {
-      alert('Google Calendar Setup Required:\n\n1. Create a project at console.cloud.google.com\n2. Enable Google Calendar API\n3. Create OAuth credentials\n4. Add GOOGLE_CLIENT_ID to settings\n\nFor now, you can manually sync events.');
+      alert('Google Calendar is available through the Connector Gateway on Integrations.\n\nDirect OAuth (GOOGLE_CLIENT_ID) is optional and not required when the gateway is live.\n\nOpen Integrations to confirm Calendar shows live, then hit Refresh here.');
       return;
     }
 
@@ -440,6 +506,8 @@ function GoogleCalendarWidget() {
     return event.time || '';
   };
 
+  const connectedViaGateway = source === 'gateway' || events.length > 0;
+
   return (
     <div className="card p-6">
       <div className="flex items-center justify-between mb-4">
@@ -448,10 +516,10 @@ function GoogleCalendarWidget() {
           Upcoming Events
         </h3>
         <button
-          onClick={accessToken ? fetchCalendarEvents : handleGoogleAuth}
+          onClick={connectedViaGateway || accessToken ? loadUpcomingEvents : handleGoogleAuth}
           className="text-xs px-2 py-1 rounded bg-white/10 text-gray-400 hover:bg-white/20"
         >
-          {accessToken ? 'Refresh' : 'Connect'}
+          {connectedViaGateway || accessToken ? 'Refresh' : 'Connect'}
         </button>
       </div>
 
@@ -463,10 +531,10 @@ function GoogleCalendarWidget() {
         <div className="text-center py-4">
           <Calendar className="w-8 h-8 text-gray-600 mx-auto mb-2" />
           <p className="text-sm text-gray-400">
-            {accessToken ? 'No upcoming events' : 'Connect Google Calendar'}
+            {source === 'gateway' || accessToken ? 'No upcoming events' : 'Connect Google Calendar'}
           </p>
-          {!accessToken && (
-            <p className="text-xs text-gray-500 mt-1">liv8ent@gmail.com</p>
+          {!accessToken && source !== 'gateway' && (
+            <p className="text-xs text-gray-500 mt-1">liv8ent@gmail.com · or use Integrations gateway</p>
           )}
         </div>
       ) : (
@@ -490,11 +558,15 @@ function GoogleCalendarWidget() {
               </div>
             </div>
           ))}
+          {source === 'gateway' && (
+            <p className="text-[10px] text-gray-600 pt-1">via Connector Gateway</p>
+          )}
         </div>
       )}
     </div>
   );
 }
+
 
 // Default schedule template for a high-performer with ADHD
 const DEFAULT_SCHEDULE = [
