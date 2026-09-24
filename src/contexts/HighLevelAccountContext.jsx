@@ -5,8 +5,12 @@ const HighLevelAccountContext = createContext(null);
 
 export function HighLevelAccountProvider({ children }) {
   const [account, setAccount] = useState(() => {
-    try { return localStorage.getItem(STORAGE_KEY) === 'company' ? 'company' : 'personal'; }
-    catch { return 'personal'; }
+    // Default to company (live My Book) — personal GHL PIT lacks conversation scopes.
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved === 'personal' || saved === 'company') return saved;
+      return 'company';
+    } catch { return 'company'; }
   });
 
   useEffect(() => {
@@ -25,7 +29,7 @@ export function HighLevelAccountProvider({ children }) {
 export function useHighLevelAccount() {
   const value = useContext(HighLevelAccountContext);
   if (value) return value;
-  return { account: 'personal', isCompany: false, setAccount: () => {} };
+  return { account: 'company', isCompany: true, setAccount: () => {} };
 }
 
 export function HighLevelAccountSwitch({ compact = false }) {

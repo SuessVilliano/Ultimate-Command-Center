@@ -2882,10 +2882,12 @@ app.post('/api/webhook/test', async (req, res) => {
 
 // ============================================
 // CONVERSATION MEMORY ENDPOINTS
+// (Under /api/memory/conversations so they do NOT shadow
+//  /api/conversations/unified and /api/conversations/send from connected-ops.)
 // ============================================
 
 // Get conversation list
-app.get('/api/conversations', (req, res) => {
+app.get('/api/memory/conversations', (req, res) => {
   try {
     const { userId, limit } = req.query;
     const conversations = memory.getConversationList(userId || 'default', parseInt(limit) || 20);
@@ -2896,7 +2898,7 @@ app.get('/api/conversations', (req, res) => {
 });
 
 // Get conversation history
-app.get('/api/conversations/:conversationId', (req, res) => {
+app.get('/api/memory/conversations/:conversationId', (req, res) => {
   try {
     const { limit } = req.query;
     const messages = memory.getConversationHistory(req.params.conversationId, parseInt(limit) || 50);
@@ -2907,7 +2909,7 @@ app.get('/api/conversations/:conversationId', (req, res) => {
 });
 
 // Create new conversation
-app.post('/api/conversations', (req, res) => {
+app.post('/api/memory/conversations', (req, res) => {
   try {
     const { userId, title } = req.body;
     const id = memory.createConversation(userId || 'default', title);
@@ -2918,7 +2920,7 @@ app.post('/api/conversations', (req, res) => {
 });
 
 // Update conversation
-app.put('/api/conversations/:conversationId', (req, res) => {
+app.put('/api/memory/conversations/:conversationId', (req, res) => {
   try {
     const { title, summary } = req.body;
     memory.updateConversation(req.params.conversationId, { title, summary });

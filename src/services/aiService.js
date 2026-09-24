@@ -668,7 +668,7 @@ Respond as their trusted Commander. Be helpful, proactive, and focused on helpin
   async getConversations() {
     if (!this.backendConnected) return [];
     try {
-      const response = await fetch(`${BACKEND_URL}/api/conversations`);
+      const response = await fetch(`${BACKEND_URL}/api/memory/conversations`);
       if (response.ok) {
         const data = await response.json();
         return data.conversations || [];
@@ -681,7 +681,7 @@ Respond as their trusted Commander. Be helpful, proactive, and focused on helpin
   async loadConversation(conversationId) {
     if (!this.backendConnected) return null;
     try {
-      const response = await fetch(`${BACKEND_URL}/api/conversations/${conversationId}`);
+      const response = await fetch(`${BACKEND_URL}/api/memory/conversations/${conversationId}`);
       if (response.ok) {
         const data = await response.json();
         this.conversationId = conversationId;
@@ -695,7 +695,7 @@ Respond as their trusted Commander. Be helpful, proactive, and focused on helpin
   async startNewConversation(title = null) {
     if (!this.backendConnected) return null;
     try {
-      const response = await fetch(`${BACKEND_URL}/api/conversations`, {
+      const response = await fetch(`${BACKEND_URL}/api/memory/conversations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title })
