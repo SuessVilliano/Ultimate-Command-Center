@@ -4521,15 +4521,7 @@ app.get('/api/automation/rules', (req, res) => {
   }
 });
 
-// Calendar endpoints
-app.get('/api/calendar/today', (req, res) => {
-  try {
-    const events = calendarService.getTodaysEvents();
-    res.json({ events: events.map(calendarService.formatEventForDisplay) });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+// Calendar /today+/upcoming live earlier with Connector Gateway fallback.
 
 app.get('/api/calendar/summary', (req, res) => {
   try {
