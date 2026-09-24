@@ -2550,22 +2550,55 @@ app.get('/api/calendar/events', (req, res) => {
   }
 });
 
+// Prefer Connector Gateway when local calendar cache/direct OAuth is empty.
+async function fetchConnectorCalendarEvents({ start, end, limit = 100 } = {}) {
+  try {
+    const qs = new URLSearchParams({
+      start: (start || new Date()).toISOString(),
+      end: (end || new Date(Date.now() + 48 * 3600 * 1000)).toISOString(),
+      limit: String(limit),
+    });
+    const response = await fetch(`http://localhost:${PORT}/api/connectors/calendar/events?${qs}`);
+    if (!response.ok) return [];
+    const data = await response.json();
+    return Array.isArray(data.events) ? data.events : [];
+  } catch {
+    return [];
+  }
+}
+
 // Get today's events
-app.get('/api/calendar/today', (req, res) => {
+app.get('/api/calendar/today', async (req, res) => {
   try {
     const events = calendarService.getTodaysEvents();
-    res.json({ events: events.map(e => calendarService.formatEventForDisplay(e)) });
+    let formatted = events.map(e => calendarService.formatEventForDisplay(e));
+    if (!formatted.length) {
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      const end = new Date();
+      end.setHours(23, 59, 59, 999);
+      const connectorEvents = await fetchConnectorCalendarEvents({ start, end, limit: 100 });
+      formatted = connectorEvents.map(e => calendarService.formatEventForDisplay(e));
+    }
+    res.json({ events: formatted });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
 // Get upcoming events (next N hours)
-app.get('/api/calendar/upcoming', (req, res) => {
+app.get('/api/calendar/upcoming', async (req, res) => {
   try {
     const hours = parseInt(req.query.hours) || 24;
     const events = calendarService.getUpcomingEvents(hours);
-    res.json({ events: events.map(e => calendarService.formatEventForDisplay(e)) });
+    let formatted = events.map(e => calendarService.formatEventForDisplay(e));
+    if (!formatted.length) {
+      const start = new Date();
+      const end = new Date(start.getTime() + hours * 3600 * 1000);
+      const connectorEvents = await fetchConnectorCalendarEvents({ start, end, limit: 150 });
+      formatted = connectorEvents.map(e => calendarService.formatEventForDisplay(e));
+    }
+    res.json({ events: formatted });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
