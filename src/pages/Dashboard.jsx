@@ -402,6 +402,15 @@ function GoogleCalendarWidget() {
   const loadUpcomingEvents = async () => {
     setLoading(true);
     try {
+      // Prefer /api/calendar/upcoming — server already falls back to Connector Gateway
+      // and returns Dashboard-ready { title, date, time } fields.
+      const cached = await fetchCachedEvents();
+      if (cached.length) {
+        setEvents(cached);
+        setSource('cache');
+        setLoading(false);
+        return;
+      }
       const gatewayEvents = await fetchGatewayEvents();
       if (gatewayEvents.length) {
         setEvents(gatewayEvents);
@@ -418,9 +427,8 @@ function GoogleCalendarWidget() {
           return;
         }
       }
-      const cached = await fetchCachedEvents();
-      setEvents(cached);
-      setSource(cached.length ? 'cache' : '');
+      setEvents([]);
+      setSource('');
     } catch (e) {
       setEvents([]);
       setSource('');
@@ -506,8 +514,7 @@ function GoogleCalendarWidget() {
     return event.time || '';
   };
 
-  const connectedViaGateway = source === 'gateway' || events.length > 0;
-
+  // Gateway/upcoming is the live path — never gate the card on direct Google OAuth.
   return (
     <div className="card p-6">
       <div className="flex items-center justify-between mb-4">
@@ -516,10 +523,10 @@ function GoogleCalendarWidget() {
           Upcoming Events
         </h3>
         <button
-          onClick={connectedViaGateway || accessToken ? loadUpcomingEvents : handleGoogleAuth}
+          onClick={loadUpcomingEvents}
           className="text-xs px-2 py-1 rounded bg-white/10 text-gray-400 hover:bg-white/20"
         >
-          {connectedViaGateway || accessToken ? 'Refresh' : 'Connect'}
+          Refresh
         </button>
       </div>
 
@@ -531,10 +538,10 @@ function GoogleCalendarWidget() {
         <div className="text-center py-4">
           <Calendar className="w-8 h-8 text-gray-600 mx-auto mb-2" />
           <p className="text-sm text-gray-400">
-            {source === 'gateway' || accessToken ? 'No upcoming events' : 'Connect Google Calendar'}
+            {source === 'gateway' || source === 'cache' || accessToken ? 'No upcoming events' : 'Calendar syncing…'}
           </p>
-          {!accessToken && source !== 'gateway' && (
-            <p className="text-xs text-gray-500 mt-1">liv8ent@gmail.com · or use Integrations gateway</p>
+          {!accessToken && source !== 'gateway' && source !== 'cache' && (
+            <p className="text-xs text-gray-500 mt-1">Uses Connector Gateway · liv8ent@gmail.com</p>
           )}
         </div>
       ) : (
