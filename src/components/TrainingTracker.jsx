@@ -4,12 +4,28 @@ import { useTheme } from '../context/ThemeContext';
 import * as trainingSvc from '../services/trainingService';
 
 const STRENGTH_DAYS = [
-  { id:'day1', title:'Day 1 · Upper Pull + Stability', exercises:[
-    ['Pull-Ups','4 × 8–12','Weighted if clean reps are available'],['Lat Pulldown','4 × 10','Alternate wide and neutral grip'],['Seated Cable Row','4 × 10','Controlled squeeze'],['Seated Dumbbell Shoulder Press','4 × 8–12','Back supported'],['Face Pulls','4 × 12','Upper-back / rear-delt stability'],['Hammer Curls','4 × 10','No swinging'],['Plank Shoulder Taps','3 × 30 sec','Slow hips, core braced']] },
-  { id:'day2', title:'Day 2 · Lower Body + Core', exercises:[
-    ['Leg Press','4 × 12','Feet high, shoulder-width'],['Seated Leg Curls','4 × 12','Controlled eccentric'],['DB Bulgarian Split Squats','4 × 10 / leg','Stable torso'],['Calf Raises','4 × 15','Seated + standing'],['Cable / Hanging Leg Raises','4 × 12','No swinging'],['Russian Twists','4 × 15 / side','Feet down for support'],['Dead Bug','3 × 12','Keep low back controlled']] },
-  { id:'day3', title:'Day 3 · Upper Push + Stability', exercises:[
-    ['Dumbbell Bench Press','4 × 10','Controlled reps, no excessive arch'],['Incline Dumbbell Press','4 × 10','Smooth tempo'],['Cable Lateral Raises','4 × 12','Lead with elbows'],['Close-Grip Lat Pulldown','4 × 10','Back stability volume'],['Dips','4 × 10','Assisted or weighted as needed'],['DB Triceps Extensions','4 × 12','Controlled stretch'],['Swiss Ball Rollouts','3 × 15','Core braced']] },
+  { id:'day1', title:'Day 1 · Upper Body', exercises:[
+    ['Dumbbell Bench Press','3 × 8–15','Bench or floor. Smooth, controlled reps.'],
+    ['One-Arm Dumbbell Row','3 × 8–15 / side','Use the bench for support.'],
+    ['Seated Dumbbell Shoulder Press','3 × 8–15','Back supported when possible.'],
+    ['Band Lat Pulldown','3 × 10–15','Door anchor or pull-up bar anchor.'],
+    ['Band Face Pull','3 × 12–20','Pull toward eye level; squeeze upper back.'],
+    ['Hammer Curl','3 × 10–15','Dumbbells or band.'],
+    ['Triceps Extension / Pressdown','3 × 10–15','Band or dumbbell variation.']] },
+  { id:'day2', title:'Day 2 · Midbody + Core', exercises:[
+    ['Pallof Press','3 × 10–15 / side','Band anchored around chest height.'],
+    ['Dead Bug','3 × 8–12 / side','Slow reps; keep torso controlled.'],
+    ['Plank','3 × 30–60 sec','Stop before form breaks.'],
+    ['Russian Twist','3 × 12–20 / side','Bodyweight or light dumbbell.'],
+    ['Suitcase Hold / Carry','3 × 30–45 sec / side','One dumbbell; stay tall and square.'],
+    ['Glute Bridge','3 × 12–20','Bodyweight, band, or dumbbell resistance.']] },
+  { id:'day3', title:'Day 3 · Legs', exercises:[
+    ['Goblet Squat','3 × 10–15','Dumbbell at chest; controlled depth.'],
+    ['Bulgarian Split Squat','3 × 8–12 / leg','Bench-supported setup.'],
+    ['Bench Step-Up','3 × 8–12 / leg','Drive through the working leg.'],
+    ['Hip Thrust / Glute Bridge','3 × 10–15','Bench optional; dumbbell or band resistance.'],
+    ['Band Hamstring Curl','3 × 12–20','Anchor low; slow return.'],
+    ['Calf Raise','3 × 15–25','Pause at the top.']] },
 ];
 
 const BIKE_PLAN = [
@@ -26,6 +42,8 @@ export default function TrainingTracker() {
   const [entries, setEntries] = useState([]);
   const [stats, setStats] = useState({ strengthSessions:0, rides:0, bikeMiles:0, bikeMinutes:0, avgRideSpeed:0, longestRide:0, strengthCompletionPct:0 });
   const [strengthData, setStrengthData] = useState({});
+  const [sessionDate, setSessionDate] = useState(() => new Date().toLocaleDateString('en-CA'));
+  const [sessionNotes, setSessionNotes] = useState('');
   const [ride, setRide] = useState({ type:'base', duration:'', distance:'', avgSpeed:'', rpe:'', notes:'' });
   const [syncState, setSyncState] = useState('loading');
 
@@ -47,14 +65,17 @@ export default function TrainingTracker() {
   const saveStrength = async () => {
     const completed = activeDay.exercises.filter((_, i) => strengthData[i]?.done).length;
     const now = Date.now();
+    const performedAt = new Date(`${sessionDate}T12:00:00`).toISOString();
     const item = {
-      id:`${now}-strength`, clientId:`${now}-strength`, type:'strength', date:new Date().toISOString(),
+      id:`${now}-strength`, clientId:`${now}-strength`, type:'strength', date:performedAt,
       programId:activeDay.id, dayId:activeDay.id, title:activeDay.title, completed, total:activeDay.exercises.length,
+      notes:sessionNotes,
       exercises:activeDay.exercises.map((e,i)=>({ name:e[0], target:e[1], cue:e[2], ...(strengthData[i]||{}) })), source:'command-center'
     };
     const res = await trainingSvc.saveTrainingSession(item);
     setSyncState(res.offline ? 'offline' : 'online');
     setStrengthData({});
+    setSessionNotes('');
     await load();
   };
 
@@ -94,9 +115,14 @@ export default function TrainingTracker() {
       <div className="space-y-2">{activeDay.exercises.map((ex,i)=>{const row=strengthData[i]||{};return <div key={ex[0]} className={`rounded-xl border p-3 ${sub}`}>
         <div className="flex items-start gap-3"><button onClick={()=>updateExercise(i,{done:!row.done})} className={`mt-0.5 ${row.done?'text-teal-400':isDark?'text-gray-600':'text-gray-300'}`}><CheckCircle2 className="w-5 h-5"/></button><div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2"><p className={`text-sm font-medium ${isDark?'text-white':'text-gray-900'}`}>{ex[0]}</p><span className="text-[11px] text-teal-400">{ex[1]}</span></div><p className={`text-[11px] mb-2 ${isDark?'text-gray-500':'text-gray-400'}`}>{ex[2]}</p>
-          <div className="grid grid-cols-3 gap-2"><input className={input} placeholder="Load lb" type="number" value={row.load||''} onChange={e=>updateExercise(i,{load:e.target.value})}/><input className={input} placeholder="Actual reps" value={row.reps||''} onChange={e=>updateExercise(i,{reps:e.target.value})}/><input className={input} placeholder="RPE 1-10" type="number" min="1" max="10" value={row.rpe||''} onChange={e=>updateExercise(i,{rpe:e.target.value})}/></div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2"><input className={input} placeholder="Sets done" inputMode="numeric" value={row.sets||''} onChange={e=>updateExercise(i,{sets:e.target.value})}/><input className={input} placeholder="Reps / time" value={row.reps||''} onChange={e=>updateExercise(i,{reps:e.target.value})}/><input className={input} placeholder="Resistance optional" value={row.resistance||row.load||''} onChange={e=>updateExercise(i,{resistance:e.target.value,load:''})}/><input className={input} placeholder="RPE 1-10" type="number" min="1" max="10" value={row.rpe||''} onChange={e=>updateExercise(i,{rpe:e.target.value})}/></div>
         </div></div></div>})}</div>
-      <div className={`mt-3 rounded-xl border p-3 text-xs ${sub} ${isDark?'text-gray-400':'text-gray-600'}`}>Optional finishers: jump rope 3 × 1 min · band pull-aparts 3 × 20. Add reps first, then small load increases while form stays clean.</div>
+      <div className="mt-3 grid gap-2 md:grid-cols-[180px_1fr_auto]">
+        <label><span className="text-[10px] uppercase tracking-wider text-gray-500 mb-1 block">Workout date</span><input className={input} type="date" value={sessionDate} onChange={e=>setSessionDate(e.target.value)}/></label>
+        <label><span className="text-[10px] uppercase tracking-wider text-gray-500 mb-1 block">Session notes</span><input className={input} value={sessionNotes} onChange={e=>setSessionNotes(e.target.value)} placeholder="Bands, dumbbells, how it felt, substitutions…"/></label>
+        <button onClick={()=>setStrengthData(Object.fromEntries(activeDay.exercises.map((_,i)=>[i,{...(strengthData[i]||{}),done:true}]))) } className="self-end rounded-lg border border-white/10 px-3 py-2 text-xs text-gray-300 hover:text-white">Mark all done</button>
+      </div>
+      <div className={`mt-3 rounded-xl border p-3 text-xs ${sub} ${isDark?'text-gray-400':'text-gray-600'}`}>Weight is optional. For bands/bodyweight/dumbbells, sets + reps + resistance note are enough. Progress can come from more reps, cleaner reps, more band tension, slower tempo, or heavier dumbbells.</div>
       <button onClick={saveStrength} className="mt-3 flex items-center justify-center gap-2 w-full rounded-xl bg-teal-600 hover:bg-teal-500 text-white py-2.5 text-sm font-medium"><Save className="w-4 h-4"/> Save strength session</button>
     </div>}
 
@@ -109,7 +135,7 @@ export default function TrainingTracker() {
 
     {tab==='progress' && <div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3"><Metric label="Avg speed" value={Number(stats.avgRideSpeed||0).toFixed(1)} unit="mph" isDark={isDark}/><Metric label="Longest" value={Number(stats.longestRide||0).toFixed(1)} unit="mi" isDark={isDark}/><Metric label="Strength" value={stats.strengthCompletionPct||0} unit="% done" isDark={isDark}/><Metric label="Sync" value={syncState==='online'?'Cloud':'Local'} unit="data" isDark={isDark}/></div>
-      {entries.length===0?<p className={`text-sm ${isDark?'text-gray-500':'text-gray-500'}`}>No training logged yet.</p>:<div className="space-y-2">{entries.slice(0,20).map(e=><div key={e.clientId||e.id} className={`rounded-xl border p-3 flex items-center justify-between gap-3 ${sub}`}><div className="flex items-center gap-2">{e.type==='bike'?<Bike className="w-4 h-4 text-blue-400"/>:<Dumbbell className="w-4 h-4 text-teal-400"/>}<div><p className={`text-sm font-medium ${isDark?'text-white':'text-gray-900'}`}>{e.title}</p><p className={`text-[11px] ${isDark?'text-gray-500':'text-gray-400'}`}>{new Date(e.date).toLocaleString()}</p></div></div><div className="text-right text-xs text-teal-400">{e.type==='bike'?`${e.distance||0} mi · ${e.duration||0} min · RPE ${e.rpe||'—'}`:`${e.completed||0}/${e.total||0} exercises`}</div></div>)}</div>}
+      {entries.length===0?<p className={`text-sm ${isDark?'text-gray-500':'text-gray-500'}`}>No training logged yet.</p>:<div className="space-y-2">{entries.slice(0,20).map(e=><div key={e.clientId||e.id} className={`rounded-xl border p-3 flex items-center justify-between gap-3 ${sub}`}><div className="flex items-center gap-2">{e.type==='bike'?<Bike className="w-4 h-4 text-blue-400"/>:<Dumbbell className="w-4 h-4 text-teal-400"/>}<div><p className={`text-sm font-medium ${isDark?'text-white':'text-gray-900'}`}>{e.title}</p><p className={`text-[11px] ${isDark?'text-gray-500':'text-gray-400'}`}>{new Date(e.date).toLocaleString()}</p>{e.notes&&<p className="text-[10px] text-gray-600 mt-0.5">{e.notes}</p>}</div></div><div className="text-right text-xs text-teal-400">{e.type==='bike'?`${e.distance||0} mi · ${e.duration||0} min · RPE ${e.rpe||'—'}`:`${e.completed||0}/${e.total||0} exercises`}</div></div>)}</div>}
     </div>}
   </section>;
 }
