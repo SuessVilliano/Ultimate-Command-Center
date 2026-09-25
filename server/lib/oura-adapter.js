@@ -41,6 +41,31 @@ const avg = values => {
   return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
 };
 const latestBy = (rows, key = 'day') => [...rows].sort((a, b) => String(a?.[key] || '').localeCompare(String(b?.[key] || ''))).at(-1) || null;
+const hasValue = value => value !== undefined && value !== null;
+const minutesFromSeconds = value => hasValue(value) ? Math.round(Number(value || 0) / 60) : null;
+const movementMinutes = activity => {
+  const values = [activity?.high_activity_time, activity?.medium_activity_time, activity?.low_activity_time];
+  return values.some(hasValue) ? Math.round(values.reduce((sum, value) => sum + Number(value || 0), 0) / 60) : null;
+};
+const normalizeWorkout = workout => {
+  const startMs = Date.parse(workout?.start_datetime || '');
+  const endMs = Date.parse(workout?.end_datetime || '');
+  const durationMin = Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs
+    ? Math.round((endMs - startMs) / 60000)
+    : null;
+  const distanceM = hasValue(workout?.distance) ? Number(workout.distance) : null;
+  return {
+    ...workout,
+    duration_min: durationMin,
+    distance_m: Number.isFinite(distanceM) ? distanceM : null,
+    distance_mi: Number.isFinite(distanceM) ? Number((distanceM / 1609.344).toFixed(2)) : null,
+    distance_km: Number.isFinite(distanceM) ? Number((distanceM / 1000).toFixed(2)) : null,
+    avg_speed_mph: Number.isFinite(distanceM) && durationMin > 0
+      ? Number(((distanceM / 1609.344) / (durationMin / 60)).toFixed(1))
+      : null,
+  };
+};
+const isCyclingWorkout = workout => /cycl|bike/i.test(String(workout?.activity || workout?.label || ''));
 
 /** Pull readiness + sleep + activity for a date range and normalize by day. */
 export async function fetchDaily({ days = 14 } = {}) {
@@ -59,12 +84,12 @@ export async function fetchDaily({ days = 14 } = {}) {
     put(a.day, {
       activity: a.score ?? null,
       activity_contributors: a.contributors || null,
-      movement_min: Math.round(((a.high_activity_time || 0) + (a.medium_activity_time || 0) + (a.low_activity_time || 0)) / 60) || null,
-      high_activity_min: Math.round((a.high_activity_time || 0) / 60),
-      medium_activity_min: Math.round((a.medium_activity_time || 0) / 60),
-      low_activity_min: Math.round((a.low_activity_time || 0) / 60),
-      sedentary_min: Math.round((a.sedentary_time || 0) / 60),
-      resting_min: Math.round((a.resting_time || 0) / 60),
+      movement_min: movementMinutes(a),
+      high_activity_min: minutesFromSeconds(a.high_activity_time),
+      medium_activity_min: minutesFromSeconds(a.medium_activity_time),
+      low_activity_min: minutesFromSeconds(a.low_activity_time),
+      sedentary_min: minutesFromSeconds(a.sedentary_time),
+      resting_min: minutesFromSeconds(a.resting_time),
       steps: a.steps ?? null,
       active_calories: a.active_calories ?? null,
       total_calories: a.total_calories ?? null,
@@ -93,7 +118,7 @@ export async function details({ days = 14 } = {}) {
   const dateParams = { start_date: startDate, end_date: endDate };
   const timeParams = { start_datetime: isoDateTimeDaysAgo(boundedDays), end_datetime: new Date().toISOString() };
 
-  const [daily, heartRate, sleepSessions, stress, spo2, workouts, resilience, cardiovascularAge] = await Promise.all([
+  const [daily, heartRate, sleepSessions, stress, spo2, workouts, resilience, cardiovascularAge, vo2Max] = await Promise.all([
     fetchDaily({ days: boundedDays }),
     get('heartrate', timeParams),
     get('sleep', dateParams),
@@ -102,6 +127,7 @@ export async function details({ days = 14 } = {}) {
     get('workout', dateParams),
     get('daily_resilience', dateParams),
     get('daily_cardiovascular_age', dateParams),
+    get('vO2_max', dateParams),
   ]);
 
   const endpoint = (x) => ({ ok: !!x?.ok, reason: x?.reason || null, status: x?.status || (x?.ok ? 200 : 0) });
@@ -114,6 +140,20 @@ export async function details({ days = 14 } = {}) {
     low: recentHr.length ? Math.min(...recentHr.map(x => Number(x.bpm)).filter(Number.isFinite)) : null,
     high: recentHr.length ? Math.max(...recentHr.map(x => Number(x.bpm)).filter(Number.isFinite)) : null,
     samples: hrRows.length,
+  };
+
+  const dailyRows = daily.days || [];
+  const latestActivity = [...dailyRows].reverse().find(row =>
+    [row?.steps, row?.active_calories, row?.movement_min, row?.sedentary_min].some(hasValue)
+  ) || null;
+  const workoutRows = (workouts.data || []).map(normalizeWorkout);
+  const cyclingWorkouts = workoutRows.filter(isCyclingWorkout);
+  const cyclingSummary = {
+    rides: cyclingWorkouts.length,
+    distance_mi: Number(cyclingWorkouts.reduce((sum, row) => sum + Number(row.distance_mi || 0), 0).toFixed(2)),
+    duration_min: cyclingWorkouts.reduce((sum, row) => sum + Number(row.duration_min || 0), 0),
+    calories: Math.round(cyclingWorkouts.reduce((sum, row) => sum + Number(row.calories || 0), 0)),
+    latest: latestBy(cyclingWorkouts, 'start_datetime'),
   };
 
   const latestSleep = latestBy(sleepSessions.data || [], 'day');
@@ -148,8 +188,10 @@ export async function details({ days = 14 } = {}) {
       workouts: endpoint(workouts),
       resilience: endpoint(resilience),
       cardiovascular_age: endpoint(cardiovascularAge),
+      vo2_max: endpoint(vo2Max),
     },
-    daily: daily.days || [],
+    daily: dailyRows,
+    latestActivity,
     heartRate: hrRows,
     heartRateSummary: hrSummary,
     sleepSessions: sleepSessions.data || [],
@@ -158,11 +200,15 @@ export async function details({ days = 14 } = {}) {
     latestStress: latestBy(stress.data || [], 'day'),
     spo2: spo2.data || [],
     latestSpo2: latestBy(spo2.data || [], 'day'),
-    workouts: workouts.data || [],
+    workouts: workoutRows,
+    cyclingWorkouts,
+    cyclingSummary,
     resilience: resilience.data || [],
     latestResilience: latestBy(resilience.data || [], 'day'),
     cardiovascularAge: cardiovascularAge.data || [],
     latestCardiovascularAge: latestBy(cardiovascularAge.data || [], 'day'),
+    vo2Max: vo2Max.data || [],
+    latestVo2Max: latestBy(vo2Max.data || [], 'day'),
   };
 }
 
