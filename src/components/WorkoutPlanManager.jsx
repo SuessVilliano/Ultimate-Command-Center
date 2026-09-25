@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Dumbbell, Plus, Save, Trash2 } from 'lucide-react';
 import * as hs from '../services/highestSelfService';
 
-const blankExercise = () => ({ name: '', sets: '3', reps: '8-12', max: '', notes: '' });
+const blankExercise = () => ({ name: '', sets: '3', reps: '8-12', resistance: '', notes: '' });
 const normalizePlans = raw => {
   if (Array.isArray(raw)) return raw;
   try { const parsed = JSON.parse(raw || '[]'); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
@@ -55,7 +55,7 @@ export default function WorkoutPlanManager() {
 
   return <div className="space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <div><div className="flex items-center gap-2 text-white font-semibold"><Dumbbell className="h-5 w-5 text-cyan-300"/>Workout Plans</div><p className="mt-1 text-xs text-gray-500">Create and revise named routines. Sets, rep targets, max/load targets and notes are saved into Health OS.</p></div>
+      <div><div className="flex items-center gap-2 text-white font-semibold"><Dumbbell className="h-5 w-5 text-cyan-300"/>Workout Plans</div><p className="mt-1 text-xs text-gray-500">Create and revise named routines. Sets and reps are the core fields; resistance/load is optional for bands, bodyweight and dumbbells.</p></div>
       <div className="flex items-center gap-2"><span className={`text-[10px] uppercase ${sync==='saved'?'text-emerald-400':sync==='unsaved'?'text-amber-400':'text-gray-500'}`}>{sync}</span><button onClick={addPlan} className="inline-flex items-center gap-1 rounded-lg border border-white/10 px-3 py-2 text-xs text-gray-300 hover:text-white"><Plus className="h-4 w-4"/>Plan</button><button onClick={save} disabled={saving} className="inline-flex items-center gap-1 rounded-lg bg-cyan-600 px-3 py-2 text-xs font-medium text-white disabled:opacity-50"><Save className="h-4 w-4"/>{saving?'Saving':'Save'}</button></div>
     </div>
 
@@ -63,12 +63,12 @@ export default function WorkoutPlanManager() {
 
     {!active ? <button onClick={addPlan} className="w-full rounded-xl border border-dashed border-white/15 py-10 text-sm text-gray-500 hover:text-white">+ Create your first workout plan</button> : <div className="space-y-3">
       <div className="grid gap-2 md:grid-cols-[1fr_1.5fr_auto]"><input className={input} value={active.name} onChange={e=>{patchActive({name:e.target.value});setSync('unsaved');}} placeholder="Plan name"/><input className={input} value={active.description || ''} onChange={e=>{patchActive({description:e.target.value});setSync('unsaved');}} placeholder="Goal / description"/><button onClick={()=>deletePlan(active.id)} className="rounded-lg border border-rose-500/20 px-3 text-rose-300 hover:bg-rose-500/10"><Trash2 className="h-4 w-4"/></button></div>
-      <div className="space-y-2">{(active.exercises || []).map((e,i)=><div key={`${active.id}-${i}`} className="grid gap-2 rounded-xl border border-white/10 bg-black/15 p-3 md:grid-cols-[1.5fr_.55fr_.75fr_.75fr_1.2fr_auto]">
+      <div className="space-y-2">{(active.exercises || []).map((e,i)=><div key={`${active.id}-${i}`} className="grid gap-2 rounded-xl border border-white/10 bg-black/15 p-3 md:grid-cols-[1.5fr_.55fr_.75fr_1fr_1.2fr_auto]">
         <input className={input} value={e.name} onChange={x=>{patchExercise(i,{name:x.target.value});setSync('unsaved');}} placeholder="Exercise"/>
         <input className={input} value={e.sets} onChange={x=>{patchExercise(i,{sets:x.target.value});setSync('unsaved');}} placeholder="Sets"/>
-        <input className={input} value={e.reps} onChange={x=>{patchExercise(i,{reps:x.target.value});setSync('unsaved');}} placeholder="Reps"/>
-        <input className={input} value={e.max} onChange={x=>{patchExercise(i,{max:x.target.value});setSync('unsaved');}} placeholder="Max/load"/>
-        <input className={input} value={e.notes || ''} onChange={x=>{patchExercise(i,{notes:x.target.value});setSync('unsaved');}} placeholder="Notes / tempo"/>
+        <input className={input} value={e.reps} onChange={x=>{patchExercise(i,{reps:x.target.value});setSync('unsaved');}} placeholder="Reps / time"/>
+        <input className={input} value={e.resistance ?? e.max ?? ''} onChange={x=>{patchExercise(i,{resistance:x.target.value,max:''});setSync('unsaved');}} placeholder="Resistance (optional)"/>
+        <input className={input} value={e.notes || ''} onChange={x=>{patchExercise(i,{notes:x.target.value});setSync('unsaved');}} placeholder="Band color, tempo, form notes…"/>
         <button onClick={()=>removeExercise(i)} className="rounded-lg border border-white/10 px-3 text-gray-500 hover:text-rose-300"><Trash2 className="h-4 w-4"/></button>
       </div>)}</div>
       <button onClick={addExercise} className="inline-flex items-center gap-1 rounded-lg border border-white/10 px-3 py-2 text-xs text-gray-400 hover:text-white"><Plus className="h-4 w-4"/>Exercise</button>
