@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity, Brain, Heart, Moon, Footprints, Flame, Wind, Gauge,
-  ShieldCheck, RefreshCw, AlertTriangle, Zap, BedDouble, Dumbbell
+  ShieldCheck, RefreshCw, AlertTriangle, Zap, BedDouble, Dumbbell, Bike
 } from 'lucide-react';
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart,
@@ -95,11 +95,26 @@ export default function HealthMetricsDashboard() {
   const endpoints = oura.endpoints || {};
   const daily = oura.daily || [];
   const latestDaily = last(daily) || {};
+  const apple = data?.appleHealth?.latest || {};
+  const latestActivity = oura.latestActivity || [...daily].reverse().find(row =>
+    [row?.steps, row?.active_calories, row?.movement_min, row?.sedentary_min].some(value => value != null)
+  ) || {};
+  const activityDate = latestActivity.date || apple.date || null;
+  const activityValue = (ouraValue, appleValue = null) => ouraValue != null ? ouraValue : appleValue;
+  const activitySource = (ouraValue, appleValue = null) => ouraValue != null
+    ? `Oura${latestActivity.date ? ` · ${latestActivity.date}` : ''}`
+    : appleValue != null
+      ? `Apple Health${apple.date ? ` · ${apple.date}` : ''}`
+      : 'Unavailable';
   const sleep = oura.latestSleepDetail || {};
   const hr = oura.heartRateSummary || {};
   const stress = oura.latestStress || {};
   const spo2 = oura.latestSpo2 || {};
   const workouts = oura.workouts || [];
+  const cycling = oura.cyclingSummary || {};
+  const latestResilience = oura.latestResilience || {};
+  const latestCardiovascularAge = oura.latestCardiovascularAge || {};
+  const latestVo2Max = oura.latestVo2Max || {};
 
   const hrChart = useMemo(() => (oura.heartRate || []).slice(-160).map(x => ({
     t: x.timestamp ? new Date(x.timestamp).toLocaleTimeString('en-US', { timeZone: USER_TIME_ZONE, hour: 'numeric', minute: '2-digit' }) : '',
@@ -153,9 +168,14 @@ export default function HealthMetricsDashboard() {
         {tab === 'recovery' && <div className="space-y-4">
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
             <MetricCard title="Readiness" value={latestDaily.readiness} unit="/100" icon={ShieldCheck} source="Oura" />
-            <MetricCard title="HRV" value={sleep.averageHrv != null ? Math.round(sleep.averageHrv) : null} unit="ms" icon={Heart} detail="Night average" source={sourceLabel(endpoints.sleep_sessions)} />
-            <MetricCard title="Resting HR" value={sleep.lowestHeartRate ?? sleep.averageHeartRate ?? null} unit="bpm" icon={Activity} detail={sleep.lowestHeartRate != null ? 'Lowest overnight' : 'Night average'} source={sourceLabel(endpoints.sleep_sessions)} />
-            <MetricCard title="Respiratory" value={sleep.averageBreath != null ? Number(sleep.averageBreath).toFixed(1) : null} unit="/min" icon={Wind} source={sourceLabel(endpoints.sleep_sessions)} />
+            <MetricCard title="HRV" value={sleep.averageHrv != null ? Math.round(sleep.averageHrv) : apple.hrv} unit="ms" icon={Heart} detail="Night average" source={sleep.averageHrv != null ? sourceLabel(endpoints.sleep_sessions) : activitySource(null, apple.hrv)} />
+            <MetricCard title="Resting HR" value={sleep.lowestHeartRate ?? sleep.averageHeartRate ?? apple.restingHeartRate ?? null} unit="bpm" icon={Activity} detail={sleep.lowestHeartRate != null ? 'Lowest overnight' : 'Night average'} source={sleep.lowestHeartRate != null || sleep.averageHeartRate != null ? sourceLabel(endpoints.sleep_sessions) : activitySource(null, apple.restingHeartRate)} />
+            <MetricCard title="Respiratory" value={sleep.averageBreath != null ? Number(sleep.averageBreath).toFixed(1) : apple.respiratoryRate} unit="/min" icon={Wind} source={sleep.averageBreath != null ? sourceLabel(endpoints.sleep_sessions) : activitySource(null, apple.respiratoryRate)} />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <MetricCard title="Resilience" value={latestResilience.level ?? latestResilience.resilience ?? null} icon={ShieldCheck} source={sourceLabel(endpoints.resilience)} />
+            <MetricCard title="Cardiovascular age" value={latestCardiovascularAge.vascular_age ?? latestCardiovascularAge.cardiovascular_age ?? latestCardiovascularAge.age ?? null} unit="yr" icon={Heart} source={sourceLabel(endpoints.cardiovascular_age)} />
+            <MetricCard title="VO₂ max" value={latestVo2Max.vo2_max ?? latestVo2Max.vo2Max ?? null} unit="mL/kg/min" icon={Wind} source={sourceLabel(endpoints.vo2_max)} />
           </div>
           <ChartShell title="Recovery trend" subtitle="Readiness, sleep and activity scores">
             <ResponsiveContainer width="100%" height="100%"><LineChart data={dailyChart}><CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.05)"/><XAxis dataKey="day" tick={{fontSize:10, fill:'#6b7280'}}/><YAxis domain={[0,100]} tick={{fontSize:10, fill:'#6b7280'}}/><Tooltip contentStyle={{background:'#111827',border:'1px solid rgba(255,255,255,.1)',fontSize:11}}/><Line dataKey="readiness" dot={false} stroke="currentColor"/><Line dataKey="sleep" dot={false} stroke="currentColor" opacity={0.65}/><Line dataKey="activity" dot={false} stroke="currentColor" opacity={0.35}/></LineChart></ResponsiveContainer>
@@ -196,18 +216,43 @@ export default function HealthMetricsDashboard() {
 
         {tab === 'activity' && <div className="space-y-4">
           <ScopeNotice label="Oura workouts" endpoint={endpoints.workouts}/>
+          {latestActivity.date && latestDaily.date && latestActivity.date !== latestDaily.date && <div className="rounded-xl border border-cyan-500/15 bg-cyan-500/[0.04] px-3 py-2 text-[11px] text-cyan-100/80">
+            Latest Oura activity summary is {latestActivity.date}. Recovery/sleep data may be newer, so activity cards now use the newest day that actually contains movement data.
+          </div>}
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-            <MetricCard title="Steps" value={latestDaily.steps?.toLocaleString?.() ?? latestDaily.steps} icon={Footprints} source="Oura" />
-            <MetricCard title="Active calories" value={latestDaily.active_calories} unit="kcal" icon={Flame} source="Oura" />
-            <MetricCard title="Movement" value={latestDaily.movement_min} unit="min" icon={Activity} source="Oura" />
-            <MetricCard title="Sedentary" value={latestDaily.sedentary_min} unit="min" icon={BedDouble} source="Oura" />
+            <MetricCard title="Steps" value={activityValue(latestActivity.steps, apple.steps)?.toLocaleString?.() ?? activityValue(latestActivity.steps, apple.steps)} icon={Footprints} source={activitySource(latestActivity.steps, apple.steps)} />
+            <MetricCard title="Active calories" value={activityValue(latestActivity.active_calories, apple.activeEnergy)} unit="kcal" icon={Flame} source={activitySource(latestActivity.active_calories, apple.activeEnergy)} />
+            <MetricCard title="Movement" value={activityValue(latestActivity.movement_min, apple.exerciseMinutes)} unit="min" icon={Activity} source={activitySource(latestActivity.movement_min, apple.exerciseMinutes)} />
+            <MetricCard title="Sedentary" value={latestActivity.sedentary_min} unit="min" icon={BedDouble} source={activitySource(latestActivity.sedentary_min)} />
+          </div>
+          <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+            <MetricCard title="Total calories" value={latestActivity.total_calories} unit="kcal" icon={Flame} source={activitySource(latestActivity.total_calories)} />
+            <MetricCard title="High activity" value={latestActivity.high_activity_min} unit="min" icon={Zap} source={activitySource(latestActivity.high_activity_min)} />
+            <MetricCard title="Medium activity" value={latestActivity.medium_activity_min} unit="min" icon={Activity} source={activitySource(latestActivity.medium_activity_min)} />
+            <MetricCard title="Low activity" value={latestActivity.low_activity_min} unit="min" icon={Footprints} source={activitySource(latestActivity.low_activity_min)} />
+            <MetricCard title="Resting time" value={latestActivity.resting_min} unit="min" icon={BedDouble} source={activitySource(latestActivity.resting_min)} />
+            <MetricCard title="Inactivity alerts" value={latestActivity.inactivity_alerts} icon={AlertTriangle} source={activitySource(latestActivity.inactivity_alerts)} />
+            <MetricCard title="Walking equivalent" value={latestActivity.equivalent_walking_distance_m != null ? (Number(latestActivity.equivalent_walking_distance_m) / 1609.344).toFixed(1) : null} unit="mi" icon={Footprints} source={activitySource(latestActivity.equivalent_walking_distance_m)} />
+            <MetricCard title="Activity target" value={latestActivity.target_calories} unit="kcal" icon={Gauge} source={activitySource(latestActivity.target_calories)} />
           </div>
           <ChartShell title="Daily activity" subtitle="Steps over the selected period"><ResponsiveContainer width="100%" height="100%"><BarChart data={dailyChart}><CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.05)"/><XAxis dataKey="day" tick={{fontSize:10,fill:'#6b7280'}}/><YAxis tick={{fontSize:10,fill:'#6b7280'}}/><Tooltip contentStyle={{background:'#111827',border:'1px solid rgba(255,255,255,.1)',fontSize:11}}/><Bar dataKey="steps" fill="currentColor" radius={[5,5,0,0]}/></BarChart></ResponsiveContainer></ChartShell>
           <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-            <div className="flex items-center gap-2 mb-3"><Dumbbell className="w-4 h-4 text-cyan-300"/><div className="text-sm font-semibold text-white">Recent workouts</div></div>
-            {!workouts.length ? <div className="text-xs text-gray-600">No workouts returned by the current Oura scope.</div> : <div className="space-y-2">{workouts.slice(-8).reverse().map((w,i)=><div key={w.id || i} className="flex items-center justify-between gap-3 rounded-xl border border-white/5 bg-black/15 px-3 py-2"><div><div className="text-xs font-medium text-gray-200 capitalize">{w.activity || w.type || 'Workout'}</div><div className="text-[10px] text-gray-600">{w.day || String(w.start_datetime || '').slice(0,10)}</div></div><div className="text-xs text-gray-400">{w.calories != null ? `${Math.round(w.calories)} kcal` : ''}</div></div>)}</div>}
+            <div className="flex items-center gap-2 mb-3"><Bike className="w-4 h-4 text-cyan-300"/><div><div className="text-sm font-semibold text-white">Cycling</div><div className="text-[10px] text-gray-600">Oura rides in the selected period</div></div></div>
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+              <MetricCard title="Rides" value={cycling.rides ?? 0} icon={Bike} source="Oura workouts" />
+              <MetricCard title="Distance" value={cycling.distance_mi != null ? Number(cycling.distance_mi).toFixed(1) : null} unit="mi" icon={Gauge} source="Oura workouts" />
+              <MetricCard title="Ride time" value={cycling.duration_min} unit="min" icon={Activity} source="Oura workouts" />
+              <MetricCard title="Ride calories" value={cycling.calories} unit="kcal" icon={Flame} source="Oura workouts" />
+            </div>
           </div>
-          <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4"><div className="text-sm font-semibold text-white">Activity contributors</div><ContributorGrid contributors={latestDaily.activity_contributors}/></div>
+          <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+            <div className="flex items-center gap-2 mb-3"><Dumbbell className="w-4 h-4 text-cyan-300"/><div className="text-sm font-semibold text-white">Recent workouts</div></div>
+            {!workouts.length ? <div className="text-xs text-gray-600">No workouts returned by the current Oura scope.</div> : <div className="space-y-2">{workouts.slice(-10).reverse().map((w,i)=><div key={w.id || i} className="flex items-center justify-between gap-3 rounded-xl border border-white/5 bg-black/15 px-3 py-2">
+              <div className="min-w-0"><div className="text-xs font-medium text-gray-200 capitalize">{w.label || w.activity || w.type || 'Workout'}</div><div className="text-[10px] text-gray-600">{w.day || String(w.start_datetime || '').slice(0,10)}{w.intensity ? ` · ${w.intensity}` : ''}{w.source ? ` · ${w.source}` : ''}</div></div>
+              <div className="text-right text-[10px] text-gray-400 whitespace-nowrap">{w.distance_mi != null && <div>{Number(w.distance_mi).toFixed(1)} mi{w.avg_speed_mph != null ? ` · ${w.avg_speed_mph} mph` : ''}</div>}<div>{w.duration_min != null ? `${w.duration_min} min` : ''}{w.duration_min != null && w.calories != null ? ' · ' : ''}{w.calories != null ? `${Math.round(w.calories)} kcal` : ''}</div></div>
+            </div>)}</div>}
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4"><div className="text-sm font-semibold text-white">Activity contributors</div><ContributorGrid contributors={latestActivity.activity_contributors}/></div>
         </div>}
 
         <div className="mt-5 flex flex-wrap gap-2 text-[10px] text-gray-600">
@@ -215,6 +260,7 @@ export default function HealthMetricsDashboard() {
           <span className="px-2 py-1 rounded border border-white/5">Heart: {sourceLabel(endpoints.heartrate)}</span>
           <span className="px-2 py-1 rounded border border-white/5">Stress: {sourceLabel(endpoints.stress)}</span>
           <span className="px-2 py-1 rounded border border-white/5">SpO₂: {sourceLabel(endpoints.spo2)}</span>
+          <span className="px-2 py-1 rounded border border-white/5">VO₂ max: {sourceLabel(endpoints.vo2_max)}</span>
           <span className="px-2 py-1 rounded border border-white/5">Apple bridge: {data?.appleHealth?.configured ? 'connected' : 'not ingested locally'}</span>
         </div>
       </> : null}
