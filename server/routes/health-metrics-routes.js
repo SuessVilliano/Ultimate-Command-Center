@@ -99,11 +99,27 @@ export function registerHealthMetricsRoutes(app) {
       ]);
 
       const appleLatest = latestAppleDaily(appleRows);
+      const sinceMs = Date.now() - days * 86400000;
+      let trainingRows = [];
+      let trainingSummary = null;
+      try {
+        trainingRows = listTraining(200).filter(row => new Date(row.date).getTime() >= sinceMs);
+        trainingSummary = trainingStats(days);
+      } catch {
+        trainingRows = [];
+        trainingSummary = null;
+      }
+      const manualRides = trainingRows.filter(row => row.type === 'bike');
       res.json({
         ok: true,
         generatedAt: new Date().toISOString(),
         days,
         oura: ouraDetails,
+        training: {
+          stats: trainingSummary,
+          manualRides,
+          note: 'Manual/verified ride distance should be treated as canonical when wearable distance is known to be inaccurate.'
+        },
         appleHealth: {
           configured: appleHealth.isConfigured(),
           rows: appleRows,
