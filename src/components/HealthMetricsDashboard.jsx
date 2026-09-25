@@ -112,6 +112,12 @@ export default function HealthMetricsDashboard() {
   const spo2 = oura.latestSpo2 || {};
   const workouts = oura.workouts || [];
   const cycling = oura.cyclingSummary || {};
+  const verifiedRides = data?.training?.manualRides || [];
+  const verifiedCycling = {
+    rides: verifiedRides.length,
+    distance_mi: verifiedRides.reduce((sum, row) => sum + Number(row.distance || 0), 0),
+    duration_min: verifiedRides.reduce((sum, row) => sum + Number(row.duration || 0), 0),
+  };
   const latestResilience = oura.latestResilience || {};
   const latestCardiovascularAge = oura.latestCardiovascularAge || {};
   const latestVo2Max = oura.latestVo2Max || {};
@@ -237,12 +243,16 @@ export default function HealthMetricsDashboard() {
           </div>
           <ChartShell title="Daily activity" subtitle="Steps over the selected period"><ResponsiveContainer width="100%" height="100%"><BarChart data={dailyChart}><CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.05)"/><XAxis dataKey="day" tick={{fontSize:10,fill:'#6b7280'}}/><YAxis tick={{fontSize:10,fill:'#6b7280'}}/><Tooltip contentStyle={{background:'#111827',border:'1px solid rgba(255,255,255,.1)',fontSize:11}}/><Bar dataKey="steps" fill="currentColor" radius={[5,5,0,0]}/></BarChart></ResponsiveContainer></ChartShell>
           <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-            <div className="flex items-center gap-2 mb-3"><Bike className="w-4 h-4 text-cyan-300"/><div><div className="text-sm font-semibold text-white">Cycling</div><div className="text-[10px] text-gray-600">Oura rides in the selected period</div></div></div>
+            <div className="flex items-center gap-2 mb-3"><Bike className="w-4 h-4 text-cyan-300"/><div><div className="text-sm font-semibold text-white">Cycling</div><div className="text-[10px] text-gray-600">Verified Training Log distance takes priority over wearable estimates.</div></div></div>
             <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-              <MetricCard title="Rides" value={cycling.rides ?? 0} icon={Bike} source="Oura workouts" />
-              <MetricCard title="Distance" value={cycling.distance_mi != null ? Number(cycling.distance_mi).toFixed(1) : null} unit="mi" icon={Gauge} source="Oura workouts" />
-              <MetricCard title="Ride time" value={cycling.duration_min} unit="min" icon={Activity} source="Oura workouts" />
-              <MetricCard title="Ride calories" value={cycling.calories} unit="kcal" icon={Flame} source="Oura workouts" />
+              <MetricCard title="Verified rides" value={verifiedCycling.rides || 0} icon={Bike} source="Training Log" />
+              <MetricCard title="Verified distance" value={verifiedCycling.rides ? verifiedCycling.distance_mi.toFixed(1) : null} unit="mi" icon={Gauge} source="Training Log" />
+              <MetricCard title="Verified ride time" value={verifiedCycling.rides ? Math.round(verifiedCycling.duration_min) : null} unit="min" icon={Activity} source="Training Log" />
+              <MetricCard title="Oura estimate" value={cycling.distance_mi != null ? Number(cycling.distance_mi).toFixed(1) : null} unit="mi" icon={Gauge} source="Wearable estimate" />
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <MetricCard title="Oura ride time" value={cycling.duration_min} unit="min" icon={Activity} source="Wearable estimate" />
+              <MetricCard title="Oura ride calories" value={cycling.calories} unit="kcal" icon={Flame} source="Wearable estimate" />
             </div>
           </div>
           <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
