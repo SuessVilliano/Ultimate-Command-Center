@@ -2,12 +2,8 @@ import * as oura from '../lib/oura-adapter.js';
 import * as appleHealth from '../lib/apple-health-adapter.js';
 import * as db from '../lib/database.js';
 
-function latestApple(rows = [], metricNames = []) {
-  const names = metricNames.map(x => String(x).toLowerCase());
-  return [...rows].reverse().find(row => {
-    const key = String(row.metric || row.type || row.identifier || row.name || '').toLowerCase();
-    return names.some(n => key.includes(n));
-  }) || null;
+function latestAppleDaily(rows = []) {
+  return Array.isArray(rows) && rows.length ? rows[0] : null;
 }
 
 function trainingDb() {
@@ -102,6 +98,7 @@ export function registerHealthMetricsRoutes(app) {
         Promise.resolve(appleHealth.history(days)).catch(() => []),
       ]);
 
+      const appleLatest = latestAppleDaily(appleRows);
       res.json({
         ok: true,
         generatedAt: new Date().toISOString(),
@@ -110,18 +107,22 @@ export function registerHealthMetricsRoutes(app) {
         appleHealth: {
           configured: appleHealth.isConfigured(),
           rows: appleRows,
-          latest: {
-            heartRate: latestApple(appleRows, ['heart rate', 'heartrate']),
-            restingHeartRate: latestApple(appleRows, ['resting heart rate', 'restingheartrate']),
-            hrv: latestApple(appleRows, ['hrv', 'heart rate variability']),
-            respiratoryRate: latestApple(appleRows, ['respiratory']),
-            steps: latestApple(appleRows, ['steps', 'step count']),
-            sleep: latestApple(appleRows, ['sleep']),
-            activeEnergy: latestApple(appleRows, ['active energy', 'calories']),
-            walkingSpeed: latestApple(appleRows, ['walking speed']),
-            weight: latestApple(appleRows, ['weight', 'body mass']),
-            vo2Max: latestApple(appleRows, ['vo2']),
-          },
+          latest: appleLatest ? {
+            date: appleLatest.date || null,
+            syncedAt: appleLatest.synced_at || null,
+            steps: appleLatest.steps ?? null,
+            activeEnergy: appleLatest.active_calories ?? null,
+            exerciseMinutes: appleLatest.exercise_min ?? null,
+            standHours: appleLatest.stand_hours ?? null,
+            restingHeartRate: appleLatest.resting_hr ?? null,
+            walkingHeartRate: appleLatest.walking_hr ?? null,
+            hrv: appleLatest.hrv ?? null,
+            respiratoryRate: appleLatest.respiratory_rate ?? null,
+            oxygenSaturation: appleLatest.oxygen_saturation ?? null,
+            sleepHours: appleLatest.sleep_hours ?? null,
+            weight: appleLatest.weight ?? null,
+            bodyFat: appleLatest.body_fat ?? null,
+          } : null,
         },
       });
     } catch (error) {
